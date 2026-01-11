@@ -1,50 +1,52 @@
-# 📱 Frontend - Expo 프로젝트
+# 📱 Frontend - Clerk 인증 테스트 앱
 
-> **상태**: 아직 초기화되지 않음
+Clerk 인증을 테스트하기 위한 간단한 React 웹 앱입니다.
 
-## 🚀 초기화 방법
+## 🚀 빠른 시작
 
-### 1. Expo 프로젝트 생성
+### 1. 의존성 설치
 
 ```bash
 cd frontend
-npx create-expo-app@latest . --template blank-typescript
-```
-
-또는
-
-```bash
-npx create-expo-app@latest . --template
-# 선택: blank (TypeScript)
-```
-
-### 2. 필요한 패키지 설치
-
-```bash
 npm install
 ```
 
-### 3. Docker로 실행
+### 2. 환경변수 설정
 
-프로젝트 루트에서:
+`.env` 파일이 이미 생성되어 있습니다. 필요시 수정하세요:
+
+```env
+VITE_CLERK_PUBLISHABLE_KEY=pk_test_Y2FyZWZ1bC1zbmlwZS04My5jbGVyay5hY2NvdW50cy5kZXYk
+VITE_API_BASE_URL=http://localhost:8000
+```
+
+### 3. 개발 서버 실행
 
 ```bash
-docker-compose up frontend
+npm run dev
 ```
 
-## 📦 예상 패키지 구조
+브라우저에서 http://localhost:3000 접속
 
+## 🧪 테스트 방법
+
+1. **로그인**: Clerk 로그인 화면에서 이메일로 가입/로그인
+2. **API 테스트**: 
+   - "내 프로필 조회" 버튼 클릭 → `/api/v1/auth/me` 호출
+   - "Health Check" 버튼 클릭 → `/health` 호출
+3. **응답 확인**: API 응답이 화면에 표시됩니다
+
+## 📦 사용 기술
+
+- React 18
+- Vite
+- Clerk React SDK
+- Axios
+
+## 🔧 개발 모드
+
+```bash
+npm run dev      # 개발 서버 (포트 3000)
+npm run build    # 프로덕션 빌드
+npm run preview  # 빌드 결과 미리보기
 ```
-frontend/
-├── package.json          # 필수!
-├── app.json              # Expo 설정
-├── tsconfig.json         # TypeScript 설정
-├── App.tsx               # 메인 컴포넌트
-└── ...
-```
-
-## ⚠️ 주의사항
-
-- `package.json`이 없으면 Docker 빌드가 실패합니다
-- 초기화 후 `package.json`이 생성되어야 합니다
-- Docker Compose에서 frontend 서비스를 주석 처리하면 backend만 실행할 수 있습니다

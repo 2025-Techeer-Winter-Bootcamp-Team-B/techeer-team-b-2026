@@ -31,7 +31,12 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
     
-    # JWT 설정
+    # Clerk 인증 설정
+    CLERK_SECRET_KEY: Optional[str] = None  # Clerk Secret Key (Backend API)
+    CLERK_PUBLISHABLE_KEY: Optional[str] = None  # Clerk Publishable Key (Frontend)
+    CLERK_WEBHOOK_SECRET: Optional[str] = None  # Clerk Webhook Secret (웹훅 검증용)
+    
+    # JWT 설정 (레거시 호환성, Clerk 사용 시 불필요)
     SECRET_KEY: str = "your-secret-key-change-in-production"  # 반드시 변경!
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24시간
