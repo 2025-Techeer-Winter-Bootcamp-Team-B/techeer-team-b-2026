@@ -37,9 +37,9 @@ if settings.ALLOWED_ORIGINS:
 # ============================================================
 # 라우터 등록
 # ============================================================
-# API 라우터를 여기에 등록합니다
-# from app.api.v1.router import api_router
-# app.include_router(api_router, prefix=settings.API_V1_STR)
+from app.api.v1.router import api_router
+
+app.include_router(api_router, prefix=settings.API_V1_STR)
 
 
 # ============================================================
