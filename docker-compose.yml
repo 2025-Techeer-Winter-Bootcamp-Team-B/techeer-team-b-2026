@@ -158,8 +158,8 @@ services:
       - backend
     networks:
       - realestate-network
-    # 개발 모드 (Expo)
-    command: npx expo start --web
+    # 개발 모드 (Expo) - 볼륨 마운트 시 npm install 후 실행
+    command: sh -c "npm install && npx expo start --web"
 
 # --------------------------------------------------------
 # 📦 볼륨 정의

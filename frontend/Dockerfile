@@ -14,9 +14,6 @@ ENV NODE_ENV=development \
 # 작업 디렉토리 설정
 WORKDIR /app
 
-# Expo CLI 전역 설치
-RUN npm install -g expo-cli@latest
-
 # 패키지 파일 복사 (캐싱 최적화)
 COPY package*.json ./
 
@@ -38,7 +35,7 @@ COPY . .
 # 8081: Metro bundler (네이티브 앱용)
 EXPOSE 3000 8081
 
-# 개발 서버 실행 (웹 모드)
+# 개발 서버 실행 (docker-compose.yml에서 command로 오버라이드)
 CMD ["npx", "expo", "start", "--web"]
 
 # ============================================================
