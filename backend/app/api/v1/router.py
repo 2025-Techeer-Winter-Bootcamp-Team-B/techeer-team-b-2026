@@ -24,7 +24,7 @@ FastAPI 앱에 등록합니다.
 """
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, admin
+from app.api.v1.endpoints import auth, admin, search_apart
 
 # 메인 API 라우터 생성
 # 이 라우터에 모든 하위 라우터를 등록합니다
@@ -65,6 +65,24 @@ api_router.include_router(
     admin.router,
     prefix="/admin",  # URL prefix: /api/v1/admin/...
     tags=["🛠️ Admin (관리자)"]  # Swagger UI에서 그룹화할 태그
+)
+
+# ============================================================
+# 검색 API (아파트 & 지역)
+# ============================================================
+# 아파트명 검색, 지역 검색, 최근 검색어 관리
+#
+# 엔드포인트:
+# - GET    /api/v1/search/apartments      - 아파트명 검색 (자동완성) - 박찬영
+# - GET    /api/v1/search/locations       - 지역 검색 - 조형중
+# - GET    /api/v1/search/recent          - 최근 검색어 조회
+# - DELETE /api/v1/search/recent/{id}     - 최근 검색어 삭제
+#
+# 파일 위치: app/api/v1/endpoints/search_apart.py
+api_router.include_router(
+    search_apart.router,
+    prefix="/search",  # URL prefix: /api/v1/search/...
+    tags=["🔍 Search (검색)"]
 )
 
 # ============================================================

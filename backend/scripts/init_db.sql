@@ -38,10 +38,38 @@ COMMENT ON COLUMN accounts.email IS '이메일 주소 (유니크)';
 COMMENT ON COLUMN accounts.is_deleted IS '소프트 삭제 여부';
 
 -- ============================================================
+-- APARTMENTS 테이블 (아파트 기본정보)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS apartments (
+    apt_id SERIAL PRIMARY KEY,
+    apt_name VARCHAR(200) NOT NULL,
+    address VARCHAR(500),
+    sigungu_code VARCHAR(10),
+    sigungu_name VARCHAR(50),
+    dong_name VARCHAR(50),
+    latitude FLOAT,
+    longitude FLOAT,
+    total_units INTEGER,
+    build_year INTEGER,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 인덱스 생성 (검색 성능 향상)
+CREATE INDEX IF NOT EXISTS idx_apartments_apt_name ON apartments(apt_name);
+CREATE INDEX IF NOT EXISTS idx_apartments_sigungu_code ON apartments(sigungu_code);
+CREATE INDEX IF NOT EXISTS idx_apartments_dong_name ON apartments(dong_name);
+
+-- 코멘트 추가
+COMMENT ON TABLE apartments IS '아파트 기본정보 테이블 (국토교통부 API)';
+COMMENT ON COLUMN apartments.apt_name IS '아파트명';
+COMMENT ON COLUMN apartments.sigungu_code IS '시군구 코드';
+
+-- ============================================================
 -- 완료 메시지
 -- ============================================================
 DO $$
 BEGIN
     RAISE NOTICE '데이터베이스 초기화 완료!';
-    RAISE NOTICE 'accounts 테이블이 생성되었습니다.';
+    RAISE NOTICE 'accounts, apartments 테이블이 생성되었습니다.';
 END $$;
