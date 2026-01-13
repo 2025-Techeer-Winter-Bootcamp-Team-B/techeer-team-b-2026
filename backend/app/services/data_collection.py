@@ -30,9 +30,17 @@ from app.core.config import settings
 from app.crud.state import state as state_crud
 from app.crud.apartment import apartment as apartment_crud
 from app.crud.apart_detail import apart_detail as apart_detail_crud
+from app.crud.transaction import sale as sale_crud
 from app.schemas.state import StateCreate, StateCollectionResponse
 from app.schemas.apartment import ApartmentCreate, ApartmentCollectionResponse
 from app.schemas.apart_detail import ApartDetailCreate, ApartDetailCollectionResponse
+from app.schemas.transaction import (
+    TransactionRequestSchema,
+    TransactionResponseSchema,
+    TransactionItemSchema,
+    SaleCreate,
+    SaleCollectionResponse
+)
 
 # 로거 설정
 logger = logging.getLogger(__name__)
@@ -61,6 +69,9 @@ MOLIT_APARTMENT_BASIC_API_URL = "https://apis.data.go.kr/1613000/AptBasisInfoSer
 
 # 국토부 아파트 상세정보 API 엔드포인트
 MOLIT_APARTMENT_DETAIL_API_URL = "https://apis.data.go.kr/1613000/AptBasisInfoServiceV4/getAphusDtlInfoV4"
+
+# 국토부 실거래가 API 엔드포인트 (아파트 매매)
+MOLIT_APARTMENT_SALE_API_URL = "https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev"
 
 # 시도 목록 (17개)
 CITY_NAMES = [
@@ -96,7 +107,7 @@ class DataCollectionService:
         if not settings.MOLIT_API_KEY:
             raise ValueError("MOLIT_API_KEY가 설정되지 않았습니다. .env 파일을 확인하세요.")
         self.api_key = settings.MOLIT_API_KEY
-    
+
     async def fetch_region_data(
         self,
         city_name: str,
@@ -1251,6 +1262,414 @@ class DataCollectionService:
                 total_processed=total_processed,
                 total_saved=total_saved,
                 skipped=skipped,
+                errors=errors + [str(e)],
+                message=f"수집 실패: {str(e)}"
+            )
+
+
+    async def fetch_sale_transaction_data(
+        self,
+        lawd_cd: str,
+        deal_ymd: str,
+        page_no: int = 1,
+        num_of_rows: int = 1000
+    ) -> Dict[str, Any]:
+        """
+        국토부 API에서 아파트 매매 거래 데이터 가져오기
+        
+        Args:
+            lawd_cd: 법정동코드 (5자리, 예: "11110")
+            deal_ymd: 계약년월 (YYYYMM 형식, 예: "202407")
+            page_no: 페이지 번호 (기본값: 1)
+            num_of_rows: 한 페이지 결과 수 (기본값: 1000)
+        
+        Returns:
+            API 응답 데이터 (dict)
+        
+        Raises:
+            httpx.HTTPError: API 호출 실패 시
+        """
+        # URL 인코딩된 API 키
+        encoded_key = quote(self.api_key)
+        
+        # API 요청 파라미터
+        params = {
+            "serviceKey": encoded_key,
+            "pageNo": str(page_no),
+            "numOfRows": str(num_of_rows),
+            "LAWD_CD": lawd_cd,  # 법정동코드
+            "DEAL_YMD": deal_ymd  # 계약년월
+        }
+        
+        logger.info(f"📡 실거래가 API 호출: 법정동코드={lawd_cd}, 계약년월={deal_ymd}, 페이지={page_no}")
+
+        # API 호출
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(MOLIT_APARTMENT_SALE_API_URL, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            if page_no == 1:
+                logger.debug(f"   🔍 API 응답 구조 확인: {list(data.keys()) if isinstance(data, dict) else '리스트'}")
+            
+            return data
+    
+    def parse_sale_transaction_data(
+        self,
+        api_response: Dict[str, Any]
+    ) -> tuple[List[TransactionItemSchema], int]:
+        """
+        실거래가 API 응답 파싱
+        
+        Args:
+            api_response: API 응답 데이터
+        
+        Returns:
+            (파싱된 거래 항목 목록, 전체 개수)
+        """
+        try:
+            # TransactionResponseSchema로 파싱
+            response_schema = TransactionResponseSchema(response=api_response)
+            
+            # 헤더 확인
+            header = response_schema.get_header()
+            if header and header.resultCode != "00":
+                logger.warning(f"⚠️ API 응답 오류: {header.resultMsg}")
+                return [], 0
+            
+            # 거래 항목 추출
+            items = response_schema.get_items()
+            
+            # 본문에서 전체 개수 확인
+            body = response_schema.get_body()
+            total_count = body.totalCount if body else len(items)
+            
+            logger.info(f"✅ 파싱 완료: {len(items)}개 거래 항목 (전체 {total_count}개 중)")
+            
+            return items, total_count
+            
+        except Exception as e:
+            logger.error(f"❌ 데이터 파싱 실패: {e}")
+            logger.debug(f"API 응답: {api_response}")
+            import traceback
+            logger.debug(traceback.format_exc())
+            return [], 0
+    
+    #api 응답을 DB에 맞춰서 변환
+    def convert_to_sale_create(
+        self,
+        item: TransactionItemSchema,
+        apt_id: int
+    ) -> Optional[SaleCreate]:
+        """
+        TransactionItemSchema를 SaleCreate로 변환
+        
+        Args:
+            item: 외부 API에서 받은 거래 항목
+            apt_id: 아파트 ID
+        
+        Returns:
+            SaleCreate 객체 또는 None (변환 실패 시)
+        """
+        try:
+            # 계약일 생성 (dealYear, dealMonth, dealDay)
+            contract_date = None
+            try:
+                if item.dealYear and item.dealMonth and item.dealDay:
+                    contract_date = date(
+                        int(item.dealYear),
+                        int(item.dealMonth),
+                        int(item.dealDay)
+                    )
+            except (ValueError, TypeError):
+                logger.warning(f"계약일 파싱 실패: {item.dealYear}-{item.dealMonth}-{item.dealDay}")
+            
+            # 거래가격 저장
+            trans_price = None
+            if item.dealAmount:
+                try:
+                    # 쉼표 제거 후 문자열 정리
+                    amount_str = item.dealAmount.replace(",", "").strip()
+                    if amount_str and amount_str != "":
+                        # 만원 단위 그대로 저장
+                        # 예: "12,000" 만원 → 12000 (만원 단위)
+                        amount_float = float(amount_str)
+                        trans_price = int(amount_float)
+                        
+                        # 저장 결과 로깅 (디버깅용)
+                        logger.debug(
+                            f"거래가격 저장: "
+                            f"원본='{item.dealAmount}' 만원 → "
+                            f"저장={trans_price:,} 만원"
+                        )
+                    else:
+                        logger.warning(f"거래가격이 빈 문자열입니다: '{item.dealAmount}'")
+                except (ValueError, TypeError) as e:
+                    logger.error(
+                        f"거래가격 파싱 실패: 원본='{item.dealAmount}', "
+                        f"오류 타입={type(e).__name__}, 메시지={str(e)}"
+                    )
+            else:
+                logger.debug("거래가격 정보가 없습니다 (dealAmount가 None 또는 빈 값)")
+            
+            # 전용면적 변환 (제곱미터)
+            exclusive_area = 0.0
+            if item.excluUseAr:
+                try:
+                    # 쉼표 제거 후 float 변환
+                    area_str = item.excluUseAr.replace(",", "").strip()
+                    if area_str:
+                        exclusive_area = float(area_str)
+                except (ValueError, TypeError):
+                    logger.warning(f"전용면적 파싱 실패: {item.excluUseAr}")
+                    # 필수 필드이므로 기본값 사용 불가 - None 반환
+                    return None
+            
+            # 층 변환
+            floor = 0
+            if item.floor:
+                try:
+                    floor = int(item.floor)
+                except (ValueError, TypeError):
+                    logger.warning(f"층 파싱 실패: {item.floor}")
+            
+            # 취소 여부 및 취소일
+            is_canceled = item.cdealType == "Y" if item.cdealType else False
+            cancel_date = None
+            if item.cdealDay and len(item.cdealDay) == 8:
+                try:
+                    cancel_date = date(
+                        int(item.cdealDay[:4]),
+                        int(item.cdealDay[4:6]),
+                        int(item.cdealDay[6:8])
+                    )
+                except (ValueError, TypeError):
+                    pass
+            
+            # 거래 유형 (dealingGbn이 있으면 사용, 없으면 기본값)
+            trans_type = item.dealingGbn if item.dealingGbn else "매매"
+            if len(trans_type) > 10:
+                trans_type = trans_type[:10]
+            
+            # SaleCreate 객체 생성
+            sale_create = SaleCreate(
+                apt_id=apt_id,
+                build_year=item.buildYear if item.buildYear else None,
+                trans_type=trans_type,
+                trans_price=trans_price,
+                exclusive_area=exclusive_area,
+                floor=floor,
+                building_num=item.aptDong if item.aptDong else None,
+                contract_date=contract_date,
+                is_canceled=is_canceled,
+                cancel_date=cancel_date
+            )
+            
+            return sale_create
+            
+        except Exception as e:
+            logger.error(f"❌ SaleCreate 변환 실패: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
+            return None
+    
+    async def collect_sale_transactions(
+        self,
+        db: AsyncSession,
+        *,
+        lawd_cd: str,
+        deal_ymd: str
+    ) -> SaleCollectionResponse:
+        """
+        특정 법정동코드와 계약년월의 매매 거래 데이터 수집 및 저장
+        
+        Args:
+            db: 데이터베이스 세션
+            lawd_cd: 법정동코드 (5자리, 예: "11110")
+            deal_ymd: 계약년월 (YYYYMM 형식, 예: "202407")
+        
+        Returns:
+            SaleCollectionResponse: 수집 결과 통계
+        """
+        total_fetched = 0
+        total_saved = 0
+        skipped = 0
+        not_found_apartment = 0
+        errors = []
+        
+        try:
+            logger.info("=" * 80)
+            logger.info(f"💰 매매 거래 데이터 수집 시작: 법정동코드={lawd_cd}, 계약년월={deal_ymd}")
+            logger.info("=" * 80)
+            
+            page_no = 1
+            has_more = True
+            num_of_rows = 1000  # 페이지당 요청할 레코드 수
+            
+            while has_more:
+                # 1. API 데이터 가져오기
+                try:
+                    api_response = await self.fetch_sale_transaction_data(
+                        lawd_cd=lawd_cd,
+                        deal_ymd=deal_ymd,
+                        page_no=page_no,
+                        num_of_rows=num_of_rows
+                    )
+                except httpx.HTTPError as e:
+                    error_msg = f"API 호출 실패 (페이지 {page_no}): {str(e)}"
+                    errors.append(error_msg)
+                    logger.error(f"❌ {error_msg}")
+                    break
+                except Exception as e:
+                    error_msg = f"API 호출 중 오류 (페이지 {page_no}): {str(e)}"
+                    errors.append(error_msg)
+                    logger.error(f"❌ {error_msg}")
+                    break
+                
+                # 2. 데이터 파싱
+                items, total_count = self.parse_sale_transaction_data(api_response)
+                
+                # 원본 데이터가 없으면 종료
+                if len(items) == 0:
+                    logger.info(f"   ℹ️  페이지 {page_no}: 데이터 없음 (종료)")
+                    has_more = False
+                    break
+                
+                total_fetched += len(items)
+                logger.info(f"   📄 페이지 {page_no}: {len(items)}개 거래 항목 (누적: {total_fetched}개)")
+                
+                # 3. 각 거래 항목 처리
+                for item_idx, item in enumerate(items, 1):
+                    try:
+                        # 3-1. aptSeq로 아파트 찾기
+                        # aptSeq 형식: "11110-2339" (법정동코드-단지코드)
+                        # kapt_code로 매칭 시도
+                        apt_id = None
+                        
+                        # aptSeq에서 kapt_code 추출 시도
+                        if item.aptSeq and "-" in item.aptSeq:
+                            # "11110-2339" 형식에서 뒷부분 추출
+                            parts = item.aptSeq.split("-")
+                            if len(parts) >= 2:
+                                # 뒷부분을 kapt_code로 사용
+                                potential_kapt_code = parts[-1]
+                                apartment = await apartment_crud.get_by_kapt_code(
+                                    db,
+                                    kapt_code=potential_kapt_code
+                                )
+                                if apartment:
+                                    apt_id = apartment.apt_id
+                        
+                        # aptSeq로 찾지 못했으면 aptNm으로 찾기 시도
+                        if not apt_id and item.aptNm:
+                            # aptNm으로 아파트 검색 (정확히 일치하는 것만)
+                            from sqlalchemy import select
+                            from app.models.apartment import Apartment
+                            result = await db.execute(
+                                select(Apartment)
+                                .where(Apartment.apt_name == item.aptNm)
+                                .where(Apartment.is_deleted == False)
+                                .limit(1)
+                            )
+                            apartment = result.scalar_one_or_none()
+                            if apartment:
+                                apt_id = apartment.apt_id
+                        
+                        # 아파트를 찾지 못한 경우
+                        if not apt_id:
+                            not_found_apartment += 1
+                            logger.warning(
+                                f"   ⚠️ [{item_idx}/{len(items)}] 아파트를 찾을 수 없음: "
+                                f"aptSeq={item.aptSeq}, aptNm={item.aptNm} "
+                                f"(건너뜀: {not_found_apartment}개)"
+                            )
+                            continue
+                        
+                        # 3-2. SaleCreate로 변환
+                        sale_create = self.convert_to_sale_create(item, apt_id)
+                        if not sale_create:
+                            error_msg = f"SaleCreate 변환 실패: aptSeq={item.aptSeq}"
+                            errors.append(error_msg)
+                            logger.warning(f"   ⚠️ [{item_idx}/{len(items)}] {error_msg}")
+                            continue
+                        
+                        # 3-3. 중복 체크 및 저장
+                        db_obj, is_created = await sale_crud.create_or_skip(
+                            db,
+                            obj_in=sale_create
+                        )
+                        
+                        if is_created:
+                            total_saved += 1
+                            logger.info(
+                                f"   ✅ [{item_idx}/{len(items)}] 저장 완료: "
+                                f"{item.aptNm} {sale_create.trans_price}원 "
+                                f"(전체 저장: {total_saved}개)"
+                            )
+                        else:
+                            skipped += 1
+                            logger.info(
+                                f"   ⏭️  [{item_idx}/{len(items)}] 건너뜀 (중복): "
+                                f"{item.aptNm} (전체 건너뜀: {skipped}개)"
+                            )
+                            
+                    except Exception as e:
+                        error_msg = f"거래 항목 처리 실패 (aptSeq={item.aptSeq if item else 'Unknown'}): {str(e)}"
+                        errors.append(error_msg)
+                        logger.warning(f"   ⚠️ [{item_idx}/{len(items)}] {error_msg}")
+                        import traceback
+                        logger.debug(traceback.format_exc())
+                
+                # 4. 다음 페이지 확인
+                body = TransactionResponseSchema(response=api_response).get_body()
+                if body:
+                    # 현재 페이지의 항목 수가 요청한 수보다 적으면 마지막 페이지
+                    if len(items) < num_of_rows:
+                        logger.info(f"   ✅ 마지막 페이지로 판단 (수집 {len(items)}개 < 요청 {num_of_rows}개)")
+                        has_more = False
+                    else:
+                        # 전체 개수 확인
+                        if body.totalCount <= total_fetched:
+                            logger.info(f"   ✅ 마지막 페이지로 판단 (전체 {body.totalCount}개 중 {total_fetched}개 수집)")
+                            has_more = False
+                        else:
+                            logger.info(f"   ⏭️  다음 페이지로... (전체 {body.totalCount}개 중 {total_fetched}개 수집, 다음 페이지: {page_no + 1})")
+                            page_no += 1
+                else:
+                    # body를 파싱할 수 없으면 현재 페이지가 마지막으로 간주
+                    has_more = False
+                
+                # API 호출 제한 방지를 위한 딜레이
+                await asyncio.sleep(0.2)
+            
+            logger.info("=" * 80)
+            logger.info(f"✅ 매매 거래 데이터 수집 완료")
+            logger.info(f"   - 수집: {total_fetched}개")
+            logger.info(f"   - 저장: {total_saved}개")
+            logger.info(f"   - 건너뜀 (중복): {skipped}개")
+            logger.info(f"   - 건너뜀 (아파트 없음): {not_found_apartment}개")
+            if errors:
+                logger.warning(f"   - 오류: {len(errors)}개")
+            logger.info("=" * 80)
+            
+            return SaleCollectionResponse(
+                success=len(errors) == 0,
+                total_fetched=total_fetched,
+                total_saved=total_saved,
+                skipped=skipped,
+                not_found_apartment=not_found_apartment,
+                errors=errors,
+                message=f"수집 완료: {total_saved}개 저장, {skipped}개 중복 건너뜀, {not_found_apartment}개 아파트 없음"
+            )
+            
+        except Exception as e:
+            logger.error(f"❌ 매매 거래 데이터 수집 실패: {e}", exc_info=True)
+            return SaleCollectionResponse(
+                success=False,
+                total_fetched=total_fetched,
+                total_saved=total_saved,
+                skipped=skipped,
+                not_found_apartment=not_found_apartment,
                 errors=errors + [str(e)],
                 message=f"수집 실패: {str(e)}"
             )

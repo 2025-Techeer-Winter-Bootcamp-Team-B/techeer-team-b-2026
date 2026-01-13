@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+build/
+dist/
+out/
+web-build/
+.vite/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Lock files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Expo
+.expo/
+.expo-shared/
+
+# Next.js
+.next/
+.vercel
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Config files
+*.config.js
+*.config.ts
+vite.config.ts
+
+# Misc
+*.tsbuildinfo

@@ -1,11 +1,7 @@
-"""
-아파트 관련 스키마
-
-요청/응답 데이터 검증 및 직렬화를 위한 Pydantic 스키마
-"""
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime, date
+from decimal import Decimal
 
 # ============ 서비스용 스키마 (DB 모델 기반) ============
 

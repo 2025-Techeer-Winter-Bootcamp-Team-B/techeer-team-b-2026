@@ -13,6 +13,7 @@ from app.services.data_collection import data_collection_service
 from app.schemas.state import StateCollectionResponse
 from app.schemas.apartment import ApartmentCollectionResponse
 from app.schemas.apart_detail import ApartDetailCollectionResponse
+from app.schemas.transaction import SaleCollectionResponse
 
 logger = logging.getLogger(__name__)
 
@@ -268,6 +269,137 @@ async def collect_apartments(
         
         return result
         
+    except ValueError as e:
+        # API 키 미설정 등 설정 오류
+        logger.error(f"❌ 설정 오류: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "CONFIGURATION_ERROR",
+                "message": str(e)
+            }
+        )
+    except Exception as e:
+        # 기타 오류
+        logger.error(f"❌ 데이터 수집 실패: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "COLLECTION_ERROR",
+                "message": f"데이터 수집 중 오류가 발생했습니다: {str(e)}"
+            }
+        )
+
+
+@router.post(
+    "/transactions/sales",
+    response_model=SaleCollectionResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["📥 Data Collection (데이터 수집)"],
+    summary="아파트 매매 거래 데이터 수집",
+    description="""
+    국토교통부 실거래가 API에서 아파트 매매 거래 데이터를 가져와서 데이터베이스에 저장합니다.
+    
+    **작동 방식:**
+    1. 법정동코드(lawd_cd)와 계약년월(deal_ymd)로 외부 API 호출
+    2. 페이지네이션하여 모든 거래 데이터 수집
+    3. 각 거래 항목의 aptSeq 또는 aptNm으로 아파트 찾기
+    4. 중복 거래 체크 (같은 아파트, 같은 날짜, 같은 가격/면적/층)
+    5. 새로운 거래만 데이터베이스에 저장
+    6. 진행 상황을 로그로 출력
+    
+    **주의사항:**
+    - MOLIT_API_KEY 환경변수가 설정되어 있어야 합니다
+    - API 호출 제한이 있을 수 있으므로 주의해서 사용하세요
+    - 이미 수집된 거래는 중복 저장되지 않습니다
+    - 아파트를 찾을 수 없는 거래는 건너뜁니다 (not_found_apartment 카운트)
+    
+    **파라미터:**
+    - lawd_cd: 법정동코드 (5자리, 예: "11110" - 서울특별시 종로구)
+    - deal_ymd: 계약년월 (YYYYMM 형식, 예: "202407" - 2024년 7월)
+    
+    **응답:**
+    - total_fetched: API에서 가져온 총 레코드 수
+    - total_saved: 데이터베이스에 저장된 레코드 수
+    - skipped: 중복으로 건너뛴 레코드 수
+    - not_found_apartment: 아파트를 찾을 수 없어 건너뛴 거래 수
+    - errors: 오류 메시지 목록
+    """,
+    responses={
+        200: {
+            "description": "데이터 수집 완료",
+            "model": SaleCollectionResponse
+        },
+        500: {
+            "description": "서버 오류 또는 API 키 미설정"
+        }
+    }
+)
+async def collect_sale_transactions(
+    db: AsyncSession = Depends(get_db),
+    lawd_cd: str = Query(..., description="법정동코드 (5자리, 예: 11110)", min_length=5, max_length=5),
+    deal_ymd: str = Query(..., description="계약년월 (YYYYMM 형식, 예: 202407)", min_length=6, max_length=6)
+) -> SaleCollectionResponse:
+    """
+    아파트 매매 거래 데이터 수집 - 국토부 실거래가 API에서 데이터를 가져와서 저장
+    
+    이 API는 국토교통부 실거래가 API를 호출하여:
+    - 특정 법정동코드와 계약년월의 매매 거래 데이터를 수집
+    - SALES 테이블에 저장
+    - 중복 데이터는 자동으로 건너뜀 (apt_id, contract_date, trans_price, exclusive_area, floor 기준)
+    - 아파트를 찾을 수 없는 거래는 건너뜀
+    
+    Args:
+        db: 데이터베이스 세션
+        lawd_cd: 법정동코드 (5자리, 예: "11110")
+        deal_ymd: 계약년월 (YYYYMM 형식, 예: "202407")
+    
+    Returns:
+        SaleCollectionResponse: 수집 결과 통계
+    
+    Raises:
+        HTTPException: API 키가 없거나 서버 오류 발생 시
+    """
+    try:
+        logger.info("=" * 60)
+        logger.info(f"💰 매매 거래 데이터 수집 API 호출됨: 법정동코드={lawd_cd}, 계약년월={deal_ymd}")
+        logger.info("=" * 60)
+        
+        # 파라미터 검증
+        if not lawd_cd.isdigit() or len(lawd_cd) != 5:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "INVALID_PARAMETER",
+                    "message": "lawd_cd는 5자리 숫자여야 합니다"
+                }
+            )
+        
+        if not deal_ymd.isdigit() or len(deal_ymd) != 6:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "INVALID_PARAMETER",
+                    "message": "deal_ymd는 6자리 숫자(YYYYMM 형식)여야 합니다"
+                }
+            )
+        
+        # 데이터 수집 실행
+        result = await data_collection_service.collect_sale_transactions(
+            db,
+            lawd_cd=lawd_cd,
+            deal_ymd=deal_ymd
+        )
+        
+        if result.success:
+            logger.info(f"✅ 데이터 수집 성공: {result.message}")
+        else:
+            logger.warning(f"⚠️ 데이터 수집 완료 (일부 오류): {result.message}")
+        
+        return result
+        
+    except HTTPException:
+        raise
     except ValueError as e:
         # API 키 미설정 등 설정 오류
         logger.error(f"❌ 설정 오류: {e}")
