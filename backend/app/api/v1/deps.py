@@ -14,7 +14,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import AsyncSessionLocal
 from app.core.clerk import verify_clerk_token, get_clerk_user
 from app.crud.account import account as account_crud
+
+# 모든 모델을 import하여 SQLAlchemy 관계 설정이 제대로 작동하도록 함
+from app.models import (  # noqa: F401
+    Account,
+    State,
+    Apartment,
+    ApartDetail,
+    Sale,
+    Rent,
+    HouseScore,
+    FavoriteLocation,
+    FavoriteApartment,
+    MyProperty,
+)
 from app.models.account import Account
+
+# SQLAlchemy 관계(relationship) 초기화를 위해 모든 모델 import
+from app.models import favorite, my_property  # noqa: F401
 
 # HTTP Bearer 토큰 스키마
 security = HTTPBearer(auto_error=False)
@@ -103,40 +120,37 @@ async def get_current_user(
     )
     
     if not user:
-        # 사용자가 없으면 JWT 토큰 정보를 사용하여 자동 생성
+        # 사용자가 없으면 JWT 토큰 정보 또는 Clerk API를 사용하여 자동 생성
         # (Webhook이 아직 도착하지 않았거나, 로컬 개발 환경인 경우)
         import logging
         logger = logging.getLogger(__name__)
         logger.info(f"사용자가 DB에 없음, 자동 생성 시작: {clerk_user_id}")
         
-        # JWT 토큰에서 이메일 추출 (Clerk JWT의 email 클레임 또는 기본값 사용)
+        # JWT 토큰에서 이메일 추출 시도
         email = token_payload.get("email")
+        
+        # JWT에 이메일이 없거나 임시 이메일인 경우 Clerk API 호출
+        if not email or email.endswith("@clerk.user"):
+            logger.info(f"JWT에 실제 이메일이 없음, Clerk API 호출: {clerk_user_id}")
+            clerk_user_info = await get_clerk_user(clerk_user_id)
+            
+            if clerk_user_info:
+                # Clerk API에서 가져온 정보 사용
+                email = clerk_user_info.get("email") or email
+                logger.info(f"Clerk API에서 사용자 정보 가져옴: email={email}")
+        
+        # 이메일이 여전히 없으면 임시 이메일 생성
         if not email:
-            # 이메일이 없으면 clerk_user_id 기반으로 임시 이메일 생성
             email = f"{clerk_user_id}@clerk.user"
         
-        # 닉네임 추출 (우선순위: username > first_name > 이메일 앞부분)
-        nickname = (
-            token_payload.get("username") or 
-            token_payload.get("first_name") or 
-            email.split("@")[0] if "@" in email else "사용자"
-        )
-        # 닉네임 길이 제한 (DB 필드 크기에 맞춤)
-        nickname = nickname[:50] if nickname else "사용자"
-        
-        # 프로필 이미지 URL (JWT에 있을 수 있음)
-        profile_image_url = token_payload.get("image_url") or token_payload.get("picture")
-        
         try:
-            # 새 사용자 생성
+            # 새 사용자 생성 (nickname, profile_image_url은 DB 스키마에 없으므로 제거)
             user = await account_crud.create_from_clerk(
                 db,
                 clerk_user_id=clerk_user_id,
-                email=email,
-                nickname=nickname,
-                profile_image_url=profile_image_url
+                email=email
             )
-            logger.info(f"사용자 자동 생성 완료: {user.account_id}")
+            logger.info(f"사용자 자동 생성 완료: {user.account_id}, email={email}")
         except Exception as e:
             logger.error(f"사용자 자동 생성 실패: {e}")
             raise HTTPException(
@@ -147,8 +161,8 @@ async def get_current_user(
                 }
             )
     
-    # 마지막 로그인 시간 업데이트
-    await account_crud.update_last_login(db, clerk_user_id=clerk_user_id)
+    # 라스트 로그인 시간이 필요없음
+    # await account_crud.update_last_login(db, clerk_user_id=clerk_user_id)
     
     return user
 
