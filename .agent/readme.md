@@ -15,6 +15,7 @@
 | `02_backend_dev.md` | **FastAPI BE** | 데이터 집계(Ranking), AI 분석(LLM) 연동, JWT 인증, API 구현 |
 | `03_data_gis_engineer.md` | **DBA & GIS** | PostGIS 공간 쿼리 최적화, 대용량 거래 데이터 인덱싱/파티셔닝 |
 | `04_devops_infra.md` | **DevOps** | AWS 인프라 구축, CI/CD, 모니터링, 데이터 파이프라인 관리 |
+| `07_security_guide.md` | **Security** | 인증키 보호, `.env` 파일 관리, 보안 체크리스트 |
 
 ## 3. Workflow Protocol
 작업은 반드시 다음 순서를 따릅니다.

@@ -96,6 +96,10 @@ class DataCollectionService:
         if not settings.MOLIT_API_KEY:
             raise ValueError("MOLIT_API_KEY가 설정되지 않았습니다. .env 파일을 확인하세요.")
         self.api_key = settings.MOLIT_API_KEY
+        
+        # 키 값 로그 (보안을 위해 일부만 표시)
+        key_preview = self.api_key[:10] + "..." + self.api_key[-10:] if len(self.api_key) > 20 else "***"
+        logger.info(f"🔑 MOLIT_API_KEY 로드 완료: {key_preview} (전체 길이: {len(self.api_key)})")
     
     async def fetch_region_data(
         self,
@@ -121,21 +125,66 @@ class DataCollectionService:
         encoded_city_name = quote(city_name)
         
         # API 요청 파라미터
-        # locatadd_nm: 주소명으로 필터링 (시도명으로 시작하는 모든 주소)
+        # 공공데이터포털 API는 serviceKey를 디코딩된 상태로 받아야 할 수 있음
+        # httpx는 자동으로 URL 인코딩하므로, serviceKey를 그대로 전달
         params = {
-            "serviceKey": self.api_key,
+            "serviceKey": self.api_key,  # URL 인코딩하지 않음
             "pageNo": str(page_no),
             "numOfRows": str(num_of_rows),
             "type": "json",
             "locatadd_nm": city_name  # 예: "서울특별시"로 검색하면 "서울특별시"로 시작하는 모든 주소 반환
         }
         
+        # 디버깅: 실제 전달되는 파라미터 확인
+        logger.debug(f"   🔍 요청 파라미터: serviceKey={self.api_key[:10]}..., pageNo={page_no}, numOfRows={num_of_rows}, locatadd_nm={city_name}")
+        
         logger.info(f"📡 API 호출: {city_name} (페이지 {page_no}, 요청: {num_of_rows}개)")
         
+        # API 호출 전 로그 (디버깅용)
+        key_preview = self.api_key[:10] + "..." + self.api_key[-10:] if len(self.api_key) > 20 else "***"
+        logger.info(f"   🔑 사용 중인 API 키: {key_preview}")
+        logger.info(f"   🌐 API 엔드포인트: {MOLIT_REGION_API_URL}")
+        logger.info(f"   📋 파라미터: pageNo={page_no}, numOfRows={num_of_rows}, locatadd_nm={city_name}")
+        
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(MOLIT_REGION_API_URL, params=params)
-            response.raise_for_status()
-            data = response.json()
+            try:
+                # 공공데이터포털 API는 serviceKey를 URL 인코딩하지 않고 그대로 전달해야 할 수 있음
+                # httpx는 자동으로 URL 인코딩하므로, 수동으로 URL을 구성하는 방법도 시도
+                # 먼저 일반적인 방법으로 시도
+                response = await client.get(MOLIT_REGION_API_URL, params=params)
+                
+                # 응답 상태 코드 로그
+                logger.info(f"   📊 응답 상태 코드: {response.status_code}")
+                
+                # 403 오류인 경우 상세 정보 로그 (raise_for_status 전에 확인)
+                if response.status_code == 403:
+                    logger.error(f"   ❌ 403 Forbidden 오류 발생!")
+                    logger.error(f"   🔗 요청 URL: {response.url}")
+                    logger.error(f"   📄 응답 본문 전체: {response.text}")  # 전체 응답 본문
+                    logger.error(f"   📋 응답 헤더: {dict(response.headers)}")
+                    # 응답 본문을 JSON으로 파싱 시도
+                    try:
+                        error_data = response.json()
+                        logger.error(f"   📦 응답 JSON: {error_data}")
+                    except:
+                        logger.error(f"   ⚠️ JSON 파싱 실패 (텍스트 응답): {response.text[:200]}")
+                    # 403 오류는 raise_for_status() 전에 상세 정보를 로깅한 후 예외 발생
+                
+                response.raise_for_status()
+                data = response.json()
+            except httpx.HTTPStatusError as e:
+                # HTTP 오류 상세 로그
+                logger.error(f"   ❌ HTTP 오류 발생: {e.response.status_code}")
+                logger.error(f"   🔗 요청 URL: {e.request.url}")
+                logger.error(f"   📄 응답 본문 전체: {e.response.text}")
+                logger.error(f"   📋 응답 헤더: {dict(e.response.headers)}")
+                # 응답 본문을 JSON으로 파싱 시도
+                try:
+                    error_data = e.response.json()
+                    logger.error(f"   📦 응답 JSON: {error_data}")
+                except:
+                    logger.error(f"   ⚠️ JSON 파싱 실패 (텍스트 응답)")
+                raise
             
             # API 응답 구조 확인용 로깅 (첫 페이지만)
             if page_no == 1:
@@ -402,6 +451,12 @@ class DataCollectionService:
                                 logger.info(f"      ⏭️  건너뜀 (이미 존재): {region_city} {region_name} (전체 건너뜀: {skipped}개)")
                                 
                         except Exception as e:
+                            # 트랜잭션 오류 발생 시 롤백하여 다음 작업이 계속 진행될 수 있도록 함
+                            try:
+                                await db.rollback()
+                            except:
+                                pass  # 롤백 실패는 무시 (이미 롤백된 경우 등)
+                            
                             error_msg = f"{city_name} - {region_data.get('region_name', 'Unknown')}: {str(e)}"
                             errors.append(error_msg)
                             logger.warning(f"      ⚠️ 저장 실패: {error_msg}")
@@ -414,8 +469,8 @@ class DataCollectionService:
                         logger.info(f"   ⏭️  다음 페이지로... (원본 {original_count}개, 다음 페이지: {page_no + 1})")
                         page_no += 1
                     
-                    # API 호출 제한 방지를 위한 딜레이
-                    await asyncio.sleep(0.2)
+                    # API 호출 제한 방지를 위한 딜레이 (0.2초 -> 0.5초로 증가)
+                    await asyncio.sleep(0.5)
                 
                 logger.info(f"✅ {city_name} 완료: 총 {page_no}페이지 처리, 원본 {city_total_original}개 → 수집 {city_fetched}개, 저장 {city_saved}개, 건너뜀 {city_skipped}개")
                 logger.info(f"   📊 현재까지 전체 통계: 수집 {total_fetched}개, 저장 {total_saved}개, 건너뜀 {skipped}개")
@@ -610,7 +665,22 @@ class DataCollectionService:
                         bjd_code = apt_data.get('bjd_code', '')
                         
                         # bjdCode를 region_code로 사용하여 region_id 찾기
-                        region = await state_crud.get_by_region_code(db, region_code=bjd_code)
+                        # 단계별로 찾기: 전체 코드 → 시군구 코드(5자리) → 시도 코드(2자리)
+                        region = None
+                        
+                        if bjd_code:
+                            # 1단계: 전체 법정동 코드로 찾기
+                            region = await state_crud.get_by_region_code(db, region_code=bjd_code)
+                            
+                            # 2단계: 시군구 코드(앞 5자리)로 찾기
+                            if not region and len(bjd_code) >= 5:
+                                sigungu_code = bjd_code[:5] + '00000'  # 시군구 코드 + '00000'
+                                region = await state_crud.get_by_region_code(db, region_code=sigungu_code)
+                            
+                            # 3단계: 시도 코드(앞 2자리)로 찾기
+                            if not region and len(bjd_code) >= 2:
+                                sido_code = bjd_code[:2] + '00000000'  # 시도 코드 + '00000000'
+                                region = await state_crud.get_by_region_code(db, region_code=sido_code)
                         
                         if not region:
                             error_msg = f"아파트 '{apt_name}' (코드: {kapt_code}): 법정동 코드 '{bjd_code}'에 해당하는 지역을 찾을 수 없습니다."
@@ -641,6 +711,12 @@ class DataCollectionService:
                             logger.info(f"      ⏭️  건너뜀 (이미 존재): {apt_name} (전체 건너뜀: {skipped}개)")
                             
                     except Exception as e:
+                        # 트랜잭션 오류 발생 시 롤백하여 다음 작업이 계속 진행될 수 있도록 함
+                        try:
+                            await db.rollback()
+                        except:
+                            pass  # 롤백 실패는 무시 (이미 롤백된 경우 등)
+                        
                         error_msg = f"아파트 '{apt_data.get('apt_name', 'Unknown')}': {str(e)}"
                         errors.append(error_msg)
                         logger.warning(f"      ⚠️ 저장 실패: {error_msg}")
@@ -653,8 +729,8 @@ class DataCollectionService:
                     logger.info(f"   ⏭️  다음 페이지로... (원본 {original_count}개, 다음 페이지: {page_no + 1})")
                     page_no += 1
                 
-                # API 호출 제한 방지를 위한 딜레이
-                await asyncio.sleep(0.2)
+                # API 호출 제한 방지를 위한 딜레이 (0.2초 -> 0.5초로 증가)
+                await asyncio.sleep(0.5)
             
             logger.info("=" * 80)
             logger.info(f"✅ 아파트 목록 수집 완료")
@@ -686,12 +762,13 @@ class DataCollectionService:
                 message=f"수집 실패: {str(e)}"
             )
 
-    async def fetch_apartment_basic_info(self, kapt_code: str) -> Dict[str, Any]:
+    async def fetch_apartment_basic_info(self, kapt_code: str, max_retries: int = 3) -> Dict[str, Any]:
         """
         국토부 API에서 아파트 기본정보 가져오기
         
         Args:
             kapt_code: 국토부 단지코드
+            max_retries: 최대 재시도 횟수 (기본값: 3)
         
         Returns:
             API 응답 데이터 (dict)
@@ -706,18 +783,50 @@ class DataCollectionService:
         
         logger.debug(f"기본정보 API 호출: {kapt_code}")
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(MOLIT_APARTMENT_BASIC_API_URL, params=params)
-            response.raise_for_status()
-            data = response.json()
-            return data
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.get(MOLIT_APARTMENT_BASIC_API_URL, params=params)
+                    
+                    # 429 Too Many Requests 오류 처리
+                    if response.status_code == 429:
+                        wait_time = (2 ** attempt) * 10  # 10초, 20초, 40초로 증가 (5초 → 10초로 변경)
+                        if attempt < max_retries - 1:
+                            logger.warning(f"⚠️ 429 오류 발생 (시도 {attempt + 1}/{max_retries}): {wait_time}초 대기 후 재시도...")
+                            await asyncio.sleep(wait_time)
+                            continue
+                        else:
+                            response.raise_for_status()
+                    
+                    response.raise_for_status()
+                    data = response.json()
+                    return data
+                    
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429 and attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) * 10  # 10초, 20초, 40초로 증가 (5초 → 10초로 변경)
+                    logger.warning(f"⚠️ 429 오류 발생 (시도 {attempt + 1}/{max_retries}): {wait_time}초 대기 후 재시도...")
+                    await asyncio.sleep(wait_time)
+                    continue
+                raise
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) * 2
+                    logger.warning(f"⚠️ API 호출 실패 (시도 {attempt + 1}/{max_retries}): {wait_time}초 대기 후 재시도...")
+                    await asyncio.sleep(wait_time)
+                    continue
+                raise
+        
+        # 모든 재시도 실패
+        raise httpx.HTTPError(f"API 호출 실패: 최대 재시도 횟수({max_retries}) 초과")
     
-    async def fetch_apartment_detail_info(self, kapt_code: str) -> Dict[str, Any]:
+    async def fetch_apartment_detail_info(self, kapt_code: str, max_retries: int = 3) -> Dict[str, Any]:
         """
         국토부 API에서 아파트 상세정보 가져오기
         
         Args:
             kapt_code: 국토부 단지코드
+            max_retries: 최대 재시도 횟수 (기본값: 3)
         
         Returns:
             API 응답 데이터 (dict)
@@ -732,11 +841,42 @@ class DataCollectionService:
         
         logger.debug(f"상세정보 API 호출: {kapt_code}")
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(MOLIT_APARTMENT_DETAIL_API_URL, params=params)
-            response.raise_for_status()
-            data = response.json()
-            return data
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.get(MOLIT_APARTMENT_DETAIL_API_URL, params=params)
+                    
+                    # 429 Too Many Requests 오류 처리
+                    if response.status_code == 429:
+                        wait_time = (2 ** attempt) * 10  # 10초, 20초, 40초로 증가 (5초 → 10초로 변경)
+                        if attempt < max_retries - 1:
+                            logger.warning(f"⚠️ 429 오류 발생 (시도 {attempt + 1}/{max_retries}): {wait_time}초 대기 후 재시도...")
+                            await asyncio.sleep(wait_time)
+                            continue
+                        else:
+                            response.raise_for_status()
+                    
+                    response.raise_for_status()
+                    data = response.json()
+                    return data
+                    
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429 and attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) * 10  # 10초, 20초, 40초로 증가 (5초 → 10초로 변경)
+                    logger.warning(f"⚠️ 429 오류 발생 (시도 {attempt + 1}/{max_retries}): {wait_time}초 대기 후 재시도...")
+                    await asyncio.sleep(wait_time)
+                    continue
+                raise
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) * 2
+                    logger.warning(f"⚠️ API 호출 실패 (시도 {attempt + 1}/{max_retries}): {wait_time}초 대기 후 재시도...")
+                    await asyncio.sleep(wait_time)
+                    continue
+                raise
+        
+        # 모든 재시도 실패
+        raise httpx.HTTPError(f"API 호출 실패: 최대 재시도 횟수({max_retries}) 초과")
     
     def parse_date(self, date_str: Optional[str]) -> Optional[str]:
         """
@@ -986,7 +1126,7 @@ class DataCollectionService:
                     # 3단계: 기본정보 API 호출
                     try:
                         basic_info = await self.fetch_apartment_basic_info(kapt_code)
-                        await asyncio.sleep(0.2)  # API 호출 제한 방지
+                        await asyncio.sleep(2.0)  # API 호출 제한 방지 (0.5초 -> 2.0초로 증가)
                         
                         # API 응답 구조 확인
                         if not isinstance(basic_info, dict):
@@ -1050,7 +1190,7 @@ class DataCollectionService:
                     # 4단계: 상세정보 API 호출
                     try:
                         detail_info = await self.fetch_apartment_detail_info(kapt_code)
-                        await asyncio.sleep(0.2)  # API 호출 제한 방지
+                        await asyncio.sleep(2.0)  # API 호출 제한 방지 (0.5초 -> 2.0초로 증가)
                         
                         # API 응답 구조 확인
                         if not isinstance(detail_info, dict):

@@ -55,6 +55,46 @@ class CRUDState(CRUDBase[State, StateCreate, StateUpdate]):
         )
         return result.scalar_one_or_none()
     
+    async def find_by_region_code_prefix(
+        self,
+        db: AsyncSession,
+        *,
+        region_code_prefix: str,
+        exact_length: Optional[int] = None
+    ) -> Optional[State]:
+        """
+        지역코드 접두사로 지역 정보 조회 (부분 매칭)
+        
+        법정동 코드가 정확히 매칭되지 않을 때, 상위 레벨 지역을 찾기 위해 사용합니다.
+        
+        Args:
+            db: 데이터베이스 세션
+            region_code_prefix: 지역코드 접두사 (예: '29170' = 시군구 코드)
+            exact_length: 정확한 길이 (예: 5면 시군구 레벨만 찾음)
+        
+        Returns:
+            State 객체 또는 None
+        """
+        query = select(State).where(State.is_deleted == False)
+        
+        if exact_length:
+            # 정확한 길이로 시작하는 코드 찾기
+            query = query.where(
+                State.region_code.like(f"{region_code_prefix}%")
+            ).where(
+                db.func.length(State.region_code) == exact_length
+            )
+        else:
+            # 접두사로 시작하는 코드 찾기 (가장 짧은 것 우선 = 가장 상위 레벨)
+            query = query.where(
+                State.region_code.like(f"{region_code_prefix}%")
+            ).order_by(
+                db.func.length(State.region_code).asc()
+            )
+        
+        result = await db.execute(query)
+        return result.scalar_one_or_none()
+    
     async def get_by_city_name(
         self,
         db: AsyncSession,
@@ -106,20 +146,24 @@ class CRUDState(CRUDBase[State, StateCreate, StateUpdate]):
             - (State, False): 이미 존재하여 건너뜀
             - (None, False): 오류 발생
         """
-        # 중복 확인
-        existing = await self.get_by_region_code(db, region_code=obj_in.region_code)
-        if existing:
-            return existing, False
-        
-        # 새로 생성
         try:
+            # 중복 확인
+            existing = await self.get_by_region_code(db, region_code=obj_in.region_code)
+            if existing:
+                return existing, False
+            
+            # 새로 생성
             db_obj = State(**obj_in.model_dump())
             db.add(db_obj)
             await db.commit()
             await db.refresh(db_obj)
             return db_obj, True
         except Exception as e:
-            await db.rollback()
+            # 오류 발생 시 롤백하여 트랜잭션을 정리
+            try:
+                await db.rollback()
+            except:
+                pass  # 롤백 실패는 무시 (이미 롤백된 경우 등)
             raise e
 
 

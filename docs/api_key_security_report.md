@@ -13,7 +13,7 @@
 ### ⚠️ 노출된 키
 
 #### 1. Clerk Publishable Key (테스트)
-**키**: `pk_test_Z3VpZGluZy1iYXNzLTE3LmNsZXJrLmFjY291bnRzLmRldiQ` ⚠️ **노출됨 - 키 재생성 권장**
+**키**: `pk_test_YOUR_KEY_HERE` ⚠️ **예시 키 - 실제 키는 절대 문서에 포함하지 마세요**
 
 **노출 위치**:
 - `frontend/서버_재시작_가이드.md` (line 56)
@@ -42,17 +42,17 @@
 
 1. **frontend/서버_재시작_가이드.md**
    ```markdown
-   "pk_test_Z3VpZGluZy1iYXNzLTE3LmNsZXJrLmFjY291bnRzLmRldiQ"  ← 실제 키 노출
+   "pk_test_YOUR_KEY_HERE"  ← 예시 키 (실제 키는 절대 포함하지 마세요)
    ```
 
 2. **frontend/WebView_환경변수_확인.md**
    ```markdown
-   "pk_test_Z3VpZGluZy1iYXNzLTE3LmNsZXJrLmFjY291bnRzLmRldiQ"  ← 실제 키 노출
+   "pk_test_YOUR_KEY_HERE"  ← 예시 키 (실제 키는 절대 포함하지 마세요)
    ```
 
 3. **frontend/환경변수_확인_가이드.md**
    ```markdown
-   "pk_test_Z3VpZGluZy1iYXNzLTE3LmNsZXJrLmFjY291bnRzLmRldiQ"  ← 실제 키 노출
+   "pk_test_YOUR_KEY_HERE"  ← 예시 키 (실제 키는 절대 포함하지 마세요)
    ```
    
    **✅ 수정 완료**: 위 파일들에서 실제 키를 `pk_test_YOUR_KEY_HERE`로 마스킹 처리됨

@@ -3,7 +3,7 @@
 
 데이터베이스 작업을 담당하는 레이어
 """
-from typing import Optional
+from typing import Optional, List
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -78,21 +78,78 @@ class CRUDApartment(CRUDBase[Apartment, ApartmentCreate, ApartmentUpdate]):
             - (Apartment, False): 이미 존재하여 건너뜀
             - (None, False): 오류 발생
         """
-        # 중복 확인
-        existing = await self.get_by_kapt_code(db, kapt_code=obj_in.kapt_code)
-        if existing:
-            return existing, False
-        
-        # 새로 생성
         try:
+            # 중복 확인
+            existing = await self.get_by_kapt_code(db, kapt_code=obj_in.kapt_code)
+            if existing:
+                return existing, False
+            
+            # 새로 생성
             db_obj = Apartment(**obj_in.model_dump())
             db.add(db_obj)
             await db.commit()
             await db.refresh(db_obj)
             return db_obj, True
         except Exception as e:
-            await db.rollback()
+            # 오류 발생 시 롤백하여 트랜잭션을 정리
+            try:
+                await db.rollback()
+            except:
+                pass  # 롤백 실패는 무시 (이미 롤백된 경우 등)
             raise e
+    
+    async def search_by_name(
+        self,
+        db: AsyncSession,
+        *,
+        query: str,
+        limit: int = 10
+    ) -> List[Apartment]:
+        """
+        아파트명으로 검색 (DB 쿼리)
+        
+        검색어를 포함하는 아파트 목록을 반환합니다.
+        대소문자 구분 없이 검색하며, 삭제되지 않은 아파트만 조회합니다.
+        
+        Args:
+            db: 데이터베이스 세션
+            query: 검색어 (최소 2글자)
+            limit: 반환할 결과 개수 (기본 10개, 최대 50개)
+        
+        Returns:
+            Apartment 객체 리스트
+        
+        Note:
+            - ILIKE를 사용하여 대소문자 구분 없이 검색
+            - is_deleted가 False인 아파트만 조회
+            - apt_name 오름차순 정렬
+            - 성능을 위해 apt_name에 인덱스가 필요함
+        """
+        # 검색어 길이 검증 (최소 2글자)
+        if len(query) < 2:
+            return []
+        
+        # limit 범위 제한 (최대 50개)
+        limit = min(limit, 50)
+        limit = max(limit, 1)
+        
+        # DB 쿼리 실행
+        # is_deleted 필드가 있으면 삭제되지 않은 것만 조회
+        query_obj = select(Apartment).where(
+            Apartment.apt_name.ilike(f"%{query}%")
+        )
+        
+        # is_deleted 필드가 있는 경우에만 필터 추가
+        if hasattr(Apartment, 'is_deleted'):
+            query_obj = query_obj.where(Apartment.is_deleted == False)
+        
+        result = await db.execute(
+            query_obj
+            .order_by(Apartment.apt_name)
+            .limit(limit)
+        )
+        
+        return list(result.scalars().all())
 
     async def get_by_apt_id(
         self,
