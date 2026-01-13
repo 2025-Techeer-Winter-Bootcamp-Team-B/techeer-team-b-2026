@@ -15,23 +15,22 @@ from typing import Optional
 
 class AccountUpdate(BaseModel):
     """프로필 수정 요청 스키마"""
-    nickname: Optional[str] = Field(
+    email: Optional[str] = Field(
         None,
-        min_length=2,
-        max_length=20,
-        description="닉네임 (2~20자)"
+        max_length=255,
+        description="이메일 (캐시 저장용)"
     )
-    profile_image_url: Optional[str] = Field(
+    is_admin: Optional[str] = Field(
         None,
-        max_length=500,
-        description="프로필 이미지 URL"
+        max_length=255,
+        description="관리자 여부"
     )
     
     class Config:
         json_schema_extra = {
             "example": {
-                "nickname": "홍길동",
-                "profile_image_url": "https://example.com/profile.jpg"
+                "email": "user@example.com",
+                "is_admin": "Y"
             }
         }
 
@@ -63,12 +62,12 @@ class ClerkWebhookEvent(BaseModel):
 class AccountBase(BaseModel):
     """사용자 기본 정보"""
     account_id: int = Field(..., description="계정 ID")
-    clerk_user_id: str = Field(..., description="Clerk 사용자 ID")
-    email: EmailStr = Field(..., description="이메일")
-    nickname: str = Field(..., description="닉네임")
-    profile_image_url: Optional[str] = Field(None, description="프로필 이미지 URL")
-    last_login_at: Optional[datetime] = Field(None, description="마지막 로그인 시간")
-    created_at: datetime = Field(..., description="가입일")
+    clerk_user_id: Optional[str] = Field(None, description="Clerk 사용자 ID")
+    email: Optional[str] = Field(None, description="이메일 (캐시 저장용)")
+    is_admin: Optional[str] = Field(None, description="관리자 여부")
+    created_at: Optional[datetime] = Field(None, description="가입일")
+    updated_at: Optional[datetime] = Field(None, description="수정일")
+    is_deleted: bool = Field(False, description="삭제 여부")
     
     class Config:
         from_attributes = True  # SQLAlchemy 모델에서 변환 가능
@@ -77,10 +76,10 @@ class AccountBase(BaseModel):
                 "account_id": 1,
                 "clerk_user_id": "user_2abc123def456",
                 "email": "user@example.com",
-                "nickname": "홍길동",
-                "profile_image_url": "https://example.com/profile.jpg",
-                "last_login_at": "2026-01-11T12:00:00Z",
-                "created_at": "2026-01-01T00:00:00Z"
+                "is_admin": "Y",
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z",
+                "is_deleted": False
             }
         }
 
