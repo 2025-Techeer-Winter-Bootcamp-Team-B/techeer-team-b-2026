@@ -290,9 +290,8 @@ async def collect_apartments(
             }
         )
 
-
 @router.post(
-    "/transactions/sales",
+    "/transactions/sale",
     response_model=SaleCollectionResponse,
     status_code=status.HTTP_200_OK,
     tags=["📥 Data Collection (데이터 수집)"],
@@ -329,6 +328,9 @@ async def collect_apartments(
         200: {
             "description": "데이터 수집 완료",
             "model": SaleCollectionResponse
+        },
+        400: {
+            "description": "잘못된 파라미터"
         },
         500: {
             "description": "서버 오류 또는 API 키 미설정"
@@ -399,6 +401,7 @@ async def collect_sale_transactions(
         return result
         
     except HTTPException:
+        # HTTPException은 그대로 전파
         raise
     except ValueError as e:
         # API 키 미설정 등 설정 오류
