@@ -11,10 +11,13 @@ Docker 컨테이너에서 실행 가능한 데이터베이스 관리 명령어 �
     # 명령줄 모드 (하위 호환성)
     docker exec -it realestate-backend python -m app.db_admin list
     docker exec -it realestate-backend python -m app.db_admin info states
+    docker exec -it realestate-backend python -m app.db_admin rebuild
 """
 import asyncio
 import sys
 import argparse
+import os
+from pathlib import Path
 from typing import List, Optional
 from sqlalchemy import text, inspect
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -159,6 +162,139 @@ class DatabaseAdmin:
             print(f"❌ 오류 발생: {e}")
             return False
     
+    def _split_sql_statements(self, sql_content: str) -> List[str]:
+        """
+        SQL 파일 내용을 개별 명령으로 분리
+        
+        DO $$ ... END $$; 블록은 하나의 명령으로 유지
+        
+        Args:
+            sql_content: SQL 파일 전체 내용
+        
+        Returns:
+            SQL 명령 리스트
+        """
+        statements = []
+        current_statement = []
+        in_do_block = False
+        dollar_quote = None  # $$ 또는 $tag$ 같은 구분자
+        
+        lines = sql_content.split('\n')
+        
+        for line in lines:
+            # 주석만 있는 줄은 건너뛰기
+            stripped = line.strip()
+            if not stripped or stripped.startswith('--'):
+                continue
+            
+            # DO $$ 블록 시작 감지
+            if 'DO' in stripped.upper() and '$$' in stripped:
+                in_do_block = True
+                # $$ 또는 $tag$ 같은 구분자 찾기
+                import re
+                match = re.search(r'\$\$|\$[A-Za-z_]*\$', stripped)
+                if match:
+                    dollar_quote = match.group()
+                current_statement.append(line)
+                continue
+            
+            # DO $$ 블록 내부
+            if in_do_block:
+                current_statement.append(line)
+                # END $$; 또는 END $tag$; 감지
+                if f'END {dollar_quote}' in stripped.upper() or f'END{dollar_quote}' in stripped.upper():
+                    # 세미콜론으로 끝나는지 확인
+                    if stripped.endswith(';'):
+                        # DO 블록 완료
+                        statements.append('\n'.join(current_statement))
+                        current_statement = []
+                        in_do_block = False
+                        dollar_quote = None
+                continue
+            
+            # 일반 SQL 명령
+            current_statement.append(line)
+            
+            # 세미콜론으로 끝나면 명령 완료
+            if stripped.endswith(';'):
+                stmt = '\n'.join(current_statement).strip()
+                if stmt:
+                    statements.append(stmt)
+                current_statement = []
+        
+        # 마지막 명령이 세미콜론 없이 끝난 경우
+        if current_statement:
+            stmt = '\n'.join(current_statement).strip()
+            if stmt:
+                statements.append(stmt)
+        
+        return statements
+    
+    async def get_table_relationships(self, table_name: Optional[str] = None) -> List[dict]:
+        """
+        테이블 간 관계 조회 (Foreign Key)
+        
+        Args:
+            table_name: 특정 테이블명 (None이면 모든 테이블)
+        
+        Returns:
+            관계 정보 리스트
+        """
+        async with self.engine.connect() as conn:
+            if table_name:
+                # 특정 테이블의 관계만 조회
+                query = text("""
+                    SELECT
+                        tc.table_name AS from_table,
+                        kcu.column_name AS from_column,
+                        ccu.table_name AS to_table,
+                        ccu.column_name AS to_column,
+                        tc.constraint_name AS constraint_name
+                    FROM information_schema.table_constraints AS tc
+                    JOIN information_schema.key_column_usage AS kcu
+                      ON tc.constraint_name = kcu.constraint_name
+                      AND tc.table_schema = kcu.table_schema
+                    JOIN information_schema.constraint_column_usage AS ccu
+                      ON ccu.constraint_name = tc.constraint_name
+                      AND ccu.table_schema = tc.table_schema
+                    WHERE tc.constraint_type = 'FOREIGN KEY'
+                      AND tc.table_schema = 'public'
+                      AND (tc.table_name = :table_name OR ccu.table_name = :table_name)
+                    ORDER BY tc.table_name, kcu.column_name
+                """).bindparams(table_name=table_name)
+            else:
+                # 모든 테이블의 관계 조회
+                query = text("""
+                    SELECT
+                        tc.table_name AS from_table,
+                        kcu.column_name AS from_column,
+                        ccu.table_name AS to_table,
+                        ccu.column_name AS to_column,
+                        tc.constraint_name AS constraint_name
+                    FROM information_schema.table_constraints AS tc
+                    JOIN information_schema.key_column_usage AS kcu
+                      ON tc.constraint_name = kcu.constraint_name
+                      AND tc.table_schema = kcu.table_schema
+                    JOIN information_schema.constraint_column_usage AS ccu
+                      ON ccu.constraint_name = tc.constraint_name
+                      AND ccu.table_schema = tc.table_schema
+                    WHERE tc.constraint_type = 'FOREIGN KEY'
+                      AND tc.table_schema = 'public'
+                    ORDER BY tc.table_name, kcu.column_name
+                """)
+            
+            result = await conn.execute(query)
+            relationships = []
+            for row in result.fetchall():
+                relationships.append({
+                    "from_table": row[0],
+                    "from_column": row[1],
+                    "to_table": row[2],
+                    "to_column": row[3],
+                    "constraint_name": row[4]
+                })
+            return relationships
+    
     async def show_table_data(
         self, 
         table_name: str, 
@@ -206,6 +342,215 @@ class DatabaseAdmin:
                 
         except Exception as e:
             print(f"❌ 오류 발생: {e}")
+    
+    async def rebuild_database(self, confirm: bool = False) -> bool:
+        """
+        데이터베이스 완전 재구축
+        
+        모든 테이블을 삭제하고 init_db.sql을 실행하여 테이블과 관계를 모두 재구축합니다.
+        
+        Args:
+            confirm: 확인 여부
+        
+        Returns:
+            성공 여부
+        """
+        if not confirm:
+            print("\n" + "=" * 80)
+            print("⚠️  ⚠️  ⚠️  경고: 데이터베이스 완전 재구축 ⚠️  ⚠️  ⚠️")
+            print("=" * 80)
+            print("이 작업은 다음을 수행합니다:")
+            print("  1. 모든 테이블을 삭제합니다 (CASCADE)")
+            print("  2. 모든 데이터가 영구적으로 삭제됩니다")
+            print("  3. init_db.sql을 실행하여 테이블과 관계를 재구축합니다")
+            print("=" * 80)
+            print("\n⚠️  이 작업은 되돌릴 수 없습니다!")
+            response = input("\n계속하시겠습니까? (yes/no): ")
+            if response.lower() != "yes":
+                print("취소되었습니다.")
+                return False
+        
+        try:
+            print("\n🔄 데이터베이스 재구축 시작...")
+            
+            # 1단계: 모든 테이블 목록 조회
+            print("\n📋 1단계: 기존 테이블 목록 조회...")
+            async with self.engine.connect() as conn:
+                result = await conn.execute(text("""
+                    SELECT tablename 
+                    FROM pg_tables 
+                    WHERE schemaname = 'public'
+                    ORDER BY tablename
+                """))
+                existing_tables = [row[0] for row in result.fetchall()]
+            
+            if existing_tables:
+                print(f"   발견된 테이블: {len(existing_tables)}개")
+                for table in existing_tables:
+                    print(f"     - {table}")
+            else:
+                print("   기존 테이블이 없습니다.")
+            
+            # 2단계: 모든 테이블 삭제 (CASCADE)
+            print("\n🗑️  2단계: 모든 테이블 삭제...")
+            async with self.engine.begin() as conn:
+                for table in existing_tables:
+                    try:
+                        await conn.execute(text(f'DROP TABLE IF EXISTS "{table}" CASCADE'))
+                        print(f"   ✅ '{table}' 테이블 삭제됨")
+                    except Exception as e:
+                        print(f"   ⚠️  '{table}' 테이블 삭제 중 오류: {e}")
+            
+            # 3단계: init_db.sql 파일 읽기
+            print("\n📄 3단계: init_db.sql 파일 읽기...")
+            # 프로젝트 루트 디렉토리 찾기 (여러 경로 시도)
+            current_file = Path(__file__).resolve()  # 절대 경로로 변환
+            # 가능한 경로들
+            possible_paths = [
+                current_file.parent.parent / "scripts" / "init_db.sql",  # backend/app/db_admin.py -> backend/scripts/
+                current_file.parent.parent.parent / "backend" / "scripts" / "init_db.sql",  # 프로젝트 루트에서
+                Path("/app/scripts/init_db.sql"),  # Docker 컨테이너 내부 경로
+                Path("scripts/init_db.sql"),  # 현재 작업 디렉토리 기준
+            ]
+            
+            init_db_path = None
+            for path in possible_paths:
+                if path.exists():
+                    init_db_path = path
+                    break
+            
+            if not init_db_path or not init_db_path.exists():
+                print(f"❌ 오류: init_db.sql 파일을 찾을 수 없습니다.")
+                print(f"   시도한 경로:")
+                for path in possible_paths:
+                    print(f"     - {path} (존재: {path.exists()})")
+                print(f"   현재 파일 위치: {current_file}")
+                print(f"   현재 작업 디렉토리: {os.getcwd()}")
+                return False
+            
+            print(f"   ✅ 파일 경로: {init_db_path}")
+            with open(init_db_path, "r", encoding="utf-8") as f:
+                sql_content = f.read()
+            
+            # SQL 파일을 세미콜론으로 분리 (간단한 파싱)
+            # 주의: DO $$ 블록 등은 별도 처리 필요
+            print(f"   파일 크기: {len(sql_content)} bytes")
+            
+            # 4단계: SQL 실행
+            print("\n🔨 4단계: 데이터베이스 스키마 구축...")
+            # SQL 파일을 명령 단위로 분리
+            # asyncpg는 prepared statement에 여러 명령을 넣을 수 없으므로 개별 실행 필요
+            statements = self._split_sql_statements(sql_content)
+            print(f"   총 {len(statements)}개의 SQL 명령을 실행합니다...")
+            
+            async with self.engine.begin() as conn:
+                executed_count = 0
+                failed_count = 0
+                
+                for idx, statement in enumerate(statements, 1):
+                    # 빈 문장이나 주석만 있는 문장은 건너뛰기
+                    stmt_clean = statement.strip()
+                    if not stmt_clean or stmt_clean.startswith('--'):
+                        continue
+                    
+                    try:
+                        # 각 SQL 명령을 개별적으로 실행
+                        await conn.execute(text(stmt_clean))
+                        executed_count += 1
+                        
+                        # 진행 상황 출력 (10개마다)
+                        if executed_count % 10 == 0:
+                            print(f"   진행 중... ({executed_count}/{len(statements)}개 실행됨)")
+                    except Exception as e:
+                        failed_count += 1
+                        # 첫 번째 오류만 상세 출력
+                        if failed_count == 1:
+                            print(f"   ⚠️  SQL 명령 {idx}번째 실행 중 오류:")
+                            print(f"      {str(e)[:200]}...")  # 오류 메시지 일부만 출력
+                            print(f"      SQL: {stmt_clean[:100]}...")  # SQL 일부만 출력
+                        # 나머지 오류는 간단히 카운트만
+                
+                if failed_count > 0:
+                    print(f"   ⚠️  {failed_count}개의 SQL 명령 실행 실패")
+                else:
+                    print(f"   ✅ 모든 SQL 명령 실행 완료 ({executed_count}개)")
+                
+                if failed_count > 0 and executed_count == 0:
+                    # 모든 명령이 실패한 경우
+                    print(f"\n   ❌ 모든 SQL 명령 실행 실패")
+                    return False
+            
+            # 5단계: 생성된 테이블 확인
+            print("\n✅ 5단계: 생성된 테이블 확인...")
+            new_tables = []
+            async with self.engine.connect() as conn:
+                result = await conn.execute(text("""
+                    SELECT tablename 
+                    FROM pg_tables 
+                    WHERE schemaname = 'public'
+                    ORDER BY tablename
+                """))
+                new_tables = [row[0] for row in result.fetchall()]
+                
+                if new_tables:
+                    print(f"   생성된 테이블: {len(new_tables)}개")
+                    for table in new_tables:
+                        # 각 테이블의 레코드 수 확인
+                        count_result = await conn.execute(
+                            text(f'SELECT COUNT(*) FROM "{table}"')
+                        )
+                        count = count_result.scalar()
+                        print(f"     - {table:30s} ({count:6d}개 레코드)")
+                else:
+                    print("   ⚠️  생성된 테이블이 없습니다.")
+            
+            # 6단계: 외래키 제약조건 확인
+            print("\n🔗 6단계: 외래키 제약조건 확인...")
+            foreign_keys = []
+            async with self.engine.connect() as conn:
+                result = await conn.execute(text("""
+                    SELECT
+                        tc.table_name,
+                        kcu.column_name,
+                        ccu.table_name AS foreign_table_name,
+                        ccu.column_name AS foreign_column_name
+                    FROM information_schema.table_constraints AS tc
+                    JOIN information_schema.key_column_usage AS kcu
+                      ON tc.constraint_name = kcu.constraint_name
+                      AND tc.table_schema = kcu.table_schema
+                    JOIN information_schema.constraint_column_usage AS ccu
+                      ON ccu.constraint_name = tc.constraint_name
+                      AND ccu.table_schema = tc.table_schema
+                    WHERE tc.constraint_type = 'FOREIGN KEY'
+                      AND tc.table_schema = 'public'
+                    ORDER BY tc.table_name, kcu.column_name
+                """))
+                foreign_keys = result.fetchall()
+                
+                if foreign_keys:
+                    print(f"   발견된 외래키: {len(foreign_keys)}개")
+                    for fk in foreign_keys[:10]:  # 최대 10개만 출력
+                        print(f"     - {fk[0]}.{fk[1]} -> {fk[2]}.{fk[3]}")
+                    if len(foreign_keys) > 10:
+                        print(f"     ... 외 {len(foreign_keys) - 10}개")
+                else:
+                    print("   ⚠️  외래키 제약조건이 없습니다.")
+            
+            print("\n" + "=" * 80)
+            print("✅ 데이터베이스 재구축 완료!")
+            print("=" * 80)
+            print(f"   - 삭제된 테이블: {len(existing_tables)}개")
+            print(f"   - 생성된 테이블: {len(new_tables)}개")
+            print(f"   - 외래키 제약조건: {len(foreign_keys)}개")
+            print("=" * 80)
+            
+            return True
+            
+        except Exception as e:
+            print(f"\n❌ 오류 발생: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
 
 async def list_tables_command(admin: DatabaseAdmin):
@@ -316,6 +661,71 @@ async def show_command(admin: DatabaseAdmin, table_name: str, limit: int = 10):
     await admin.show_table_data(table_name, limit=limit)
 
 
+async def relationships_command(admin: DatabaseAdmin, table_name: Optional[str] = None):
+    """테이블 관계 조회 명령어"""
+    if table_name:
+        # 특정 테이블의 관계 조회
+        tables = await admin.list_tables()
+        if table_name not in tables:
+            print(f"❌ '{table_name}' 테이블이 존재하지 않습니다.")
+            print(f"\n사용 가능한 테이블:")
+            for table in tables:
+                print(f"  - {table}")
+            return
+        
+        print(f"\n🔗 '{table_name}' 테이블의 관계:")
+        print("=" * 80)
+    else:
+        print("\n🔗 전체 데이터베이스 관계:")
+        print("=" * 80)
+    
+    relationships = await admin.get_table_relationships(table_name)
+    
+    if not relationships:
+        if table_name:
+            print(f"   '{table_name}' 테이블에 관계가 없습니다.")
+        else:
+            print("   데이터베이스에 관계가 없습니다.")
+        return
+    
+    # 테이블별로 그룹화
+    from collections import defaultdict
+    by_table = defaultdict(list)
+    for rel in relationships:
+        by_table[rel["from_table"]].append(rel)
+    
+    for from_table, rels in sorted(by_table.items()):
+        print(f"\n📋 {from_table} 테이블:")
+        print("-" * 80)
+        for rel in rels:
+            print(f"   {rel['from_column']:30s} → {rel['to_table']}.{rel['to_column']}")
+            print(f"      (제약조건: {rel['constraint_name']})")
+    
+    print("\n" + "=" * 80)
+    print(f"총 {len(relationships)}개의 관계")
+    
+    # 관계 그래프 요약
+    if not table_name:
+        print("\n📊 관계 요약:")
+        print("-" * 80)
+        # 각 테이블이 참조하는 테이블 수
+        refs_count = defaultdict(int)
+        for rel in relationships:
+            refs_count[rel["from_table"]] += 1
+        
+        for table, count in sorted(refs_count.items(), key=lambda x: x[1], reverse=True):
+            print(f"   {table:30s} → {count}개의 관계")
+
+
+async def rebuild_command(admin: DatabaseAdmin, force: bool = False):
+    """데이터베이스 재구축 명령어"""
+    success = await admin.rebuild_database(confirm=force)
+    if success:
+        print("\n✅ 데이터베이스 재구축이 성공적으로 완료되었습니다.")
+    else:
+        print("\n❌ 데이터베이스 재구축이 실패했습니다.")
+
+
 def print_menu():
     """메뉴 출력"""
     print("\n" + "=" * 60)
@@ -326,6 +736,8 @@ def print_menu():
     print("3. 테이블 데이터 조회")
     print("4. 테이블 데이터 삭제 (테이블 구조 유지)")
     print("5. 테이블 삭제 (테이블 구조와 데이터 모두 삭제)")
+    print("6. 데이터베이스 완전 재구축 (모든 테이블 삭제 후 재생성)")
+    print("7. 테이블 관계 조회 (Foreign Key)")
     print("0. 종료")
     print("=" * 60)
 
@@ -334,7 +746,7 @@ async def interactive_mode(admin: DatabaseAdmin):
     """대화형 모드"""
     while True:
         print_menu()
-        choice = input("\n선택하세요 (0-5): ").strip()
+        choice = input("\n선택하세요 (0-7): ").strip()
         
         if choice == "0":
             print("\n👋 종료합니다.")
@@ -407,8 +819,35 @@ async def interactive_mode(admin: DatabaseAdmin):
             if table_input:
                 await drop_command(admin, table_input, force=False)
             input("\n계속하려면 Enter를 누르세요...")
+        elif choice == "6":
+            await rebuild_command(admin, force=False)
+            input("\n계속하려면 Enter를 누르세요...")
+        elif choice == "7":
+            tables = await admin.list_tables()
+            if not tables:
+                print("테이블이 없습니다.")
+                input("\n계속하려면 Enter를 누르세요...")
+                continue
+            
+            print("\n옵션:")
+            print("  1. 전체 데이터베이스 관계 조회")
+            print("  2. 특정 테이블 관계 조회")
+            rel_choice = input("\n선택하세요 (1-2): ").strip()
+            
+            if rel_choice == "1":
+                await relationships_command(admin, table_name=None)
+            elif rel_choice == "2":
+                print("\n사용 가능한 테이블:")
+                for idx, table in enumerate(tables, 1):
+                    print(f"  {idx}. {table}")
+                table_input = input("\n테이블명을 입력하세요: ").strip()
+                if table_input:
+                    await relationships_command(admin, table_name=table_input)
+            else:
+                print("❌ 잘못된 선택입니다.")
+            input("\n계속하려면 Enter를 누르세요...")
         else:
-            print("\n❌ 잘못된 선택입니다. 0-5 사이의 숫자를 입력하세요.")
+            print("\n❌ 잘못된 선택입니다. 0-7 사이의 숫자를 입력하세요.")
             input("\n계속하려면 Enter를 누르세요...")
 
 
@@ -430,6 +869,9 @@ def main():
   python -m app.db_admin show states --limit 20
   python -m app.db_admin truncate states
   python -m app.db_admin drop states
+  python -m app.db_admin rebuild --force
+  python -m app.db_admin relationships
+  python -m app.db_admin relationships states
             """
         )
         
@@ -457,6 +899,14 @@ def main():
         drop_parser.add_argument("table_name", help="테이블명")
         drop_parser.add_argument("--force", action="store_true", help="확인 없이 실행")
         
+        # rebuild 명령어
+        rebuild_parser = subparsers.add_parser("rebuild", help="데이터베이스 완전 재구축 (모든 테이블 삭제 후 재생성)")
+        rebuild_parser.add_argument("--force", action="store_true", help="확인 없이 실행")
+        
+        # relationships 명령어
+        rel_parser = subparsers.add_parser("relationships", help="테이블 관계 조회 (Foreign Key)")
+        rel_parser.add_argument("table_name", nargs="?", help="테이블명 (생략 시 전체 조회)")
+        
         args = parser.parse_args()
         
         if not args.command:
@@ -477,6 +927,10 @@ def main():
                     await truncate_command(admin, args.table_name, args.force)
                 elif args.command == "drop":
                     await drop_command(admin, args.table_name, args.force)
+                elif args.command == "rebuild":
+                    await rebuild_command(admin, args.force)
+                elif args.command == "relationships":
+                    await relationships_command(admin, args.table_name)
             finally:
                 await admin.close()
         
