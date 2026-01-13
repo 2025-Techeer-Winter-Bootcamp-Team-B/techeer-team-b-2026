@@ -7,7 +7,7 @@
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import String, DateTime, Boolean, Integer, CHAR
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
@@ -83,6 +83,16 @@ class State(Base):
         nullable=False,
         comment="삭제 여부 (소프트 삭제)"
     )
+    
+    # ===== 관계 (Relationships) =====
+    # 이 지역에 속한 아파트들
+    apartments = relationship("Apartment", back_populates="region")
+    
+    # 이 지역의 부동산 지수들
+    house_scores = relationship("HouseScore", back_populates="region")
+    
+    # 이 지역을 즐겨찾기한 사용자들
+    favorite_locations = relationship("FavoriteLocation", back_populates="region")
     
     def __repr__(self):
         return f"<State(region_id={self.region_id}, region_name='{self.region_name}', city_name='{self.city_name}')>"
