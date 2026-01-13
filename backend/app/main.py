@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import settings
+from app.core.redis import get_redis_client, close_redis_client
 
 # SQLAlchemy 관계(relationship) 초기화를 위해 모든 모델 import
 # 문자열로 참조된 모델 클래스들이 SQLAlchemy 레지스트리에 등록되도록 함
@@ -306,6 +307,27 @@ async def startup_event():
             await engine.dispose()
         except Exception as e:
             logger.warning(f"⚠️ 데이터베이스 테이블 생성 실패 (이미 존재할 수 있음): {e}")
+    
+    # Redis 연결 초기화
+    try:
+        await get_redis_client()
+        logger.info("✅ Redis 연결 초기화 완료")
+    except Exception as e:
+        logger.warning(f"⚠️ Redis 연결 초기화 실패 (캐싱 기능 비활성화): {e}")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """애플리케이션 종료 시 실행되는 이벤트"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # Redis 연결 종료
+    try:
+        await close_redis_client()
+        logger.info("✅ Redis 연결 종료 완료")
+    except Exception as e:
+        logger.warning(f"⚠️ Redis 연결 종료 중 오류: {e}")
 
 
 # ============================================================
