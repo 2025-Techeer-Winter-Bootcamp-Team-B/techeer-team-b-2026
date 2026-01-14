@@ -105,5 +105,11 @@ class Account(Base):
         back_populates="account"
     )
     
+    # 이 사용자의 최근 검색어들
+    recent_searches = relationship(
+        "RecentSearch",
+        back_populates="account"
+    )
+    
     def __repr__(self):
         return f"<Account(account_id={self.account_id}, email='{self.email}', clerk_user_id='{self.clerk_user_id}')>"

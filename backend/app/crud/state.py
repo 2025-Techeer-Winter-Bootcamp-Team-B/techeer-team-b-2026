@@ -4,7 +4,7 @@
 데이터베이스 작업을 담당하는 레이어
 """
 from typing import Optional, List
-from sqlalchemy import select
+from sqlalchemy import select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # 모든 모델을 import하여 SQLAlchemy 관계 설정이 제대로 작동하도록 함
@@ -165,6 +165,79 @@ class CRUDState(CRUDBase[State, StateCreate, StateUpdate]):
             except:
                 pass  # 롤백 실패는 무시 (이미 롤백된 경우 등)
             raise e
+    
+    async def search_locations(
+        self,
+        db: AsyncSession,
+        *,
+        query: str,
+        location_type: Optional[str] = None,
+        limit: int = 20
+    ) -> List[State]:
+        """
+        지역 검색 (시/군/구/동)
+        
+        region_name 또는 city_name에 검색어가 포함되는 지역을 검색합니다.
+        
+        Args:
+            db: 데이터베이스 세션
+            query: 검색어 (최소 1글자)
+            location_type: 지역 유형 필터 (sigungu: 시군구, dong: 동/리/면, None: 전체)
+            limit: 반환할 결과 개수 (기본 20개)
+        
+        Returns:
+            State 객체 목록
+            
+        Note:
+            - 대소문자 구분 없이 검색 (ILIKE 사용)
+            - 삭제되지 않은 지역만 검색
+            - location_type 판단 기준:
+              * sigungu: region_name에 "구", "시", "군" 포함 (단, "동"은 제외)
+              * dong: region_name에 "동", "리", "면" 포함
+            - 정렬: city_name 오름차순, region_name 오름차순
+        """
+        # 기본 쿼리: 삭제되지 않은 지역, 검색어 포함
+        stmt = (
+            select(State)
+            .where(State.is_deleted == False)
+            .where(
+                or_(
+                    State.region_name.ilike(f"%{query}%"),
+                    State.city_name.ilike(f"%{query}%")
+                )
+            )
+        )
+        
+        # 지역 유형 필터링
+        if location_type == "sigungu":
+            # 시군구만: "구", "시", "군" 포함하고 "동", "리", "면"은 제외
+            stmt = stmt.where(
+                (State.region_name.ilike("%구%") | 
+                 State.region_name.ilike("%시%") | 
+                 State.region_name.ilike("%군%"))
+            ).where(
+                ~State.region_name.ilike("%동%")
+            ).where(
+                ~State.region_name.ilike("%리%")
+            ).where(
+                ~State.region_name.ilike("%면%")
+            )
+        elif location_type == "dong":
+            # 동/리/면만
+            stmt = stmt.where(
+                State.region_name.ilike("%동%") |
+                State.region_name.ilike("%리%") |
+                State.region_name.ilike("%면%")
+            )
+        
+        # 정렬 및 제한
+        stmt = stmt.order_by(
+            State.city_name.asc(),
+            State.region_name.asc()
+        ).limit(limit)
+        
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
 
 
 # CRUD 인스턴스 생성

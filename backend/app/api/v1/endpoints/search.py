@@ -1,11 +1,20 @@
 """
 검색 관련 API 엔드포인트
 
+담당자: 박찬영
 담당 기능:
-- 아파트명 검색 (GET /search/apartments) - P0
-- 지역 검색 (GET /search/locations) - P0
 - 최근 검색어 조회 (GET /search/recent) - P1
 - 최근 검색어 삭제 (DELETE /search/recent/{id}) - P1
+
+참고:
+- 아파트명 검색: search_apart.py 참고
+- 지역 검색: search_region.py 참고
+
+레이어드 아키텍처:
+- API Layer (이 파일): 요청/응답 처리
+- Service Layer (services/search.py): 비즈니스 로직
+- CRUD Layer: DB 작업
+- Model Layer: 데이터 모델
 """
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -17,6 +26,7 @@ from app.models.account import Account
 from app.models.apartment import Apartment
 from app.models.apart_detail import ApartDetail
 from app.models.state import State
+from app.services.search import search_service
 
 router = APIRouter()
 
@@ -124,70 +134,6 @@ async def search_apartments(
 
 
 @router.get(
-    "/locations",
-    response_model=dict,
-    status_code=status.HTTP_200_OK,
-    tags=["🔍 Search (검색)"],
-    summary="지역 검색",
-    description="지역명(시/군/구/동)으로 검색합니다. 시군구 또는 동 단위로 검색할 수 있습니다.",
-    responses={
-        200: {"description": "검색 성공"},
-        422: {"description": "입력값 검증 실패"}
-    }
-)
-async def search_locations(
-    q: str = Query(..., min_length=1, description="검색어"),
-    location_type: Optional[str] = Query(
-        None, 
-        regex="^(sigungu|dong)$",
-        description="지역 유형 (sigungu: 시군구, dong: 동)"
-    ),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    지역 검색 API
-    
-    시/군/구 또는 동 단위로 지역을 검색합니다.
-    검색어로 시작하거나 포함하는 지역 목록을 반환합니다.
-    
-    Args:
-        q: 검색어
-        location_type: 지역 유형 필터 (sigungu: 시군구, dong: 동, None: 전체)
-        db: 데이터베이스 세션
-    
-    Returns:
-        {
-            "success": true,
-            "data": {
-                "results": [
-                    {
-                        "id": int,
-                        "name": str,
-                        "type": str,
-                        "full_name": str,
-                        "center": {"lat": float, "lng": float}
-                    }
-                ]
-            }
-        }
-    
-    Note:
-        - location_type이 None이면 시군구와 동 모두 검색
-        - Redis 캐싱 적용 권장 (TTL: 1시간)
-    """
-    # TODO: SearchService.search_locations() 구현 후 사용
-    # result = await SearchService.search_locations(db, query=q, location_type=location_type)
-    
-    # 임시 응답 (서비스 레이어 구현 전)
-    return {
-        "success": True,
-        "data": {
-            "results": []
-        }
-    }
-
-
-@router.get(
     "/recent",
     response_model=dict,
     status_code=status.HTTP_200_OK,
@@ -233,14 +179,23 @@ async def get_recent_searches(
     Raises:
         HTTPException: 로그인이 필요한 경우 401 에러
     """
-    # TODO: SearchService.get_recent_searches() 구현 후 사용
-    # result = await SearchService.get_recent_searches(db, user_id=current_user.id, limit=limit)
+    # Service 레이어를 통해 비즈니스 로직 처리
+    # 엔드포인트는 최소한의 로직만 포함하고, 복잡한 처리는 Service에 위임
+    results = await search_service.get_recent_searches(
+        db=db,
+        account_id=current_user.account_id,
+        limit=limit
+    )
     
-    # 임시 응답 (서비스 레이어 구현 전)
+    # 공통 응답 형식으로 반환
+    # 모든 API는 동일한 형식 ({success, data, meta})을 사용하여 일관성 유지
     return {
         "success": True,
         "data": {
-            "recent_searches": []
+            "recent_searches": results
+        },
+        "meta": {
+            "count": len(results)
         }
     }
 
@@ -287,10 +242,24 @@ async def delete_recent_search(
             - 401: 로그인이 필요한 경우
             - 404: 검색어를 찾을 수 없거나 본인의 검색 기록이 아닌 경우
     """
-    # TODO: SearchService.delete_recent_search() 구현 후 사용
-    # await SearchService.delete_recent_search(db, search_id=search_id, user_id=current_user.id)
+    # Service 레이어를 통해 비즈니스 로직 처리
+    # 엔드포인트는 최소한의 로직만 포함하고, 복잡한 처리는 Service에 위임
+    try:
+        await search_service.delete_recent_search(
+            db=db,
+            search_id=search_id,
+            account_id=current_user.account_id
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "SEARCH_NOT_FOUND",
+                "message": str(e)
+            }
+        )
     
-    # 임시 응답 (서비스 레이어 구현 전)
+    # 공통 응답 형식으로 반환
     return {
         "success": True,
         "data": {

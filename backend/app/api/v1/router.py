@@ -24,7 +24,7 @@ FastAPI 앱에 등록합니다.
 """
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, admin, search_apart, data_collection, favorites, apartments
+from app.api.v1.endpoints import auth, admin, search_apart, search_region, data_collection, favorites, apartments
 
 # 메인 API 라우터 생성
 # 이 라우터에 모든 하위 라우터를 등록합니다
@@ -84,6 +84,21 @@ api_router.include_router(
 )
 
 # ============================================================
+# 검색 API (지역 검색)
+# ============================================================
+# 지역 검색 기능 (시/군/구/동)
+#
+# 엔드포인트:
+# - GET /api/v1/search/locations - 지역 검색 (자동완성) - 박찬영
+#
+# 파일 위치: app/api/v1/endpoints/search_region.py
+api_router.include_router(
+    search_region.router,
+    prefix="/search",  # URL prefix: /api/v1/search/...
+    tags=["🔍 Search (검색)"]
+)
+
+# ============================================================
 # 데이터 수집 API
 # ============================================================
 # 국토교통부 API에서 지역 데이터를 가져와서 데이터베이스에 저장
@@ -114,14 +129,17 @@ api_router.include_router(
 )
 
 # ============================================================
-# 검색 관련 API
+# 검색 관련 API (최근 검색어)
 # ============================================================
+# 최근 검색어 조회 및 삭제 기능
 # 
 # 엔드포인트:
-# - GET    /api/v1/search/apartments        - 아파트명 검색 (자동완성)
-# - GET    /api/v1/search/locations         - 지역 검색
 # - GET    /api/v1/search/recent            - 최근 검색어 조회
 # - DELETE /api/v1/search/recent/{id}       - 최근 검색어 삭제
+#
+# 참고:
+# - 아파트명 검색: search_apart.py
+# - 지역 검색: search_region.py
 #
 # 파일 위치: app/api/v1/endpoints/search.py
 from app.api.v1.endpoints import search
