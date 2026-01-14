@@ -204,7 +204,7 @@ git status --short | grep "\.env"
 
 ```bash
 # 데이터베이스
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/realestate
+DATABASE_URL=
 
 # Redis
 REDIS_URL=redis://redis:6379/0
