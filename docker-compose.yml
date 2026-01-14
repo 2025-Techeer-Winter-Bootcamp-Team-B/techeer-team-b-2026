@@ -95,6 +95,7 @@ services:
       
       # 외부 API 키
       MOLIT_API_KEY: ${MOLIT_API_KEY:-}
+      REB_API_KEY: ${REB_API_KEY:-}
       KAKAO_REST_API_KEY: ${KAKAO_REST_API_KEY:-}
       KAKAO_JAVASCRIPT_KEY: ${KAKAO_JAVASCRIPT_KEY:-}
       NAVER_CLIENT_ID: ${NAVER_CLIENT_ID:-}
@@ -113,6 +114,10 @@ services:
       - ./backend/app:/app/app:ro
       # scripts 폴더도 마운트 (초기화 스크립트 실행용)
       - ./backend/scripts:/app/scripts:ro
+      # DB 백업/복원용 볼륨 마운트
+      - ./db_backup:/app/backups
+      # legion_code.csv 파일 마운트 (부동산 지수 데이터 수집용)
+      - ./legion_code.csv:/app/legion_code.csv:ro
     depends_on:
       db:
         condition: service_healthy
