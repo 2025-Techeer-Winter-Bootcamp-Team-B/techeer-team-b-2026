@@ -24,7 +24,7 @@ FastAPI 앱에 등록합니다.
 """
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, admin, search_apart, search_region, data_collection, favorites, apartments, my_properties, admin_web
+from app.api.v1.endpoints import auth, admin, search_apart, search_region, data_collection, favorites, apartments, my_properties, admin_web, search_check, search_delete
 
 # 메인 API 라우터 생성
 # 이 라우터에 모든 하위 라우터를 등록합니다
@@ -138,22 +138,41 @@ api_router.include_router(
 )
 
 # ============================================================
-# 검색 관련 API (최근 검색어)
+# 검색 관련 API (최근 검색어 조회) - API #19
 # ============================================================
-# 최근 검색어 조회 및 삭제 기능
+# 최근 검색어 조회 기능
 # 
 # 엔드포인트:
 # - GET    /api/v1/search/recent            - 최근 검색어 조회
+#
+# 참고:
+# - 아파트명 검색: search_apart.py
+# - 지역 검색: search_region.py
+# - 최근 검색어 삭제: search_delete.py
+#
+# 파일 위치: app/api/v1/endpoints/search_check.py
+api_router.include_router(
+    search_check.router,
+    prefix="/search",
+    tags=["🔍 Search (검색)"]
+)
+
+# ============================================================
+# 검색 관련 API (최근 검색어 삭제) - API #20
+# ============================================================
+# 최근 검색어 삭제 기능
+# 
+# 엔드포인트:
 # - DELETE /api/v1/search/recent/{id}       - 최근 검색어 삭제
 #
 # 참고:
 # - 아파트명 검색: search_apart.py
 # - 지역 검색: search_region.py
+# - 최근 검색어 조회: search_check.py
 #
-# 파일 위치: app/api/v1/endpoints/search.py
-from app.api.v1.endpoints import search
+# 파일 위치: app/api/v1/endpoints/search_delete.py
 api_router.include_router(
-    search.router,
+    search_delete.router,
     prefix="/search",
     tags=["🔍 Search (검색)"]
 )

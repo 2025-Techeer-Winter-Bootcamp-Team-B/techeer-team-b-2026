@@ -66,11 +66,15 @@ class Settings(BaseSettings):
     class Config:
         # .env 파일이 있으면 읽고, 없으면 환경변수에서 읽음
         # 도커 환경에서는 환경변수가 우선순위가 높음
-        env_file = ".env"
+        # backend/.env 또는 상위 디렉토리(루트)/.env 파일을 찾음
+        # Pydantic Settings는 리스트로 여러 경로를 시도할 수 있음
+        env_file = [".env", "../.env"]  # 현재 디렉토리와 상위 디렉토리 모두 시도
         env_file_encoding = "utf-8"
         case_sensitive = True
         # 환경변수가 빈 문자열이어도 None으로 처리하지 않도록
         env_ignore_empty = False
+        # Settings 클래스에 정의되지 않은 환경변수는 무시 (extra = "ignore")
+        extra = "ignore"
 
 
 @lru_cache()
