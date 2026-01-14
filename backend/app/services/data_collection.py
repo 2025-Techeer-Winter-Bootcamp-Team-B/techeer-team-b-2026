@@ -1583,6 +1583,35 @@ class DataCollectionService:
             
             for sgg_cd in target_sgg_codes:
                 try:
+                    # 3-0. [트래픽 절약] 이미 수집된 데이터가 있는지 확인 (블록 단위 스킵)
+                    # 해당 지역(sgg_cd) + 해당 월(ym)의 데이터가 1개라도 있으면 API 호출 스킵
+                    # 주의: 부분 수집된 경우에도 스킵될 수 있으므로, 재수집 시에는 데이터를 삭제하고 진행해야 함
+                    
+                    # YYYYMM 문자열을 Date 범위로 변환
+                    y = int(ym[:4])
+                    m = int(ym[4:])
+                    start_date = date(y, m, 1)
+                    import calendar
+                    last_day = calendar.monthrange(y, m)[1]
+                    end_date = date(y, m, last_day)
+                    
+                    # 해당 기간, 해당 지역의 거래 내역 수 조회
+                    check_stmt = select(func.count(Sale.trans_id)).join(Apartment).join(State).where(
+                        and_(
+                            State.region_code.like(f"{sgg_cd}%"),
+                            Sale.contract_date >= start_date,
+                            Sale.contract_date <= end_date
+                        )
+                    )
+                    
+                    count_result = await db.execute(check_stmt)
+                    existing_count = count_result.scalar() or 0
+                    
+                    if existing_count > 0:
+                        logger.info(f"      ⏭️ [SKIP] {sgg_cd} / {ym}: 이미 {existing_count}건의 데이터가 존재하여 API 호출을 생략합니다.")
+                        skipped += existing_count # 통계에 포함 (선택사항)
+                        continue
+
                     # API 호출
                     xml_content = await self.fetch_sales_xml(sgg_cd, ym)
                     

@@ -476,8 +476,8 @@ async def collect_rent_transactions(
     }
 )
 async def collect_sales_transactions(
-    start_ym: str = Query(..., description="시작 연월 (YYYYMM)", min_length=6, max_length=6, example="202401"),
-    end_ym: str = Query(..., description="종료 연월 (YYYYMM)", min_length=6, max_length=6, example="202402"),
+    start_ym: str = Query(..., description="시작 연월 (YYYYMM)", min_length=6, max_length=6, examples=["202401"]),
+    end_ym: str = Query(..., description="종료 연월 (YYYYMM)", min_length=6, max_length=6, examples=["202402"]),
     db: AsyncSession = Depends(get_db)
 ) -> SalesCollectionResponse:
     """
