@@ -160,7 +160,6 @@ class DataCollectionService:
         encoded_city_name = quote(city_name)
         
         # API 요청 파라미터
-<<<<<<< HEAD
         # 공공데이터포털 API는 serviceKey를 디코딩된 상태로 받아야 할 수 있음
         # httpx는 자동으로 URL 인코딩하므로, serviceKey를 그대로 전달
         # locatadd_nm: 주소명으로 필터링 (시도명으로 시작하는 모든 주소)
@@ -172,7 +171,6 @@ class DataCollectionService:
             "locatadd_nm": city_name  # 예: "서울특별시"로 검색하면 "서울특별시"로 시작하는 모든 주소 반환
         }
         
-<<<<<<< HEAD
         # 디버깅: 실제 전달되는 파라미터 확인
         logger.debug(f"   🔍 요청 파라미터: serviceKey={self.api_key[:10]}..., pageNo={page_no}, numOfRows={num_of_rows}, locatadd_nm={city_name}")
         
@@ -223,12 +221,6 @@ class DataCollectionService:
                 except:
                     logger.error(f"   ⚠️ JSON 파싱 실패 (텍스트 응답)")
                 raise
-            
-            # API 응답 구조 확인용 로깅 (첫 페이지만)
-            if page_no == 1:
-                logger.debug(f"   🔍 API 응답 구조 확인: {list(data.keys()) if isinstance(data, dict) else '리스트'}")
-            
-            return data
             
             # API 응답 구조 확인용 로깅 (첫 페이지만)
             if page_no == 1:
@@ -513,7 +505,6 @@ class DataCollectionService:
                         logger.info(f"   ⏭️  다음 페이지로... (원본 {original_count}개, 다음 페이지: {page_no + 1})")
                         page_no += 1
                     
-<<<<<<< HEAD
                     # API 호출 제한 방지를 위한 딜레이 (0.2초 -> 0.5초로 증가)
                     await asyncio.sleep(0.5)
                 
@@ -710,7 +701,6 @@ class DataCollectionService:
                         bjd_code = apt_data.get('bjd_code', '')
                         
                         # bjdCode를 region_code로 사용하여 region_id 찾기
-<<<<<<< HEAD
                         # 단계별로 찾기: 전체 코드 → 시군구 코드(5자리) → 시도 코드(2자리)
                         region = None
                         
@@ -923,7 +913,6 @@ class DataCollectionService:
         
         # 모든 재시도 실패
         raise httpx.HTTPError(f"API 호출 실패: 최대 재시도 횟수({max_retries}) 초과")
->>>>>>> origin/main
     
     def parse_date(self, date_str: Optional[str]) -> Optional[str]:
         """
@@ -1429,7 +1418,6 @@ class DataCollectionService:
                 skipped=skipped,
                 errors=errors,
                 message=f"수집 완료: {total_saved}개 저장, {skipped}개 건너뜀" if final_success else f"수집 완료 (일부 오류): {total_saved}개 저장, {skipped}개 건너뜀"
-<<<<<<< HEAD
             )
             
         except Exception as e:
