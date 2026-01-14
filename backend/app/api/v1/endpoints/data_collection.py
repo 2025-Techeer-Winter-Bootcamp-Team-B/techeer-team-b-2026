@@ -4,15 +4,18 @@
 국토교통부 API에서 지역 데이터를 가져와서 데이터베이스에 저장하는 API
 """
 import logging
-from typing import Optional
+from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel, Field
 
 from app.api.v1.deps import get_db, get_db_no_auto_commit
 from app.services.data_collection import data_collection_service
 from app.schemas.state import StateCollectionResponse
 from app.schemas.apartment import ApartmentCollectionResponse
 from app.schemas.apart_detail import ApartDetailCollectionResponse
+from app.schemas.house_score import HouseScoreCollectionResponse
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -260,6 +263,99 @@ async def collect_apartments(
         
         # 데이터 수집 실행
         result = await data_collection_service.collect_all_apartments(db)
+        
+        if result.success:
+            logger.info(f"✅ 데이터 수집 성공: {result.message}")
+        else:
+            logger.warning(f"⚠️ 데이터 수집 완료 (일부 오류): {result.message}")
+        
+        return result
+        
+    except ValueError as e:
+        # API 키 미설정 등 설정 오류
+        logger.error(f"❌ 설정 오류: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "CONFIGURATION_ERROR",
+                "message": str(e)
+            }
+        )
+    except Exception as e:
+        # 기타 오류
+        logger.error(f"❌ 데이터 수집 실패: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "COLLECTION_ERROR",
+                "message": f"데이터 수집 중 오류가 발생했습니다: {str(e)}"
+            }
+        )
+
+
+@router.post(
+    "/house-scores",
+    response_model=HouseScoreCollectionResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["📥 Data Collection (데이터 수집)"],
+    summary="부동산 지수 데이터 수집",
+    description="""
+    한국부동산원 API에서 부동산 지수 데이터를 가져와서 데이터베이스에 저장합니다.
+    
+    **작동 방식:**
+    1. STATES 테이블의 모든 region_code를 조회
+    2. 각 region_code 앞 5자리를 추출하여 CSV 파일에서 area_code(CLS_ID) 찾기
+    3. 한국부동산원 API를 호출하여 부동산 지수 데이터 수집
+    4. 데이터 변환 및 전월 대비 변동률 계산
+    5. 데이터베이스에 이미 존재하는 데이터는 건너뛰고, 새로운 데이터만 저장
+    
+    **주의사항:**
+    - REB_API_KEY 환경변수가 설정되어 있어야 합니다
+    - API 호출 제한이 있을 수 있으므로 주의해서 사용하세요
+    - 이미 수집된 데이터는 중복 저장되지 않습니다 (region_id, base_ym, index_type 기준)
+    - STATES 테이블에 데이터가 있어야 합니다
+    
+    **응답:**
+    - total_fetched: API에서 가져온 총 레코드 수
+    - total_saved: 데이터베이스에 저장된 레코드 수
+    - skipped: 중복으로 건너뛴 레코드 수
+    - errors: 오류 메시지 목록
+    """,
+    responses={
+        200: {
+            "description": "데이터 수집 완료",
+            "model": HouseScoreCollectionResponse
+        },
+        500: {
+            "description": "서버 오류 또는 API 키 미설정"
+        }
+    }
+)
+async def collect_house_scores(
+    db: AsyncSession = Depends(get_db)
+) -> HouseScoreCollectionResponse:
+    """
+    부동산 지수 데이터 수집 - 한국부동산원 API에서 부동산 지수 데이터를 가져와서 저장
+    
+    이 API는 한국부동산원 API를 호출하여:
+    - STATES 테이블의 region_code를 기반으로 부동산 지수 데이터를 수집
+    - HOUSE_SCORES 테이블에 저장
+    - 중복 데이터는 자동으로 건너뜀 (region_id, base_ym, index_type 기준)
+    - 전월 대비 변동률을 자동으로 계산
+    
+    Returns:
+        HouseScoreCollectionResponse: 수집 결과 통계
+    
+    Raises:
+        HTTPException: API 키가 없거나 서버 오류 발생 시
+    """
+    try:
+        logger.info("=" * 60)
+        logger.info("🏠 부동산 지수 데이터 수집 API 호출됨")
+        logger.info("=" * 60)
+        
+        # 데이터 수집 실행
+        result = await data_collection_service.collect_house_scores(db)
         
         if result.success:
             logger.info(f"✅ 데이터 수집 성공: {result.message}")
