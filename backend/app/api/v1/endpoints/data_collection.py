@@ -4,17 +4,18 @@
 국토교통부 API에서 지역 데이터를 가져와서 데이터베이스에 저장하는 API
 """
 import logging
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from typing import Optional, Dict, Any, List
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Body
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel, Field
 
 from app.api.v1.deps import get_db, get_db_no_auto_commit
 from app.services.data_collection import data_collection_service
 from app.schemas.state import StateCollectionResponse
 from app.schemas.apartment import ApartmentCollectionResponse
 from app.schemas.apart_detail import ApartDetailCollectionResponse
-from app.schemas.rent import RentTransactionRequest, RentCollectionResponse
-from app.schemas.sale import SalesCollectionResponse
+from app.schemas.house_score import HouseScoreCollectionResponse
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -293,8 +294,8 @@ async def collect_apartments(
 
 
 @router.post(
-    "/transactions/rent",
-    response_model=RentCollectionResponse,
+    "/house-scores",
+    response_model=HouseScoreCollectionResponse,
     status_code=status.HTTP_200_OK,
     tags=["📥 Data Collection (데이터 수집)"],
     summary="전월세 실거래가 전체 수집",
@@ -359,14 +360,14 @@ async def collect_apartments(
             }
         },
         500: {
-            "description": "서버 오류 또는 API 키 미설정"
+            "description": "서버 오류"
         }
     }
 )
 async def collect_rent_transactions(
     request: RentTransactionRequest = None,
     db: AsyncSession = Depends(get_db)
-) -> RentCollectionResponse:
+) -> HouseScoreCollectionResponse:
     """
     전월세 실거래가 전체 수집 - DB의 모든 지역에 대해 전월세 거래 데이터를 자동 수집
     
@@ -388,18 +389,6 @@ async def collect_rent_transactions(
         HTTPException: API 키가 없거나 서버 오류 발생 시
     """
     try:
-        # 기본값 설정
-        start_year = 2023
-        start_month = 1
-        start_region_index = 0
-        max_api_calls = 9500
-        
-        if request:
-            start_year = request.start_year
-            start_month = request.start_month
-            start_region_index = request.start_region_index
-            max_api_calls = request.max_api_calls
-        
         logger.info("=" * 60)
         logger.info("🏠 전월세 실거래가 전체 수집 API 호출됨")
         logger.info(f"   📅 수집 시작: {start_year}년 {start_month}월부터")
@@ -424,7 +413,6 @@ async def collect_rent_transactions(
         return result
         
     except ValueError as e:
-        # API 키 미설정 등 설정 오류
         logger.error(f"❌ 설정 오류: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -434,7 +422,6 @@ async def collect_rent_transactions(
             }
         )
     except Exception as e:
-        # 기타 오류
         logger.error(f"❌ 데이터 수집 실패: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
