@@ -15,7 +15,9 @@ import httpx
 import xmltodict
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func, and_, text
+from sqlalchemy.orm import joinedload
+from app.db.session import AsyncSessionLocal
 
 # 모든 모델을 import하여 SQLAlchemy 관계 설정이 제대로 작동하도록 함
 from app.models import (  # noqa: F401
@@ -712,43 +714,19 @@ class DataCollectionService:
     # 전월세 실거래가 수집 메서드
     # =========================================================================
     
-    async def fetch_rent_data(
-        self,
-        lawd_cd: str,
-        deal_ymd: str
-    ) -> str:
-        """
-        국토교통부 API에서 아파트 전월세 실거래가 데이터 가져오기
-        
-        Args:
-            lawd_cd: 지역코드 (법정동코드 앞 5자리)
-            deal_ymd: 계약년월 (YYYYMM)
-        
-        Returns:
-            XML 응답 문자열
-        
-        Raises:
-            httpx.HTTPError: API 호출 실패 시
-        
-        Note:
-            - API 인증키는 서버의 MOLIT_API_KEY 환경변수를 사용합니다.
-            - 국토부 전월세 API는 XML 형식으로 응답합니다.
-            - JSON 변환은 parse_rent_xml_to_json() 메서드에서 수행합니다.
-        """
-        
+    async def fetch_rent_xml(self, lawd_cd: str, deal_ymd: str) -> str:
+        """아파트 전월세 실거래가 API 호출 (XML 반환)"""
         params = {
             "serviceKey": self.api_key,
             "LAWD_CD": lawd_cd,
-            "DEAL_YMD": deal_ymd
+            "DEAL_YMD": deal_ymd,
+            "numOfRows": "5000"
         }
+        url = MOLIT_RENT_API_URL
         
-        logger.info(f"📡 전월세 API 호출: 지역코드={lawd_cd}, 계약년월={deal_ymd}")
-        
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.get(MOLIT_RENT_API_URL, params=params)
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url, params=params)
             response.raise_for_status()
-            
-            # 응답이 XML이므로 텍스트로 반환
             return response.text
     
     def parse_rent_xml_to_json(
@@ -818,16 +796,16 @@ class DataCollectionService:
     
     def parse_rent_item(
         self,
-        item: Dict[str, Any],
+        item: ET.Element,
         apt_id: int
     ) -> Optional[RentCreate]:
         """
-        전월세 거래 데이터 파싱
+        전월세 거래 데이터 파싱 (XML Element 직접 파싱)
         
-        API 응답의 단일 아이템을 RentCreate 스키마로 변환합니다.
+        API 응답의 단일 XML Element를 RentCreate 스키마로 변환합니다.
         
         Args:
-            item: API 응답 아이템 (dict)
+            item: XML Element (ET.Element)
             apt_id: 매칭된 아파트 ID
         
         Returns:
@@ -839,13 +817,21 @@ class DataCollectionService:
             - 계약유형은 "갱신"이면 True, 그 외에는 False 또는 None입니다.
         """
         try:
+            def get_text(elem: ET.Element, tag: str) -> Optional[str]:
+                """XML Element에서 텍스트 추출"""
+                child = elem.find(tag)
+                if child is not None and child.text:
+                    return child.text.strip()
+                return None
+            
             # 거래일 파싱 (필수)
-            deal_year = item.get("dealYear")
-            deal_month = item.get("dealMonth")
-            deal_day = item.get("dealDay")
+            deal_year = get_text(item, "dealYear")
+            deal_month = get_text(item, "dealMonth")
+            deal_day = get_text(item, "dealDay")
             
             if not deal_year or not deal_month or not deal_day:
-                logger.warning(f"   ⚠️ 거래일 정보 누락: {item.get('aptNm', 'Unknown')}")
+                apt_nm = get_text(item, "aptNm") or "Unknown"
+                logger.debug(f"   ⚠️ 거래일 정보 누락: {apt_nm}")
                 return None
             
             try:
@@ -855,35 +841,37 @@ class DataCollectionService:
                     int(deal_day)
                 )
             except (ValueError, TypeError) as e:
-                logger.warning(f"   ⚠️ 거래일 변환 실패: {deal_year}-{deal_month}-{deal_day}, 오류: {e}")
+                logger.debug(f"   ⚠️ 거래일 변환 실패: {deal_year}-{deal_month}-{deal_day}, 오류: {e}")
                 return None
             
             # 전용면적 파싱 (필수)
-            exclu_use_ar = item.get("excluUseAr")
+            exclu_use_ar = get_text(item, "excluUseAr")
             if not exclu_use_ar:
-                logger.warning(f"   ⚠️ 전용면적 정보 누락: {item.get('aptNm', 'Unknown')}")
+                apt_nm = get_text(item, "aptNm") or "Unknown"
+                logger.debug(f"   ⚠️ 전용면적 정보 누락: {apt_nm}")
                 return None
             
             try:
                 exclusive_area = float(exclu_use_ar)
             except (ValueError, TypeError):
-                logger.warning(f"   ⚠️ 전용면적 변환 실패: {exclu_use_ar}")
+                logger.debug(f"   ⚠️ 전용면적 변환 실패: {exclu_use_ar}")
                 return None
             
             # 층 파싱 (필수)
-            floor_str = item.get("floor")
+            floor_str = get_text(item, "floor")
             if not floor_str:
-                logger.warning(f"   ⚠️ 층 정보 누락: {item.get('aptNm', 'Unknown')}")
+                apt_nm = get_text(item, "aptNm") or "Unknown"
+                logger.debug(f"   ⚠️ 층 정보 누락: {apt_nm}")
                 return None
             
             try:
                 floor = int(floor_str)
             except (ValueError, TypeError):
-                logger.warning(f"   ⚠️ 층 변환 실패: {floor_str}")
+                logger.debug(f"   ⚠️ 층 변환 실패: {floor_str}")
                 return None
             
             # 보증금 파싱 (쉼표 제거)
-            deposit_str = item.get("deposit")
+            deposit_str = get_text(item, "deposit")
             deposit_price = None
             if deposit_str:
                 try:
@@ -892,7 +880,7 @@ class DataCollectionService:
                     pass
             
             # 월세 파싱
-            monthly_rent_str = item.get("monthlyRent")
+            monthly_rent_str = get_text(item, "monthlyRent")
             monthly_rent = None
             if monthly_rent_str:
                 try:
@@ -901,18 +889,142 @@ class DataCollectionService:
                     pass
             
             # 계약유형 파싱 (갱신=True, 신규/None=False)
-            contract_type_str = item.get("contractType")
+            contract_type_str = get_text(item, "contractType")
             contract_type = None
             if contract_type_str:
                 contract_type = contract_type_str.strip() == "갱신"
             
             # apt_seq 추출
-            apt_seq = item.get("aptSeq")
+            apt_seq = get_text(item, "aptSeq")
             if apt_seq and len(apt_seq) > 10:
                 apt_seq = apt_seq[:10]  # DB 컬럼 제한에 맞게 자르기
             
             # 건축년도
-            build_year = item.get("buildYear")
+            build_year = get_text(item, "buildYear")
+            
+            return RentCreate(
+                apt_id=apt_id,
+                build_year=build_year,
+                contract_type=contract_type,
+                deposit_price=deposit_price,
+                monthly_rent=monthly_rent,
+                exclusive_area=exclusive_area,
+                floor=floor,
+                apt_seq=apt_seq,
+                deal_date=deal_date_obj,
+                contract_date=None  # API에서 별도 제공하지 않음
+            )
+            
+        except Exception as e:
+            logger.error(f"   ❌ 거래 데이터 파싱 실패: {e}")
+            import traceback
+            logger.debug(f"   상세: {traceback.format_exc()}")
+            return None
+    
+    def _parse_rent_item_from_dict(
+        self,
+        item: Dict[str, Any],
+        apt_id: int
+    ) -> Optional[RentCreate]:
+        """
+        전월세 거래 데이터 파싱 (Dict에서 파싱)
+        
+        parse_rent_xml_to_json이 반환한 Dict를 RentCreate 스키마로 변환합니다.
+        
+        Args:
+            item: Dict (JSON 형태)
+            apt_id: 매칭된 아파트 ID
+            
+        Returns:
+            RentCreate 스키마 또는 None (파싱 실패 시)
+        """
+        try:
+            def get_value(d: Dict[str, Any], key: str) -> Optional[str]:
+                """Dict에서 값 추출"""
+                value = d.get(key)
+                if value is None:
+                    return None
+                if isinstance(value, str):
+                    return value.strip() if value.strip() else None
+                return str(value).strip() if str(value).strip() else None
+            
+            # 거래일 파싱 (필수)
+            deal_year = get_value(item, "dealYear")
+            deal_month = get_value(item, "dealMonth")
+            deal_day = get_value(item, "dealDay")
+            
+            if not deal_year or not deal_month or not deal_day:
+                apt_nm = get_value(item, "aptNm") or "Unknown"
+                logger.debug(f"   ⚠️ 거래일 정보 누락: {apt_nm}")
+                return None
+            
+            try:
+                deal_date_obj = date(
+                    int(deal_year),
+                    int(deal_month),
+                    int(deal_day)
+                )
+            except (ValueError, TypeError) as e:
+                logger.debug(f"   ⚠️ 거래일 변환 실패: {deal_year}-{deal_month}-{deal_day}, 오류: {e}")
+                return None
+            
+            # 전용면적 파싱 (필수)
+            exclu_use_ar = get_value(item, "excluUseAr")
+            if not exclu_use_ar:
+                apt_nm = get_value(item, "aptNm") or "Unknown"
+                logger.debug(f"   ⚠️ 전용면적 정보 누락: {apt_nm}")
+                return None
+            
+            try:
+                exclusive_area = float(exclu_use_ar)
+            except (ValueError, TypeError):
+                logger.debug(f"   ⚠️ 전용면적 변환 실패: {exclu_use_ar}")
+                return None
+            
+            # 층 파싱 (필수)
+            floor_str = get_value(item, "floor")
+            if not floor_str:
+                apt_nm = get_value(item, "aptNm") or "Unknown"
+                logger.debug(f"   ⚠️ 층 정보 누락: {apt_nm}")
+                return None
+            
+            try:
+                floor = int(floor_str)
+            except (ValueError, TypeError):
+                logger.debug(f"   ⚠️ 층 변환 실패: {floor_str}")
+                return None
+            
+            # 보증금 파싱 (쉼표 제거)
+            deposit_str = get_value(item, "deposit")
+            deposit_price = None
+            if deposit_str:
+                try:
+                    deposit_price = int(str(deposit_str).replace(",", ""))
+                except (ValueError, TypeError, AttributeError):
+                    pass
+            
+            # 월세 파싱
+            monthly_rent_str = get_value(item, "monthlyRent")
+            monthly_rent = None
+            if monthly_rent_str:
+                try:
+                    monthly_rent = int(str(monthly_rent_str).replace(",", ""))
+                except (ValueError, TypeError, AttributeError):
+                    pass
+            
+            # 계약유형 파싱 (갱신=True, 신규/None=False)
+            contract_type_str = get_value(item, "contractType")
+            contract_type = None
+            if contract_type_str:
+                contract_type = str(contract_type_str).strip() == "갱신"
+            
+            # apt_seq 추출
+            apt_seq = get_value(item, "aptSeq")
+            if apt_seq and len(apt_seq) > 10:
+                apt_seq = apt_seq[:10]  # DB 컬럼 제한에 맞게 자르기
+            
+            # 건축년도
+            build_year = get_value(item, "buildYear")
             
             return RentCreate(
                 apt_id=apt_id,
@@ -1042,7 +1154,7 @@ class DataCollectionService:
             
             # 1단계: API 호출하여 XML 데이터 가져오기 (MOLIT_API_KEY 사용)
             try:
-                xml_data = await self.fetch_rent_data(lawd_cd, deal_ymd)
+                xml_data = await self.fetch_rent_xml(lawd_cd, deal_ymd)
             except httpx.HTTPError as e:
                 error_msg = f"API 호출 실패: {str(e)}"
                 logger.error(f"❌ {error_msg}")
@@ -1102,6 +1214,8 @@ class DataCollectionService:
                     
                     if cache_key in apt_cache:
                         apt_id = apt_cache[cache_key]
+                        # 캐시에서 가져온 경우 아파트 이름 조회
+                        apt_name_for_remarks = apt_name  # 기본값으로 API의 apt_name 사용
                     else:
                         apartment = await self.find_apartment_by_name_and_region(
                             db, apt_name, sgg_cd
@@ -1115,6 +1229,7 @@ class DataCollectionService:
                         
                         apt_id = apartment.apt_id
                         apt_cache[cache_key] = apt_id
+                        apt_name_for_remarks = apartment.apt_name
                     
                     # 3-2: 거래 데이터 파싱
                     rent_create = self.parse_rent_item(item, apt_id)
@@ -1124,6 +1239,9 @@ class DataCollectionService:
                         errors.append(error_msg)
                         logger.warning(f"   ⚠️ [{idx}/{total_fetched}] {error_msg}")
                         continue
+                    
+                    # remarks에 아파트 이름 저장 (개발 확인용)
+                    rent_create.remarks = apt_name_for_remarks
                     
                     # 3-3: DB에 저장 (중복 체크)
                     db_obj, is_created = await rent_crud.create_or_skip(
@@ -1356,7 +1474,7 @@ class DataCollectionService:
                     
                     try:
                         # API 호출
-                        xml_data = await self.fetch_rent_data(lawd_cd, deal_ymd)
+                        xml_data = await self.fetch_rent_xml(lawd_cd, deal_ymd)
                         api_calls_used += 1
                         last_lawd_cd = lawd_cd
                         last_deal_ymd = deal_ymd
@@ -1393,6 +1511,7 @@ class DataCollectionService:
                                 
                                 if cache_key in apt_cache:
                                     apt_id = apt_cache[cache_key]
+                                    apt_name_for_remarks = apt_name  # 기본값으로 API의 apt_name 사용
                                 elif cache_key not in apt_cache:
                                     apartment = await self.find_apartment_by_name_and_region(
                                         db, apt_name, sgg_cd
@@ -1404,6 +1523,7 @@ class DataCollectionService:
                                     
                                     apt_id = apartment.apt_id
                                     apt_cache[cache_key] = apt_id
+                                    apt_name_for_remarks = apartment.apt_name
                                 
                                 if apt_cache.get(cache_key) is None:
                                     continue
@@ -1414,6 +1534,9 @@ class DataCollectionService:
                                 rent_create = self.parse_rent_item(item, apt_id)
                                 if not rent_create:
                                     continue
+                                
+                                # remarks에 아파트 이름 저장 (개발 확인용)
+                                rent_create.remarks = apt_name_for_remarks
                                 
                                 # DB 저장
                                 _, is_created = await rent_crud.create_or_skip(
@@ -1505,23 +1628,378 @@ class DataCollectionService:
         params = {
             "serviceKey": self.api_key,
             "LAWD_CD": lawd_cd,
-            "DEAL_YMD": deal_ym
+            "DEAL_YMD": deal_ym,
+            "numOfRows": "5000"
         }
         url = MOLIT_SALE_API_URL
         
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(url, params=params)
-            return response.text
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url, params=params)
+                response.raise_for_status()
+                return response.text
+        except httpx.TimeoutException:
+            logger.error(f"⏰ 매매 API 호출 시간 초과: {lawd_cd}/{deal_ym}")
+            raise
+        except httpx.ConnectError as e:
+            logger.error(f"❌ 매매 API 연결 실패: {lawd_cd}/{deal_ym} - {e}")
+            raise
+        except httpx.HTTPError as e:
+            logger.error(f"❌ 매매 API HTTP 오류: {lawd_cd}/{deal_ym} - {e}")
+            raise
 
     def _clean_apt_name(self, name: str) -> str:
         """아파트 이름 정제 (괄호 및 내용 제거)"""
         return re.sub(r'\([^)]*\)', '', name).strip()
-
+    
+    def _normalize_apt_name(self, name: str) -> str:
+        """아파트 이름 정규화 (공백, 특수문자 제거, 건물 타입 제거)"""
+        if not name:
+            return ""
+        name = re.sub(r'\([^)]*\)', '', name)
+        name = re.sub(r'\[[^\]]*\]', '', name)
+        name = name.replace(' ', '').replace('\t', '').replace('\n', '')
+        building_types = ['아파트', '빌라', '타워', '주상복합', '빌딩', '맨션', '하우스', '빌리지', '빌리젠시']
+        for btype in building_types:
+            name = name.replace(btype, '')
+        name = re.sub(r'[^\w가-힣0-9\-\.]', '', name)
+        return name.strip()
+    
+    def _extract_core_name(self, name: str) -> str:
+        """핵심 아파트 이름 추출 (단지, 제X호, X차 등 제거)"""
+        if not name:
+            return ""
+        core = self._normalize_apt_name(name)
+        core = re.sub(r'[0-9]+단지', '', core)
+        core = re.sub(r'제[0-9]+', '', core)
+        core = re.sub(r'[0-9]+차', '', core)
+        core = re.sub(r'[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]+', '', core)
+        core = re.sub(r'^[0-9]+', '', core)
+        core = re.sub(r'[0-9]+$', '', core)
+        return core.strip()
+    
+    def _match_apartment(
+        self,
+        api_apt_name: str,
+        candidates: List[Any],
+        sgg_code_matched: bool = False,
+        dong_matched: bool = False
+    ) -> Optional[Any]:
+        """
+        아파트 이름 매칭 알고리즘
+        
+        시군구 코드와 동이 모두 맞으면 더 널널한 기준으로 매칭합니다.
+        
+        Args:
+            api_apt_name: API에서 받은 아파트 이름
+            candidates: 매칭 후보 아파트 리스트
+            sgg_code_matched: 시군구 코드가 일치하는지 여부
+            dong_matched: 동이 일치하는지 여부
+            
+        Returns:
+            매칭된 아파트 객체 또는 None
+        """
+        if not api_apt_name or not candidates:
+            return None
+        
+        cleaned_name = self._clean_apt_name(api_apt_name)
+        if not cleaned_name:
+            return None
+        
+        # 시군구 코드와 동이 모두 맞으면 더 널널한 기준 사용
+        is_strict_match = not (sgg_code_matched and dong_matched)  # 둘 다 True면 널널하게
+        
+        # 정규화된 이름
+        api_normalized = self._normalize_apt_name(api_apt_name)
+        
+        # 전략 1: 정확한 매칭
+        for apt in candidates:
+            db_normalized = self._normalize_apt_name(apt.apt_name)
+            if api_normalized == db_normalized:
+                return apt
+        
+        # 전략 2: 핵심 이름 매칭
+        api_core = self._extract_core_name(api_apt_name)
+        if api_core:
+            min_core_length = 2 if not is_strict_match else 3
+            for apt in candidates:
+                db_core = self._extract_core_name(apt.apt_name)
+                if api_core == db_core and len(api_core) >= min_core_length:
+                    return apt
+        
+        # 전략 3: 포함 관계 확인
+        min_length = 2 if not is_strict_match else 3
+        for apt in candidates:
+            db_normalized = self._normalize_apt_name(apt.apt_name)
+            if api_normalized in db_normalized or db_normalized in api_normalized:
+                if len(api_normalized) >= min_length or len(db_normalized) >= min_length:
+                    return apt
+        
+        # 전략 4: 키워드 기반 매칭
+        api_keywords = self._extract_keywords(cleaned_name)
+        best_match = None
+        best_common_ratio = 0.0
+        
+        # 시군구 코드와 동이 맞으면 더 낮은 기준 사용
+        min_keyword_ratio = 0.2 if not is_strict_match else 0.4
+        min_common_keywords = 1 if not is_strict_match else 2
+        
+        for apt in candidates:
+            db_apt_clean = self._clean_apt_name(apt.apt_name)
+            db_keywords = self._extract_keywords(db_apt_clean)
+            
+            if not api_keywords or not db_keywords:
+                continue
+            
+            common_keywords = api_keywords & db_keywords
+            total_keywords = api_keywords | db_keywords
+            common_ratio = len(common_keywords) / len(total_keywords) if total_keywords else 0.0
+            
+            if common_ratio >= min_keyword_ratio and len(common_keywords) >= min_common_keywords:
+                if common_ratio > best_common_ratio:
+                    best_common_ratio = common_ratio
+                    best_match = apt
+        
+        if best_match:
+            return best_match
+        
+        # 전략 5: 문자열 유사도 기반 매칭
+        best_match = None
+        best_similarity = 0.0
+        
+        # 시군구 코드와 동이 맞으면 더 낮은 기준 사용
+        min_similarity = 0.3 if not is_strict_match else 0.5
+        
+        for apt in candidates:
+            db_normalized = self._normalize_apt_name(apt.apt_name)
+            similarity = self._calculate_similarity(api_normalized, db_normalized)
+            
+            if similarity >= min_similarity and similarity > best_similarity:
+                best_similarity = similarity
+                best_match = apt
+        
+        # 전략 6: 부분 문자열 매칭 (시군구 코드와 동이 맞으면 매우 널널하게)
+        if not best_match and not is_strict_match:
+            # API 이름의 일부가 DB 이름에 포함되거나 그 반대인 경우
+            api_normalized_lower = api_normalized.lower()
+            for apt in candidates:
+                db_normalized = self._normalize_apt_name(apt.apt_name).lower()
+                # 한쪽이 다른 쪽에 포함되는 경우 (최소 2글자 이상)
+                if len(api_normalized_lower) >= 2 and api_normalized_lower in db_normalized:
+                    return apt
+                if len(db_normalized) >= 2 and db_normalized in api_normalized_lower:
+                    return apt
+        
+        return best_match
+    
+    def _extract_keywords(self, name: str) -> set:
+        """아파트 이름에서 키워드 추출"""
+        if not name:
+            return set()
+        
+        # 한글 단어 추출 (2글자 이상)
+        keywords = set()
+        korean_words = re.findall(r'[가-힣]{2,}', name)
+        keywords.update(korean_words)
+        
+        # 숫자 추출 (단지 번호 등)
+        numbers = re.findall(r'\d+', name)
+        keywords.update(numbers)
+        
+        # 영문 단어 추출 (2글자 이상)
+        english_words = re.findall(r'[A-Za-z]{2,}', name)
+        keywords.update([w.lower() for w in english_words])
+        
+        return keywords
+    
+    def _calculate_similarity(self, str1: str, str2: str) -> float:
+        """두 문자열의 유사도 계산 (간단한 레벤슈타인 거리 기반)"""
+        if not str1 or not str2:
+            return 0.0
+        
+        if str1 == str2:
+            return 1.0
+        
+        # 간단한 유사도 계산 (공통 문자 비율)
+        set1 = set(str1)
+        set2 = set(str2)
+        
+        if not set1 or not set2:
+            return 0.0
+        
+        intersection = len(set1 & set2)
+        union = len(set1 | set2)
+        
+        if union == 0:
+            return 0.0
+        
+        return intersection / union
+    
+    def _extract_field_from_item(self, item: Any, field_name: str) -> Optional[str]:
+        """
+        API 응답 item에서 필드 추출 (XML Element 또는 Dict 모두 지원)
+        
+        Args:
+            item: XML Element (ET.Element) 또는 Dict
+            field_name: 추출할 필드명
+            
+        Returns:
+            필드 값 (문자열) 또는 None
+        """
+        # XML Element인지 Dict인지 확인
+        if hasattr(item, 'findtext'):
+            # XML Element
+            value = item.findtext(field_name)
+            return value.strip() if value else None
+        elif isinstance(item, dict):
+            # Dict (xmltodict로 변환된 경우)
+            value = item.get(field_name)
+            if value is None:
+                return None
+            # 문자열인 경우
+            if isinstance(value, str):
+                stripped = value.strip()
+                return stripped if stripped else None
+            # 숫자나 다른 타입인 경우 문자열로 변환
+            return str(value).strip() if str(value).strip() else None
+        else:
+            return None
+    
+    def find_matching_apartment_from_item(
+        self,
+        item: Any,
+        local_apts: List[Any],
+        all_regions: Dict[int, Any],
+        sgg_cd: str
+    ) -> Optional[Any]:
+        """
+        API 응답 item에서 아파트를 찾는 통합 함수
+        
+        이 함수는 매매와 전월세 모두에서 사용되며, 다음을 수행합니다:
+        1. 아파트명, 시군구 코드, 동 추출 (XML/Dict 자동 감지)
+        2. 시군구 코드 기반 필터링
+        3. 동 기반 필터링
+        4. 아파트명 매칭
+        5. 실패 시 재시도
+        
+        Args:
+            item: API 응답 item (XML Element 또는 Dict)
+            local_apts: 해당 지역의 아파트 리스트
+            all_regions: 지역 정보 딕셔너리 (region_id -> State)
+            sgg_cd: 현재 처리 중인 시군구 코드
+            
+        Returns:
+            매칭된 아파트 객체 또는 None
+        """
+        # 1. 필드 추출
+        apt_nm_xml = self._extract_field_from_item(item, "aptNm")
+        umd_nm = self._extract_field_from_item(item, "umdNm")
+        sgg_cd_item = self._extract_field_from_item(item, "sggCd")
+        
+        if not apt_nm_xml:
+            return None
+        
+        # 아파트명 전처리
+        cleaned_name = self._clean_apt_name(apt_nm_xml)
+        if not cleaned_name:
+            return None
+        
+        # 시군구 코드 기본값 설정
+        if not sgg_cd_item:
+            sgg_cd_item = sgg_cd
+        
+        # 2. 시군구 코드 기반 필터링
+        candidates = local_apts
+        sgg_code_matched = False
+        
+        if sgg_cd_item and str(sgg_cd_item).strip():
+            sgg_cd_item_str = str(sgg_cd_item).strip()
+            sgg_cd_str = str(sgg_cd).strip()
+            
+            if sgg_cd_item_str == sgg_cd_str:
+                sgg_code_matched = True
+            else:
+                # 다른 시군구 코드인 경우 필터링 시도
+                filtered = [apt for apt in local_apts 
+                          if apt.region.region_code.startswith(sgg_cd_item_str)]
+                if filtered:
+                    candidates = filtered
+                    sgg_code_matched = False
+                else:
+                    # 필터링 결과가 없으면 원래 후보 유지 (매칭 실패 방지)
+                    sgg_code_matched = False
+        else:
+            # sgg_cd_item이 없으면 이미 sgg_cd로 필터링된 것으로 간주
+            sgg_code_matched = True
+        
+        # 3. 동(umdNm) 기반 필터링
+        dong_matched = False
+        if umd_nm and candidates:
+            # 정확한 매칭 우선 시도
+            matching_region_ids = {
+                region_id for region_id, region in all_regions.items()
+                if region.region_name == umd_nm or umd_nm in region.region_name or region.region_name in umd_nm
+            }
+            
+            if matching_region_ids:
+                filtered = [apt for apt in candidates 
+                          if apt.region_id in matching_region_ids]
+                if filtered:
+                    candidates = filtered
+                    dong_matched = True
+            else:
+                # 정확한 매칭 실패 시, 동 이름의 일부라도 포함되면 매칭 시도
+                umd_nm_clean = umd_nm.replace("동", "").replace("가", "").strip()
+                partial_matching_ids = {
+                    region_id for region_id, region in all_regions.items()
+                    if umd_nm_clean in region.region_name.replace("동", "").replace("가", "") or 
+                       region.region_name.replace("동", "").replace("가", "") in umd_nm_clean
+                }
+                if partial_matching_ids:
+                    filtered = [apt for apt in candidates 
+                              if apt.region_id in partial_matching_ids]
+                    if filtered:
+                        candidates = filtered
+                        dong_matched = True
+        
+        # 4. 후보가 없으면 원래 후보로 복원
+        if not candidates:
+            candidates = local_apts
+            sgg_code_matched = True
+            dong_matched = False
+        
+        # 4-1. 시군구 코드가 일치하면 동 매칭 실패해도 널널하게 처리
+        # (시군구 코드가 맞으면 동 정보가 약간 다르더라도 매칭 허용)
+        if sgg_code_matched and not dong_matched:
+            # 시군구 코드가 맞으면 동 매칭 실패해도 널널한 기준 사용
+            dong_matched = True  # 널널한 매칭을 위해 True로 설정
+        
+        # 5. 아파트 이름 매칭
+        matched_apt = self._match_apartment(
+            apt_nm_xml,
+            candidates,
+            sgg_code_matched=sgg_code_matched,
+            dong_matched=dong_matched
+        )
+        
+        # 6. 필터링된 후보에서 실패 시 전체 후보로 재시도
+        if not matched_apt and len(candidates) > 0 and len(candidates) < len(local_apts):
+            matched_apt = self._match_apartment(
+                apt_nm_xml,
+                local_apts,
+                sgg_code_matched=True,
+                dong_matched=False
+            )
+        
+        return matched_apt
+    
     async def collect_sales_data(
         self,
         db: AsyncSession,
         start_ym: str,
-        end_ym: str
+        end_ym: str,
+        max_items: Optional[int] = None,
+        allow_duplicate: bool = False
     ) -> Any:
         """
         아파트 매매 실거래가 데이터 수집
@@ -1529,6 +2007,8 @@ class DataCollectionService:
         Args:
             start_ym: 시작 연월 (YYYYMM)
             end_ym: 종료 연월 (YYYYMM)
+            max_items: 최대 수집 개수 제한 (기본값: None, 제한 없음)
+            allow_duplicate: 중복 저장 허용 여부 (기본값: False, False=건너뛰기, True=업데이트)
         """
         from app.schemas.sale import SalesCollectionResponse, SaleCreate
         from sqlalchemy import select, func, text, and_
@@ -1536,6 +2016,8 @@ class DataCollectionService:
         
         logger.info("=" * 80)
         logger.info(f"💰 [매매 실거래가] 데이터 수집 시작 ({start_ym} ~ {end_ym})")
+        logger.info(f"   📊 최대 수집 개수: {max_items if max_items else '제한 없음'}")
+        logger.info(f"   🔄 중복 처리: {'업데이트' if allow_duplicate else '건너뛰기'}")
         logger.info("=" * 80)
         
         total_fetched = 0
@@ -1569,181 +2051,253 @@ class DataCollectionService:
         # 2. 대상 지역 코드 (5자리) 가져오기
         logger.info("📍 대상 지역 코드 추출 중...")
         try:
-            stmt = text("SELECT DISTINCT SUBSTR(region_code, 1, 5) FROM states WHERE length(region_code) >= 5")
+            stmt = select(func.substr(State.region_code, 1, 5).distinct()).where(
+                func.length(State.region_code) >= 5
+            )
             result = await db.execute(stmt)
-            target_sgg_codes = [row[0] for row in result.fetchall() if row[0] and len(row[0]) == 5]
+            target_sgg_codes = [row[0] for row in result.fetchall() if row[0] and len(str(row[0])) == 5]
             logger.info(f"   -> 총 {len(target_sgg_codes)}개 지역 코드 추출됨")
         except Exception as e:
-            logger.error(f"❌ 지역 코드 추출 실패: {e}")
+            logger.error(f"❌ 지역 코드 추출 실패: {e}", exc_info=True)
             return SalesCollectionResponse(success=False, message=f"DB 오류: {e}")
 
-        # 3. 수집 루프
+        # 3. 수집 루프 (병렬 처리)
+        semaphore = asyncio.Semaphore(10)  # 한 번에 10개씩 병렬 처리
+        
+        async def process_sale_region(ym: str, sgg_cd: str):
+            """매매 데이터 수집 작업 (병렬 처리용)"""
+            async with semaphore:
+                # 각 작업마다 독립적인 DB 세션 사용
+                async with AsyncSessionLocal() as local_db:
+                    nonlocal total_fetched, total_saved, skipped, errors
+                    
+                    # max_items 제한 확인
+                    if max_items and total_saved >= max_items:
+                        return
+                    
+                    try:
+                        # 3-0. [트래픽 절약] 이미 수집된 데이터가 있는지 확인 (블록 단위 스킵)
+                        # 해당 지역(sgg_cd) + 해당 월(ym)의 데이터가 1개라도 있으면 API 호출 스킵
+                        # 주의: 부분 수집된 경우에도 스킵될 수 있으므로, 재수집 시에는 데이터를 삭제하고 진행해야 함
+                        
+                        # YYYYMM 문자열을 Date 범위로 변환
+                        y = int(ym[:4])
+                        m = int(ym[4:])
+                        start_date = date(y, m, 1)
+                        import calendar
+                        last_day = calendar.monthrange(y, m)[1]
+                        end_date = date(y, m, last_day)
+                        
+                        # 해당 기간, 해당 지역의 거래 내역 수 조회
+                        check_stmt = select(func.count(Sale.trans_id)).join(Apartment).join(State).where(
+                            and_(
+                                State.region_code.like(f"{sgg_cd}%"),
+                                Sale.contract_date >= start_date,
+                                Sale.contract_date <= end_date
+                            )
+                        )
+                        
+                        count_result = await local_db.execute(check_stmt)
+                        existing_count = count_result.scalar() or 0
+                        
+                        if existing_count > 0 and not allow_duplicate:
+                            logger.info(f"      ⏭️ [SKIP] {sgg_cd} / {ym}: 이미 {existing_count}건의 데이터가 존재하여 API 호출을 생략합니다.")
+                            skipped += existing_count # 통계에 포함 (선택사항)
+                            return
+
+                        # API 호출
+                        xml_content = await self.fetch_sales_xml(sgg_cd, ym)
+                        
+                        # XML 파싱
+                        try:
+                            root = ET.fromstring(xml_content)
+                        except ET.ParseError:
+                            # XML이 아닌 경우 (에러 메시지 등)
+                            return
+                            
+                        items = root.findall(".//item")
+                        
+                        if not items:
+                            return
+                            
+                        # 해당 지역 아파트 메모리 로드 (Region 정보 포함)
+                        stmt = select(Apartment).options(joinedload(Apartment.region)).join(State).where(State.region_code.like(f"{sgg_cd}%"))
+                        apt_result = await local_db.execute(stmt)
+                        local_apts = apt_result.scalars().all()
+                        
+                        if not local_apts:
+                            logger.warning(f"      ⚠️ {sgg_cd} / {ym}: 해당 지역에 아파트가 없습니다.")
+                            return
+                        
+                        logger.debug(f"      ℹ️ {sgg_cd} / {ym}: {len(local_apts)}개 아파트 로드됨")
+                            
+                        # 동(umdNm) 정보를 미리 캐시 (매칭 성능 향상)
+                        region_stmt = select(State).where(State.region_code.like(f"{sgg_cd}%"))
+                        region_result = await local_db.execute(region_stmt)
+                        all_regions = {r.region_id: r for r in region_result.scalars().all()}
+                        
+                        sales_to_save = []
+                        matched_count = 0
+                        unmatched_count = 0
+                        
+                        for item in items:
+                            try:
+                                # 통합 함수로 아파트 매칭 (필드 추출, 필터링, 매칭 모두 포함)
+                                matched_apt = self.find_matching_apartment_from_item(
+                                    item,
+                                    local_apts,
+                                    all_regions,
+                                    sgg_cd
+                                )
+                                
+                                if not matched_apt:
+                                    unmatched_count += 1
+                                    continue
+                                
+                                matched_count += 1
+                                
+                                # 매칭 정보 추출 (로깅용)
+                                apt_nm_xml = self._extract_field_from_item(item, "aptNm")
+                                umd_nm = self._extract_field_from_item(item, "umdNm")
+                                sgg_cd_item = self._extract_field_from_item(item, "sggCd") or sgg_cd
+                                cleaned_name = self._clean_apt_name(apt_nm_xml) if apt_nm_xml else ""
+                                logger.debug(f"      🔗 매칭: [sggCd:{sgg_cd_item}, umdNm:{umd_nm}] {cleaned_name} -> {matched_apt.apt_name} (ID: {matched_apt.apt_id})")
+                                
+                                # 필드 추출 (데이터 저장용 - XML/Dict 모두 지원)
+                                deal_amount_raw = self._extract_field_from_item(item, "dealAmount") or "0"
+                                deal_amount = deal_amount_raw.replace(",", "").strip() if deal_amount_raw else "0"
+                                build_year = self._extract_field_from_item(item, "buildYear")
+                                deal_year = self._extract_field_from_item(item, "dealYear")
+                                deal_month = self._extract_field_from_item(item, "dealMonth")
+                                deal_day = self._extract_field_from_item(item, "dealDay")
+                                exclu_use_ar = self._extract_field_from_item(item, "excluUseAr")
+                                floor = self._extract_field_from_item(item, "floor")
+                                
+                                contract_date = None
+                                if deal_year and deal_month and deal_day:
+                                    try:
+                                        contract_date = date(int(deal_year), int(deal_month), int(deal_day))
+                                    except: pass
+                                    
+                                sale_create = SaleCreate(
+                                    apt_id=matched_apt.apt_id,
+                                    build_year=build_year,
+                                    trans_type="매매",
+                                    trans_price=int(deal_amount) if deal_amount else 0,
+                                    exclusive_area=float(exclu_use_ar) if exclu_use_ar else 0.0,
+                                    floor=int(floor) if floor else 0,
+                                    contract_date=contract_date,
+                                    is_canceled=False,
+                                    remarks=matched_apt.apt_name
+                                )
+                                
+                                sales_to_save.append(sale_create)
+                                
+                                # 아파트 상태 업데이트
+                                if matched_apt.is_available != "1":
+                                    matched_apt.is_available = "1"
+                                    local_db.add(matched_apt)
+                                    
+                            except Exception as e:
+                                logger.debug(f"      ⚠️ 거래 처리 실패: {str(e)}")
+                                continue
+                        
+                        total_fetched += len(items)
+                        
+                        # 매칭 결과 로그 (매칭이 있거나 미매칭이 있을 때만 출력)
+                        if matched_count > 0 or unmatched_count > 0:
+                            logger.info(f"      ℹ️ {sgg_cd} / {ym}: {len(items)}건 중 {matched_count}건 매칭, {unmatched_count}건 미매칭")
+                        
+                        if sales_to_save:
+                            # max_items 제한 확인
+                            if max_items and total_saved >= max_items:
+                                logger.info(f"   ⏸️ 최대 수집 개수({max_items})에 도달하여 수집 중단")
+                                return
+                            
+                            saved_count = 0
+                            for sale_data in sales_to_save:
+                                # max_items 제한 확인
+                                if max_items and total_saved >= max_items:
+                                    break
+                                
+                                # 중복 정밀 체크
+                                exists_stmt = select(Sale).where(
+                                    and_(
+                                        Sale.apt_id == sale_data.apt_id,
+                                        Sale.contract_date == sale_data.contract_date,
+                                        Sale.trans_price == sale_data.trans_price,
+                                        Sale.floor == sale_data.floor,
+                                        Sale.exclusive_area == sale_data.exclusive_area
+                                    )
+                                )
+                                exists_result = await local_db.execute(exists_stmt)
+                                existing_sale = exists_result.scalars().first()
+                                
+                                if existing_sale:
+                                    if allow_duplicate:
+                                        # 업데이트
+                                        obj_data = sale_data.model_dump(exclude_unset=True)
+                                        obj_data["updated_at"] = datetime.now()
+                                        for key, value in obj_data.items():
+                                            setattr(existing_sale, key, value)
+                                        local_db.add(existing_sale)
+                                        saved_count += 1
+                                    else:
+                                        # 건너뛰기
+                                        logger.debug(f"      ⏭️ 중복 데이터 건너뜀: AptID {sale_data.apt_id}, {sale_data.contract_date}, {sale_data.trans_price}만원")
+                                        skipped += 1
+                                        continue
+                                else:
+                                    # 새로 생성
+                                    db_obj = Sale(**sale_data.model_dump())
+                                    local_db.add(db_obj)
+                                    saved_count += 1
+                                
+                            await local_db.commit()
+                            total_saved += saved_count
+                            
+                            if saved_count > 0:
+                                logger.info(f"      ✅ {sgg_cd} / {ym}: {saved_count}건 저장, {skipped}건 건너뜀")
+                            elif len(sales_to_save) > 0:
+                                logger.info(f"      ⏭️ {sgg_cd} / {ym}: {len(sales_to_save)}건 모두 중복으로 건너뜀")
+                            
+                            # max_items 제한 확인
+                            if max_items and total_saved >= max_items:
+                                logger.info(f"   ⏸️ 최대 수집 개수({max_items})에 도달하여 수집 중단")
+                                return
+                    
+                    except Exception as e:
+                        logger.error(f"❌ {sgg_cd} / {ym} 처리 중 오류: {e}")
+                        errors.append(f"{sgg_cd}/{ym}: {str(e)}")
+                        await local_db.rollback()
+        
+        # 병렬 처리 실행
         for ym in target_months:
             logger.info(f"📅 [기간: {ym}] 수집 시작")
             
-            for sgg_cd in target_sgg_codes:
-                try:
-                    # 3-0. [트래픽 절약] 이미 수집된 데이터가 있는지 확인 (블록 단위 스킵)
-                    # 해당 지역(sgg_cd) + 해당 월(ym)의 데이터가 1개라도 있으면 API 호출 스킵
-                    # 주의: 부분 수집된 경우에도 스킵될 수 있으므로, 재수집 시에는 데이터를 삭제하고 진행해야 함
-                    
-                    # YYYYMM 문자열을 Date 범위로 변환
-                    y = int(ym[:4])
-                    m = int(ym[4:])
-                    start_date = date(y, m, 1)
-                    import calendar
-                    last_day = calendar.monthrange(y, m)[1]
-                    end_date = date(y, m, last_day)
-                    
-                    # 해당 기간, 해당 지역의 거래 내역 수 조회
-                    check_stmt = select(func.count(Sale.trans_id)).join(Apartment).join(State).where(
-                        and_(
-                            State.region_code.like(f"{sgg_cd}%"),
-                            Sale.contract_date >= start_date,
-                            Sale.contract_date <= end_date
-                        )
-                    )
-                    
-                    count_result = await db.execute(check_stmt)
-                    existing_count = count_result.scalar() or 0
-                    
-                    if existing_count > 0:
-                        logger.info(f"      ⏭️ [SKIP] {sgg_cd} / {ym}: 이미 {existing_count}건의 데이터가 존재하여 API 호출을 생략합니다.")
-                        skipped += existing_count # 통계에 포함 (선택사항)
-                        continue
-
-                    # API 호출
-                    xml_content = await self.fetch_sales_xml(sgg_cd, ym)
-                    
-                    # XML 파싱
-                    try:
-                        root = ET.fromstring(xml_content)
-                    except ET.ParseError:
-                        # XML이 아닌 경우 (에러 메시지 등)
-                        continue
-                        
-                    items = root.findall(".//item")
-                    
-                    if not items:
-                        continue
-                        
-                    # 해당 지역 아파트 메모리 로드 (Region 정보 포함)
-                    stmt = select(Apartment).options(joinedload(Apartment.region)).join(State).where(State.region_code.like(f"{sgg_cd}%"))
-                    apt_result = await db.execute(stmt)
-                    local_apts = apt_result.scalars().all()
-                    
-                    if not local_apts:
-                        continue
-                        
-                    sales_to_save = []
-                    
-                    for item in items:
-                        try:
-                            # XML 필드 추출
-                            apt_nm_xml = item.findtext("aptNm")
-                            umd_nm = item.findtext("umdNm")
-                            
-                            if not apt_nm_xml: continue
-                            
-                            cleaned_name = self._clean_apt_name(apt_nm_xml)
-                            if not cleaned_name: continue
-                            
-                            # 1. 동(Dong) 기반 필터링
-                            # API의 법정동(umdNm)이 DB의 지역명에 포함되는 아파트만 후보로 선정
-                            candidates = local_apts
-                            if umd_nm:
-                                filtered = [apt for apt in local_apts if umd_nm in apt.region.region_name]
-                                if filtered:
-                                    candidates = filtered
-                            
-                            # 2. 아파트 이름 매칭
-                            matched_apt = None
-                            for apt in candidates:
-                                # DB 아파트 이름도 정제 (괄호 제거 등)
-                                db_apt_clean = self._clean_apt_name(apt.apt_name)
-                                
-                                # 양방향 포함 관계 확인 (API 이름이 DB 이름에 있거나, 그 반대거나)
-                                if cleaned_name in db_apt_clean or db_apt_clean in cleaned_name:
-                                    matched_apt = apt
-                                    break
-                            
-                            if not matched_apt:
-                                continue
-                            
-                            # 매칭 로그 (디버깅용)
-                            logger.info(f"      🔗 매칭: [{umd_nm}] {cleaned_name} -> {matched_apt.apt_name} (ID: {matched_apt.apt_id})")
-                                
-                            # 필드 매핑
-                            deal_amount = item.findtext("dealAmount", "0").replace(",", "").strip()
-                            build_year = item.findtext("buildYear")
-                            deal_year = item.findtext("dealYear")
-                            deal_month = item.findtext("dealMonth")
-                            deal_day = item.findtext("dealDay")
-                            exclu_use_ar = item.findtext("excluUseAr")
-                            floor = item.findtext("floor")
-                            
-                            contract_date = None
-                            if deal_year and deal_month and deal_day:
-                                try:
-                                    contract_date = date(int(deal_year), int(deal_month), int(deal_day))
-                                except: pass
-                                
-                            sale_create = SaleCreate(
-                                apt_id=matched_apt.apt_id,
-                                build_year=build_year,
-                                trans_type="매매",
-                                trans_price=int(deal_amount) if deal_amount else 0,
-                                exclusive_area=float(exclu_use_ar) if exclu_use_ar else 0.0,
-                                floor=int(floor) if floor else 0,
-                                contract_date=contract_date,
-                                is_canceled=False,
-                                remarks=matched_apt.apt_name
-                            )
-                            
-                            sales_to_save.append(sale_create)
-                            
-                            # 아파트 상태 업데이트
-                            if matched_apt.is_available != "1":
-                                matched_apt.is_available = "1"
-                                db.add(matched_apt)
-                                
-                        except Exception as e:
-                            continue
-                    
-                    if sales_to_save:
-                        saved_count = 0
-                        for sale_data in sales_to_save:
-                            # 중복 정밀 체크
-                            exists_stmt = select(Sale).where(
-                                and_(
-                                    Sale.apt_id == sale_data.apt_id,
-                                    Sale.contract_date == sale_data.contract_date,
-                                    Sale.trans_price == sale_data.trans_price,
-                                    Sale.floor == sale_data.floor,
-                                    Sale.exclusive_area == sale_data.exclusive_area
-                                )
-                            )
-                            exists = await db.execute(exists_stmt)
-                            if exists.scalars().first():
-                                logger.info(f"      ⏭️ 중복 데이터 건너뜀: AptID {sale_data.apt_id}, {sale_data.contract_date}, {sale_data.trans_price}만원")
-                                skipped += 1
-                                continue
-                                
-                            db_obj = Sale(**sale_data.model_dump())
-                            db.add(db_obj)
-                            saved_count += 1
-                            
-                        await db.commit()
-                        total_saved += saved_count
-                        total_fetched += len(items)
-                        
-                        if saved_count > 0:
-                            logger.info(f"      ✅ {sgg_cd} / {ym}: {saved_count}건 저장")
-                        
-                except Exception as e:
-                    logger.error(f"❌ {sgg_cd} / {ym} 처리 중 오류: {e}")
-                    errors.append(f"{sgg_cd}/{ym}: {str(e)}")
+            # max_items 제한 확인
+            if max_items and total_saved >= max_items:
+                logger.info(f"   ⏸️ 최대 수집 개수({max_items})에 도달하여 수집 중단")
+                break
             
+            # 병렬 작업 생성
+            tasks = [process_sale_region(ym, sgg_cd) for sgg_cd in target_sgg_codes]
+            await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # max_items 제한 확인
+            if max_items and total_saved >= max_items:
+                logger.info(f"   ⏸️ 최대 수집 개수({max_items})에 도달하여 수집 중단")
+                break
+            
+        logger.info("=" * 80)
+        logger.info(f"✅ 매매 실거래가 수집 완료")
+        logger.info(f"   📊 총 수집: {total_fetched}건")
+        logger.info(f"   💾 저장: {total_saved}건")
+        logger.info(f"   ⏭️ 건너뜀: {skipped}건")
+        if errors:
+            logger.warning(f"   ⚠️ 오류: {len(errors)}건")
+        logger.info("=" * 80)
+        
         return SalesCollectionResponse(
             success=True,
             total_fetched=total_fetched,
@@ -1751,6 +2305,329 @@ class DataCollectionService:
             skipped=skipped,
             errors=errors,
             message=f"수집 완료: {total_saved}건 저장"
+        )
+
+    async def collect_rent_data(
+        self,
+        db: AsyncSession,
+        start_ym: str,
+        end_ym: str,
+        max_items: Optional[int] = None,
+        allow_duplicate: bool = False
+    ) -> RentCollectionResponse:
+        """
+        아파트 전월세 실거래가 데이터 수집 (매매와 동일한 방식)
+        
+        Args:
+            start_ym: 시작 연월 (YYYYMM)
+            end_ym: 종료 연월 (YYYYMM)
+            max_items: 최대 수집 개수 제한 (기본값: None, 제한 없음)
+            allow_duplicate: 중복 저장 허용 여부 (기본값: False, False=건너뛰기, True=업데이트)
+        """
+        total_fetched = 0
+        total_saved = 0
+        skipped = 0
+        errors = []
+        
+        logger.info("=" * 80)
+        logger.info(f"🏠 [전월세 실거래가] 데이터 수집 시작 ({start_ym} ~ {end_ym})")
+        logger.info(f"   📊 최대 수집 개수: {max_items if max_items else '제한 없음'}")
+        logger.info(f"   🔄 중복 처리: {'업데이트' if allow_duplicate else '건너뛰기'}")
+        logger.info("=" * 80)
+        
+        # 1. 대상 기간 생성
+        def get_months(start, end):
+            try:
+                start_date = datetime.strptime(start, "%Y%m")
+                end_date = datetime.strptime(end, "%Y%m")
+            except ValueError:
+                raise ValueError("날짜 형식이 올바르지 않습니다. YYYYMM 형식이어야 합니다.")
+                
+            months = []
+            curr = start_date
+            while curr <= end_date:
+                months.append(curr.strftime("%Y%m"))
+                if curr.month == 12:
+                    curr = curr.replace(year=curr.year + 1, month=1)
+                else:
+                    curr = curr.replace(month=curr.month + 1)
+            return months
+            
+        try:
+            target_months = get_months(start_ym, end_ym)
+        except ValueError as e:
+            return RentCollectionResponse(
+                success=False,
+                total_fetched=0,
+                total_saved=0,
+                skipped=0,
+                errors=[str(e)],
+                message=f"날짜 형식 오류: {str(e)}",
+                lawd_cd=None,
+                deal_ymd=None
+            )
+        
+        # 2. 대상 지역 코드 (5자리 시군구 코드만) 가져오기
+        logger.info("📍 대상 지역 코드 추출 중...")
+        try:
+            stmt = text("""
+                SELECT DISTINCT SUBSTR(region_code, 1, 5) as sgg_code
+                FROM states 
+                WHERE length(region_code) = 10 
+                  AND SUBSTR(region_code, 6, 5) = '00000'
+                  AND RIGHT(region_code, 8) != '00000000'
+            """)
+            result = await db.execute(stmt)
+            target_sgg_codes = [row[0] for row in result.fetchall() if row[0] and len(row[0]) == 5]
+            logger.info(f"   -> 총 {len(target_sgg_codes)}개 시군구 코드 추출됨")
+        except Exception as e:
+            logger.error(f"❌ 지역 코드 추출 실패: {e}")
+            return RentCollectionResponse(
+                success=False,
+                total_fetched=0,
+                total_saved=0,
+                skipped=0,
+                errors=[f"DB 오류: {e}"],
+                message=f"DB 오류: {e}",
+                lawd_cd=None,
+                deal_ymd=None
+            )
+
+        # 3. 수집 루프 (병렬 처리)
+        semaphore = asyncio.Semaphore(10)  # 한 번에 10개씩 병렬 처리
+        
+        async def process_rent_region(ym: str, sgg_cd: str):
+            """전월세 데이터 수집 작업 (병렬 처리용)"""
+            async with semaphore:
+                # 각 작업마다 독립적인 DB 세션 사용
+                async with AsyncSessionLocal() as local_db:
+                    nonlocal total_fetched, total_saved, skipped, errors
+                    
+                    # max_items 제한 확인
+                    if max_items and total_saved >= max_items:
+                        return
+                    
+                    try:
+                        # 3-0. [트래픽 절약] 이미 수집된 데이터가 있는지 확인 (블록 단위 스킵)
+                        y = int(ym[:4])
+                        m = int(ym[4:])
+                        start_date = date(y, m, 1)
+                        import calendar
+                        last_day = calendar.monthrange(y, m)[1]
+                        end_date = date(y, m, last_day)
+                        
+                        # 해당 기간, 해당 지역의 거래 내역 수 조회
+                        check_stmt = select(func.count(Rent.trans_id)).join(Apartment).join(State).where(
+                            and_(
+                                State.region_code.like(f"{sgg_cd}%"),
+                                Rent.deal_date >= start_date,
+                                Rent.deal_date <= end_date
+                            )
+                        )
+                        
+                        count_result = await local_db.execute(check_stmt)
+                        existing_count = count_result.scalar() or 0
+                        
+                        if existing_count > 0 and not allow_duplicate:
+                            logger.info(f"      ⏭️ [SKIP] {sgg_cd} / {ym}: 이미 {existing_count}건의 데이터가 존재하여 API 호출을 생략합니다.")
+                            skipped += existing_count
+                            return
+
+                        # API 호출
+                        xml_content = await self.fetch_rent_xml(sgg_cd, ym)
+                        
+                        # XML 파싱 (매매와 동일하게 XML Element 직접 사용)
+                        try:
+                            root = ET.fromstring(xml_content)
+                        except ET.ParseError as e:
+                            logger.warning(f"      ⚠️ XML 파싱 실패: {e}")
+                            return
+                        
+                        # 결과 코드 확인
+                        result_code_elem = root.find(".//resultCode")
+                        result_msg_elem = root.find(".//resultMsg")
+                        result_code = result_code_elem.text if result_code_elem is not None else ""
+                        result_msg = result_msg_elem.text if result_msg_elem is not None else ""
+                        
+                        if result_code not in ["000", "00"]:
+                            logger.warning(f"      ⚠️ API 응답 오류: {result_code} - {result_msg}")
+                            return
+                        
+                        items = root.findall(".//item")
+                        
+                        if not items:
+                            return
+                            
+                        # 해당 시군구의 모든 아파트를 메모리에 로드 (Region 정보 포함)
+                        stmt = select(Apartment).options(joinedload(Apartment.region)).join(State).where(
+                            State.region_code.like(f"{sgg_cd}%")
+                        )
+                        apt_result = await local_db.execute(stmt)
+                        local_apts = apt_result.scalars().all()
+                        
+                        if not local_apts:
+                            logger.warning(f"      ⚠️ {sgg_cd} / {ym}: 해당 지역에 아파트가 없습니다.")
+                            return
+                        
+                        logger.debug(f"      ℹ️ {sgg_cd} / {ym}: {len(local_apts)}개 아파트 로드됨")
+                            
+                        # 동(umdNm) 정보를 미리 캐시
+                        region_stmt = select(State).where(State.region_code.like(f"{sgg_cd}%"))
+                        region_result = await local_db.execute(region_stmt)
+                        all_regions = {r.region_id: r for r in region_result.scalars().all()}
+                        
+                        logger.debug(f"      ℹ️ {sgg_cd} / {ym}: {len(all_regions)}개 지역 정보 로드됨")
+                        
+                        rents_to_save = []
+                        jeonse_count = 0  # 전세 개수
+                        wolse_count = 0   # 월세 개수
+                        matched_count = 0
+                        unmatched_count = 0
+                        
+                        # total_fetched는 XML에서 변환된 모든 아이템 수를 카운트
+                        total_fetched += len(items)
+                        
+                        for item in items:
+                            try:
+                                # 통합 함수로 아파트 매칭 (필드 추출, 필터링, 매칭 모두 포함)
+                                matched_apt = self.find_matching_apartment_from_item(
+                                    item,
+                                    local_apts,
+                                    all_regions,
+                                    sgg_cd
+                                )
+                                
+                                if not matched_apt:
+                                    unmatched_count += 1
+                                    continue
+                                
+                                matched_count += 1
+                                
+                                # 매칭 로그
+                                apt_nm_xml = self._extract_field_from_item(item, "aptNm")
+                                umd_nm = self._extract_field_from_item(item, "umdNm")
+                                sgg_cd_item = self._extract_field_from_item(item, "sggCd") or sgg_cd
+                                cleaned_name = self._clean_apt_name(apt_nm_xml) if apt_nm_xml else ""
+                                
+                                monthly_rent_str = self._extract_field_from_item(item, "monthlyRent") or "0"
+                                monthly_rent_int = 0
+                                try:
+                                    monthly_rent_int = int(str(monthly_rent_str).replace(",", ""))
+                                except:
+                                    pass
+                                
+                                # 매칭 정보는 매칭 결과 로그에서 일괄 출력
+                                
+                                # 거래 데이터 파싱 (XML Element 직접 사용, 매매와 동일)
+                                rent_create = self.parse_rent_item(item, matched_apt.apt_id)
+                                
+                                if not rent_create:
+                                    continue
+                                
+                                # remarks에 아파트 이름 저장 (개발 확인용)
+                                rent_create.remarks = matched_apt.apt_name
+                                
+                                # 전세/월세 구분 카운트
+                                if rent_create.monthly_rent and rent_create.monthly_rent > 0:
+                                    wolse_count += 1
+                                else:
+                                    jeonse_count += 1
+                                
+                                rents_to_save.append(rent_create)
+                                
+                                # 아파트 상태 업데이트 (거래 가능으로 표시)
+                                if matched_apt.is_available != "1":
+                                    matched_apt.is_available = "1"
+                                    local_db.add(matched_apt)
+                                
+                            except Exception as e:
+                                logger.debug(f"      ⚠️ 거래 처리 실패: {str(e)}")
+                                continue
+                        
+                        # 매칭 결과 로그 (매칭이 있거나 미매칭이 있을 때만 출력)
+                        if matched_count > 0 or unmatched_count > 0:
+                            logger.info(f"      ℹ️ {sgg_cd} / {ym}: {len(items)}건 중 {matched_count}건 매칭, {unmatched_count}건 미매칭")
+                        
+                        # 일괄 저장
+                        if rents_to_save:
+                            saved_count = 0
+                            skipped_count = 0
+                            
+                            for rent_create in rents_to_save:
+                                # max_items 제한 확인
+                                if max_items and total_saved >= max_items:
+                                    break
+                                
+                                try:
+                                    if allow_duplicate:
+                                        _, is_created = await rent_crud.create_or_update(local_db, obj_in=rent_create)
+                                    else:
+                                        _, is_created = await rent_crud.create_or_skip(local_db, obj_in=rent_create)
+                                    
+                                    if is_created:
+                                        saved_count += 1
+                                        total_saved += 1
+                                    else:
+                                        skipped_count += 1
+                                        skipped += 1
+                                except Exception as e:
+                                    error_msg = f"저장 실패: {str(e)}"
+                                    errors.append(error_msg)
+                                    logger.error(f"      ❌ 저장 실패: {error_msg}")
+                                    import traceback
+                                    logger.debug(f"      상세: {traceback.format_exc()}")
+                            
+                            await local_db.commit()
+                            
+                            if saved_count > 0:
+                                logger.info(f"      ✅ {sgg_cd} / {ym}: {saved_count}건 저장, {skipped_count}건 건너뜀 (전세: {jeonse_count}건, 월세: {wolse_count}건)")
+                            
+                            # max_items 제한 확인
+                            if max_items and total_saved >= max_items:
+                                logger.info(f"   ⏸️ 최대 수집 개수({max_items})에 도달하여 수집 중단")
+                                return
+                    
+                    except Exception as e:
+                        logger.error(f"❌ {sgg_cd} / {ym} 처리 중 오류: {e}")
+                        errors.append(f"{sgg_cd}/{ym}: {str(e)}")
+                        await local_db.rollback()
+        
+        # 병렬 처리 실행
+        for ym in target_months:
+            logger.info(f"📅 [기간: {ym}] 수집 시작")
+            
+            # max_items 제한 확인
+            if max_items and total_saved >= max_items:
+                logger.info(f"   ⏸️ 최대 수집 개수({max_items})에 도달하여 수집 중단")
+                break
+            
+            # 병렬 작업 생성
+            tasks = [process_rent_region(ym, sgg_cd) for sgg_cd in target_sgg_codes]
+            await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # max_items 제한 확인
+            if max_items and total_saved >= max_items:
+                logger.info(f"   ⏸️ 최대 수집 개수({max_items})에 도달하여 수집 중단")
+                break
+        
+        logger.info("=" * 80)
+        logger.info(f"✅ 전월세 실거래가 수집 완료")
+        logger.info(f"   📊 총 수집: {total_fetched}건")
+        logger.info(f"   💾 저장: {total_saved}건")
+        logger.info(f"   ⏭️ 건너뜀: {skipped}건")
+        if errors:
+            logger.warning(f"   ⚠️ 오류: {len(errors)}건")
+        logger.info("=" * 80)
+        
+        return RentCollectionResponse(
+            success=True,
+            total_fetched=total_fetched,
+            total_saved=total_saved,
+            skipped=skipped,
+            errors=errors[:100],
+            message=f"수집 완료: {total_saved}건 저장, {skipped}건 건너뜀",
+            lawd_cd=None,
+            deal_ymd=None
         )
 
 # 서비스 인스턴스 생성
