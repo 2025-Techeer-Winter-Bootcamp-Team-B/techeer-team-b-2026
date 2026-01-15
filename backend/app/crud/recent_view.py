@@ -160,6 +160,88 @@ class CRUDRecentView(CRUDBase[RecentView, RecentViewCreate, dict]):
             )
         )
         return result.scalar() or 0
+    
+    async def delete_all_by_account(
+        self,
+        db: AsyncSession,
+        *,
+        account_id: int
+    ) -> int:
+        """
+        사용자별 최근 본 아파트 전체 삭제 (소프트 삭제)
+        
+        Args:
+            db: 데이터베이스 세션
+            account_id: 계정 ID
+        
+        Returns:
+            삭제된 레코드 수
+        """
+        from datetime import datetime
+        now = datetime.utcnow()
+        
+        result = await db.execute(
+            select(RecentView)
+            .where(
+                and_(
+                    RecentView.account_id == account_id,
+                    RecentView.is_deleted == False
+                )
+            )
+        )
+        views = result.scalars().all()
+        
+        deleted_count = 0
+        for view in views:
+            view.is_deleted = True
+            view.updated_at = now
+            db.add(view)
+            deleted_count += 1
+        
+        await db.commit()
+        return deleted_count
+    
+    async def delete_by_id(
+        self,
+        db: AsyncSession,
+        *,
+        view_id: int,
+        account_id: int
+    ) -> bool:
+        """
+        특정 최근 본 아파트 기록 삭제 (소프트 삭제)
+        
+        Args:
+            db: 데이터베이스 세션
+            view_id: 조회 기록 ID
+            account_id: 계정 ID (본인 확인용)
+        
+        Returns:
+            삭제 성공 여부
+        """
+        from datetime import datetime
+        now = datetime.utcnow()
+        
+        result = await db.execute(
+            select(RecentView)
+            .where(
+                and_(
+                    RecentView.view_id == view_id,
+                    RecentView.account_id == account_id,
+                    RecentView.is_deleted == False
+                )
+            )
+        )
+        view = result.scalar_one_or_none()
+        
+        if not view:
+            return False
+        
+        view.is_deleted = True
+        view.updated_at = now
+        db.add(view)
+        await db.commit()
+        return True
 
 
 # CRUD 인스턴스 생성

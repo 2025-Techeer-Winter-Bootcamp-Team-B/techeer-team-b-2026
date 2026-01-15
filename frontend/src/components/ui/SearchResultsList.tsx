@@ -60,26 +60,25 @@ export default function SearchResultsList({
                 <MapPin size={16} />
               </div>
               
-              <div className="flex-1 min-w-0">
-                <div className="flex justify-between items-start">
-                  <p className={`text-base font-bold truncate pr-2 ${
-                    isDarkMode ? 'text-white' : 'text-zinc-900'
-                  }`}>
-                    {apt.apt_name}
-                  </p>
-                  <div className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-medium border ${
-                    isDarkMode
-                      ? 'bg-zinc-700 border-zinc-600 text-zinc-300'
-                      : 'bg-white border-zinc-300 text-zinc-700'
-                  }`}>
-                    아파트
-                  </div>
-                </div>
-                <p className={`text-xs mt-0.5 line-clamp-1 ${
-                  isDarkMode ? 'text-zinc-300' : 'text-zinc-600'
+              <div className="flex-1 min-w-0 flex items-center gap-2">
+                <p className={`text-base font-bold truncate ${
+                  isDarkMode ? 'text-white' : 'text-zinc-900'
                 }`}>
-                  {apt.address}
+                  {apt.apt_name}
                 </p>
+                {apt.address && (
+                  <span className={`text-xs flex items-center gap-1 shrink-0 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                    <MapPin className={`w-3 h-3 shrink-0 ${isDarkMode ? 'text-zinc-500' : 'text-zinc-500'}`} />
+                    <span className="truncate">{apt.address}</span>
+                  </span>
+                )}
+                <div className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-medium border ml-auto ${
+                  isDarkMode
+                    ? 'bg-zinc-700 border-zinc-600 text-zinc-300'
+                    : 'bg-white border-zinc-300 text-zinc-700'
+                }`}>
+                  아파트
+                </div>
               </div>
             </button>
           </li>

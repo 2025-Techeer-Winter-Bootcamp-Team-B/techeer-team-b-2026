@@ -26,7 +26,7 @@ export default function LocationBadge({ isDarkMode, className = '' }: LocationBa
     >
       <div className="flex items-center gap-2.5">
         <MapPin className={`w-4 h-4 ${isLoading ? 'animate-pulse' : ''} text-sky-500`} />
-        <span className={`font-semibold ${isDarkMode ? 'text-white' : 'text-zinc-900'}`}>
+        <span className={`font-semibold leading-10 ${isDarkMode ? 'text-white' : 'text-zinc-900'}`}>
           {isLoading ? '위치 확인 중...' : displayAddress}
         </span>
       </div>

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, X, TrendingUp, History, Filter, MapPin, Trash2, Navigation, Settings, Clock, ChevronRight, Building2 } from 'lucide-react';
+import { Search, X, TrendingUp, History, Filter, MapPin, Trash2, Navigation, Settings, Clock, ChevronRight, Building2, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ApartmentSearchResult, getRecentSearches, RecentSearch, searchLocations, LocationSearchResult, deleteRecentSearch, deleteAllRecentSearches } from '../../lib/searchApi';
 import { useApartmentSearch } from '../../hooks/useApartmentSearch';
@@ -8,7 +8,7 @@ import LocationSearchResults from '../../components/ui/LocationSearchResults';
 import UnifiedSearchResults from '../../components/ui/UnifiedSearchResults';
 import { useAuth } from '../../lib/clerk';
 import { UnifiedSearchResult } from '../../hooks/useUnifiedSearch';
-import { getRecentViews, RecentView } from '../../lib/usersApi';
+import { getRecentViews, RecentView, deleteAllRecentViews, deleteRecentView } from '../../lib/usersApi';
 
 interface MapSearchControlProps {
   isDarkMode: boolean;
@@ -40,6 +40,7 @@ export default function MapSearchControl({
   const [isSearchingLocations, setIsSearchingLocations] = useState(false);
   const [recentViews, setRecentViews] = useState<RecentView[]>([]);
   const [isLoadingRecentViews, setIsLoadingRecentViews] = useState(false);
+  const [isRecentViewsExpanded, setIsRecentViewsExpanded] = useState(true);
   
   // 지도 검색창에서는 검색 기록을 저장함 (saveRecent: true)
   const { results, isSearching } = useApartmentSearch(query, true);
@@ -262,6 +263,44 @@ export default function MapSearchControl({
     }
   };
   
+  // 최근 본 아파트 삭제 핸들러
+  const handleDeleteRecentView = async (e: React.MouseEvent, viewId: number) => {
+    e.stopPropagation(); // 버튼 클릭 시 아파트 클릭 이벤트 방지
+    if (!isSignedIn || !getToken) return;
+    
+    try {
+      const token = await getToken();
+      if (token) {
+        const response = await deleteRecentView(viewId, token);
+        if (response.success) {
+          // 삭제 성공 시 목록 새로고침
+          const updatedResponse = await getRecentViews(5, token);
+          setRecentViews(updatedResponse.data.recent_views || []);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to delete recent view:', error);
+    }
+  };
+
+  const handleDeleteAllRecentViews = async () => {
+    if (!isSignedIn || !getToken) return;
+    
+    if (!window.confirm('모든 최근 본 아파트를 삭제하시겠습니까?')) {
+      return;
+    }
+    
+    try {
+      const token = await getToken();
+      const response = await deleteAllRecentViews(token);
+      if (response.success) {
+        setRecentViews([]);
+      }
+    } catch (error) {
+      console.error('Failed to delete all recent views:', error);
+    }
+  };
+
   // 검색어가 완전히 지워질 때만 마커 제거
   const handleQueryChange = (newQuery: string) => {
     setQuery(newQuery);
@@ -405,77 +444,109 @@ export default function MapSearchControl({
                                             {/* 최근 본 아파트 섹션 */}
                                             {isSignedIn && (
                                                 <div className="mb-4">
-                                                    <div className="flex items-center gap-2 mb-3">
-                                                        <Clock className={`w-4 h-4 ${isDarkMode ? 'text-sky-400' : 'text-sky-600'}`} />
-                                                        <h3 className={`text-sm font-bold ${isDarkMode ? 'text-white' : 'text-zinc-900'}`}>
-                                                            최근 본 아파트
-                                                        </h3>
-                                                    </div>
-                                                    {isLoadingRecentViews ? (
-                                                        <div className="flex items-center justify-center py-4">
-                                                            <div className="w-5 h-5 border-2 border-sky-500 border-t-transparent rounded-full animate-spin"></div>
+                                                    <button
+                                                        onClick={() => setIsRecentViewsExpanded(!isRecentViewsExpanded)}
+                                                        className="w-full flex items-center justify-between gap-2 mb-3 p-2 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors"
+                                                    >
+                                                        <div className="flex items-center gap-2">
+                                                            <Clock className={`w-4 h-4 ${isDarkMode ? 'text-sky-400' : 'text-sky-600'}`} />
+                                                            <h3 className={`text-sm font-bold ${isDarkMode ? 'text-white' : 'text-zinc-900'}`}>
+                                                                최근 본 아파트
+                                                            </h3>
                                                         </div>
-                                                    ) : recentViews.length > 0 ? (
-                                                        <div className="space-y-2 mb-4">
-                                                            {recentViews.map((view) => (
-                                                                <button
-                                                                    key={view.view_id}
-                                                                    onClick={async () => {
-                                                                        if (view.apartment && onApartmentSelect) {
-                                                                            // 최근 본 아파트 클릭 시 아파트 상세 페이지로 이동
-                                                                            // apt_id만 있으면 ApartmentDetail 컴포넌트가 자동으로 상세 정보를 가져옴
-                                                                            const aptData = {
-                                                                                apt_id: view.apartment.apt_id,
-                                                                                apt_name: view.apartment.apt_name || '',
-                                                                                address: view.apartment.region_name 
-                                                                                    ? `${view.apartment.city_name || ''} ${view.apartment.region_name || ''}`.trim()
-                                                                                    : '',
-                                                                                sigungu_name: view.apartment.region_name || '',
-                                                                                location: { lat: 0, lng: 0 }, // 위치 정보는 나중에 로드됨
-                                                                                price: '',
-                                                                            };
-                                                                            handleSelect(aptData);
-                                                                        }
-                                                                    }}
-                                                                    className={`w-full flex items-center gap-3 p-3 rounded-lg transition-colors text-left group ${
-                                                                        isDarkMode 
-                                                                            ? 'bg-zinc-800/50 hover:bg-zinc-800 border border-zinc-700/50' 
-                                                                            : 'bg-zinc-50 hover:bg-zinc-100 border border-zinc-200'
-                                                                    }`}
-                                                                >
-                                                                    <Building2 size={16} className={`shrink-0 ${
-                                                                        isDarkMode ? 'text-blue-400' : 'text-blue-600'
-                                                                    }`} />
-                                                                    <div className="flex-1 min-w-0">
-                                                                        <p className={`text-sm font-medium truncate ${
-                                                                            isDarkMode 
-                                                                                ? 'text-white group-hover:text-blue-400' 
-                                                                                : 'text-zinc-900 group-hover:text-blue-600'
-                                                                        }`}>
-                                                                            {view.apartment?.apt_name || '알 수 없음'}
-                                                                        </p>
-                                                                        {view.apartment?.region_name && (
-                                                                            <p className={`text-xs mt-0.5 truncate ${
-                                                                                isDarkMode ? 'text-zinc-400' : 'text-zinc-600'
-                                                                            }`}>
-                                                                                {view.apartment.city_name && `${view.apartment.city_name} `}
-                                                                                {view.apartment.region_name}
-                                                                            </p>
-                                                                        )}
-                                                                    </div>
-                                                                    <ChevronRight 
-                                                                        size={16} 
-                                                                        className={`shrink-0 ${isDarkMode ? 'text-zinc-500' : 'text-zinc-400'}`} 
-                                                                    />
-                                                                </button>
-                                                            ))}
-                                                        </div>
-                                                    ) : (
-                                                        <div className={`text-xs text-center py-3 mb-4 rounded-lg ${
-                                                            isDarkMode ? 'text-zinc-400 bg-zinc-800/30' : 'text-zinc-500 bg-zinc-50'
-                                                        }`}>
-                                                            최근 본 아파트가 없습니다
-                                                        </div>
+                                                        <ChevronDown 
+                                                            className={`w-4 h-4 transition-transform ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'} ${
+                                                                isRecentViewsExpanded ? 'rotate-180' : ''
+                                                            }`}
+                                                        />
+                                                    </button>
+                                                    {isRecentViewsExpanded && (
+                                                        <>
+                                                            {isLoadingRecentViews ? (
+                                                                <div className="flex items-center justify-center py-4">
+                                                                    <div className="w-5 h-5 border-2 border-sky-500 border-t-transparent rounded-full animate-spin"></div>
+                                                                </div>
+                                                            ) : recentViews.length > 0 ? (
+                                                                <div className="space-y-2 mb-4">
+                                                                    {recentViews.map((view) => {
+                                                                        const aptName = view.apartment?.apt_name || '알 수 없음';
+                                                                        const address = view.apartment?.region_name 
+                                                                            ? `${view.apartment.city_name || ''} ${view.apartment.region_name || ''}`.trim()
+                                                                            : '';
+                                                                        
+                                                                        return (
+                                                                            <button
+                                                                                key={view.view_id}
+                                                                                onClick={async () => {
+                                                                                    if (view.apartment && onApartmentSelect) {
+                                                                                        // 최근 본 아파트 클릭 시 아파트 상세 페이지로 이동
+                                                                                        // apt_id만 있으면 ApartmentDetail 컴포넌트가 자동으로 상세 정보를 가져옴
+                                                                                        const aptData = {
+                                                                                            apt_id: view.apartment.apt_id,
+                                                                                            apt_name: view.apartment.apt_name || '',
+                                                                                            address: address,
+                                                                                            sigungu_name: view.apartment.region_name || '',
+                                                                                            location: { lat: 0, lng: 0 }, // 위치 정보는 나중에 로드됨
+                                                                                            price: '',
+                                                                                        };
+                                                                                        handleSelect(aptData);
+                                                                                    }
+                                                                                }}
+                                                                                className={`w-full flex items-center gap-3 p-3 rounded-lg transition-colors text-left group ${
+                                                                                    isDarkMode 
+                                                                                        ? 'bg-zinc-800/50 hover:bg-zinc-800/70 border border-zinc-700/50' 
+                                                                                        : 'bg-zinc-50 hover:bg-zinc-100/70 border border-zinc-200'
+                                                                                }`}
+                                                                            >
+                                                                                <Building2 size={16} className={`shrink-0 ${
+                                                                                    isDarkMode ? 'text-sky-400' : 'text-sky-600'
+                                                                                }`} />
+                                                                                <div className="flex-1 min-w-0 flex items-center gap-2">
+                                                                                    <p className={`text-sm font-medium truncate ${
+                                                                                        isDarkMode 
+                                                                                            ? 'text-zinc-400' 
+                                                                                            : 'text-zinc-600'
+                                                                                    }`}>
+                                                                                        {aptName}
+                                                                                    </p>
+                                                                                    {address && (
+                                                                                        <span className={`text-xs flex items-center gap-1 shrink-0 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                                                                                            <MapPin className={`w-3 h-3 shrink-0 ${isDarkMode ? 'text-zinc-500' : 'text-zinc-500'}`} />
+                                                                                            <span className="truncate">{address}</span>
+                                                                                        </span>
+                                                                                    )}
+                                                                                </div>
+                                                                                <button
+                                                                                    onClick={(e) => handleDeleteRecentView(e, view.view_id)}
+                                                                                    className={`shrink-0 p-1 rounded-full hover:bg-zinc-700 dark:hover:bg-zinc-700 transition-colors ${isDarkMode ? 'text-zinc-400 hover:text-white' : 'text-zinc-400 hover:text-zinc-600'}`}
+                                                                                >
+                                                                                    <X size={14} />
+                                                                                </button>
+                                                                            </button>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            ) : (
+                                                                <div className={`text-xs text-center py-3 mb-4 rounded-lg ${
+                                                                    isDarkMode ? 'text-zinc-400 bg-zinc-800/30' : 'text-zinc-500 bg-zinc-50'
+                                                                }`}>
+                                                                    최근 본 아파트가 없습니다
+                                                                </div>
+                                                            )}
+                                                        </>
+                                                    )}
+                                                    {recentViews.length > 0 && (
+                                                        <button
+                                                            onClick={handleDeleteAllRecentViews}
+                                                            className={`w-full mb-3 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg transition-colors ${
+                                                                isDarkMode 
+                                                                    ? 'bg-zinc-800/50 hover:bg-zinc-800 border border-zinc-700/50 text-white' 
+                                                                    : 'bg-zinc-50 hover:bg-zinc-100 border border-zinc-200 text-zinc-900'
+                                                            }`}
+                                                        >
+                                                            <Trash2 size={16} />
+                                                            <span className="text-sm font-medium">최근 본 아파트 전체 삭제</span>
+                                                        </button>
                                                     )}
                                                     <div className="h-px bg-zinc-200 dark:bg-zinc-800 mb-4"></div>
                                                 </div>

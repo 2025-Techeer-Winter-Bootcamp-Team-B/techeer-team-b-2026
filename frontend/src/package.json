@@ -20,7 +20,9 @@
     "slick-carousel": "^1.8.1",
     "@clerk/clerk-react": "^5.0.0",
     "axios": "^1.6.0",
-    "framer-motion": "^11.0.0"
+    "framer-motion": "^11.0.0",
+    "highcharts": "^12.5.0",
+    "@types/highcharts": "^5.0.44"
   },
   "devDependencies": {
     "@types/react": "^18.3.1",

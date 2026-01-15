@@ -114,7 +114,8 @@ services:
       # DB 백업/복원용 볼륨 마운트
       - ./db_backup:/app/backups
       # legion_code.csv 파일 마운트 (부동산 지수 데이터 수집용)
-      - ./legion_code.csv:/app/legion_code.csv:ro
+      # 파일이 존재하지 않으면 주석 처리
+      # - ./legion_code.csv:/app/legion_code.csv:ro
     depends_on:
       - db
       - redis
@@ -138,11 +139,11 @@ services:
       - .env
     environment:
       # Vite 환경 변수 (클라이언트에서 접근 가능)
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000/api/v1}
       VITE_CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY}
-      VITE_KAKAO_JAVASCRIPT_KEY: ${VITE_KAKAO_JAVASCRIPT_KEY}
+      VITE_KAKAO_JAVASCRIPT_KEY: ${VITE_KAKAO_JAVASCRIPT_KEY:-65c662fbc543de5843c188259d2e35bb}
     ports:
-      - "${FRONTEND_PORT}:3000"
+      - "${FRONTEND_PORT:-3000}:3000"
     volumes:
       # 개발 시 코드 변경 반영 (핫 리로드)
       - ./frontend:/app
@@ -156,13 +157,15 @@ services:
     image: dpage/pgadmin4
     container_name: pgadmin
     restart: always
+    env_file:
+      - .env
     ports:
      - 8001:81
     volumes:
      - pgadmin_data_dev:/var/lib/pgadmin
     environment:
-      - PGADMIN_DEFAULT_EMAIL=admin@gmail.com
-      - PGADMIN_DEFAULT_PASSWORD=secret
+      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_DEFAULT_EMAIL:-admin@gmail.com}
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_DEFAULT_PASSWORD:-pcy1234}
       - PGADMIN_LISTEN_PORT=81
     networks:
       - realestate-network  
