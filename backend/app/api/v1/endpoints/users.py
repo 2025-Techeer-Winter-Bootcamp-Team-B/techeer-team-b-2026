@@ -5,7 +5,7 @@
 - 최근 본 아파트 목록 조회 (GET /users/me/recent-views) - P1
 - 최근 본 아파트 기록 저장 (POST /users/me/recent-views) - P1
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, Body, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Body, status, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_db, get_current_user
@@ -174,5 +174,115 @@ async def create_recent_view(
             "view_id": recent_view.view_id,
             "apt_id": recent_view.apt_id,
             "viewed_at": recent_view.viewed_at.isoformat() if recent_view.viewed_at else None
+        }
+    }
+
+
+@router.delete(
+    "/me/recent-views",
+    response_model=dict,
+    status_code=status.HTTP_200_OK,
+    tags=["👤 Users (사용자)"],
+    summary="최근 본 아파트 전체 삭제",
+    description="로그인한 사용자의 모든 최근 본 아파트 기록을 삭제합니다.",
+    responses={
+        200: {"description": "삭제 성공"},
+        401: {"description": "로그인이 필요합니다"}
+    }
+)
+async def delete_all_recent_views(
+    current_user: Account = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    최근 본 아파트 전체 삭제 API
+    
+    로그인한 사용자의 모든 최근 본 아파트 기록을 소프트 삭제합니다.
+    
+    Args:
+        current_user: 현재 로그인한 사용자 (의존성 주입)
+        db: 데이터베이스 세션
+    
+    Returns:
+        {
+            "success": true,
+            "data": {
+                "deleted_count": int  # 삭제된 레코드 수
+            }
+        }
+    
+    Raises:
+        HTTPException: 401 - 로그인이 필요한 경우
+    """
+    deleted_count = await recent_view_crud.delete_all_by_account(
+        db,
+        account_id=current_user.account_id
+    )
+    
+    return {
+        "success": True,
+        "data": {
+            "deleted_count": deleted_count
+        }
+    }
+
+
+@router.delete(
+    "/me/recent-views/{view_id}",
+    response_model=dict,
+    status_code=status.HTTP_200_OK,
+    tags=["👤 Users (사용자)"],
+    summary="최근 본 아파트 개별 삭제",
+    description="특정 최근 본 아파트 기록을 삭제합니다.",
+    responses={
+        200: {"description": "삭제 성공"},
+        401: {"description": "로그인이 필요합니다"},
+        404: {"description": "기록을 찾을 수 없습니다"}
+    }
+)
+async def delete_recent_view(
+    view_id: int = Path(..., description="조회 기록 ID"),
+    current_user: Account = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    최근 본 아파트 개별 삭제 API
+    
+    특정 최근 본 아파트 기록을 소프트 삭제합니다.
+    
+    Args:
+        view_id: 삭제할 조회 기록 ID
+        current_user: 현재 로그인한 사용자 (의존성 주입)
+        db: 데이터베이스 세션
+    
+    Returns:
+        {
+            "success": true,
+            "data": {
+                "view_id": int  # 삭제된 레코드 ID
+            }
+        }
+    
+    Raises:
+        HTTPException: 
+            - 401: 로그인이 필요한 경우
+            - 404: 기록을 찾을 수 없는 경우
+    """
+    success = await recent_view_crud.delete_by_id(
+        db,
+        view_id=view_id,
+        account_id=current_user.account_id
+    )
+    
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="기록을 찾을 수 없습니다"
+        )
+    
+    return {
+        "success": True,
+        "data": {
+            "view_id": view_id
         }
     }

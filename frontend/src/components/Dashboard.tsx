@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { TrendingUp, Search, ChevronRight, ArrowUpRight, ArrowDownRight, Building2, Flame, TrendingDown, X } from 'lucide-react';
+import { TrendingUp, Search, ChevronRight, ArrowUpRight, ArrowDownRight, Building2, Flame, TrendingDown, X, MapPin, ChevronDown } from 'lucide-react';
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import DevelopmentPlaceholder from './DevelopmentPlaceholder';
 import { useApartmentSearch } from '../hooks/useApartmentSearch';
@@ -13,7 +13,7 @@ import { motion } from 'framer-motion';
 import { getDashboardSummary, getDashboardRankings, getRegionalHeatmap, getRegionalTrends, PriceTrendData, VolumeTrendData, MonthlyTrendData, RegionalTrendData, TrendingApartment, RankingApartment, RegionalHeatmapItem, RegionalTrendItem, getPriceDistribution, getRegionalPriceCorrelation, PriceDistributionItem, RegionalCorrelationItem } from '../lib/dashboardApi';
 import HistogramChart from './charts/HistogramChart';
 import BubbleChart from './charts/BubbleChart';
-import { getRecentViews, RecentView } from '../lib/usersApi';
+import { getRecentViews, RecentView, deleteRecentView } from '../lib/usersApi';
 import { Clock } from 'lucide-react';
 
 interface DashboardProps {
@@ -70,6 +70,7 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
   // 최근 본 아파트 상태
   const [recentViews, setRecentViews] = useState<RecentView[]>([]);
   const [recentViewsLoading, setRecentViewsLoading] = useState(false);
+  const [isRecentViewsExpanded, setIsRecentViewsExpanded] = useState(true);
 
   // 지역 검색 (홈 검색창에서는 검색 기록 저장하지 않음 - 아파트 검색에서만 저장하여 중복 방지)
   useEffect(() => {
@@ -253,6 +254,25 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
     
     fetchRecentViews();
   }, [isSignedIn, getToken]);
+
+  const handleDeleteRecentView = async (e: React.MouseEvent, viewId: number) => {
+    e.stopPropagation(); // 버튼 클릭 시 아파트 클릭 이벤트 방지
+    if (!isSignedIn || !getToken) return;
+    
+    try {
+      const token = await getToken();
+      if (token) {
+        const response = await deleteRecentView(viewId, token);
+        if (response.success) {
+          // 삭제 성공 시 목록 새로고침
+          const updatedResponse = await getRecentViews(10, token);
+          setRecentViews(updatedResponse.data.recent_views || []);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to delete recent view:', error);
+    }
+  };
 
   const handleSelect = (apt: ApartmentSearchResult) => {
     onApartmentClick({
@@ -450,84 +470,95 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
               : 'bg-white border-zinc-200'
           }`}
         >
-          <div className="p-4 border-b border-zinc-200 dark:border-zinc-800">
-            <div className="flex items-center gap-2">
-              <Clock className={`w-5 h-5 ${isDarkMode ? 'text-sky-400' : 'text-sky-600'}`} />
-              <h3 className={`font-bold ${isDarkMode ? 'text-white' : 'text-zinc-900'}`}>
-                최근 본 아파트
-              </h3>
+          <button
+            onClick={() => setIsRecentViewsExpanded(!isRecentViewsExpanded)}
+            className="w-full p-4 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Clock className={`w-5 h-5 ${isDarkMode ? 'text-sky-400' : 'text-sky-600'}`} />
+                <h3 className={`font-bold ${isDarkMode ? 'text-white' : 'text-zinc-900'}`}>
+                  최근 본 아파트
+                </h3>
+              </div>
+              <ChevronDown 
+                className={`w-5 h-5 transition-transform ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'} ${
+                  isRecentViewsExpanded ? 'rotate-180' : ''
+                }`}
+              />
             </div>
-          </div>
-          <div className="max-h-[400px] overflow-y-auto">
-            {recentViewsLoading ? (
-              <div className={`py-8 text-center ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>
-                <div className="inline-block w-6 h-6 border-2 border-sky-500 border-t-transparent rounded-full animate-spin"></div>
-                <p className="mt-2 text-sm">최근 본 아파트를 불러오는 중...</p>
-              </div>
-            ) : recentViews.length > 0 ? (
-              <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                {recentViews.map((view) => (
-                  <button
-                    key={view.view_id}
-                    onClick={() => {
-                      if (view.apartment) {
-                        handleSelect({
-                          apt_id: view.apartment.apt_id,
-                          apt_name: view.apartment.apt_name,
-                          address: view.apartment.region_name 
-                            ? `${view.apartment.city_name || ''} ${view.apartment.region_name || ''}`.trim()
-                            : '',
-                          sigungu_name: view.apartment.region_name || '',
-                          location: { lat: 0, lng: 0 },
-                          price: '',
-                        });
-                      }
-                    }}
-                    className={`w-full text-left p-4 transition-colors ${
-                      isDarkMode
-                        ? 'hover:bg-zinc-800'
-                        : 'hover:bg-zinc-50'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <p className={`font-bold ${isDarkMode ? 'text-white' : 'text-zinc-900'}`}>
-                          {view.apartment?.apt_name || '알 수 없음'}
-                        </p>
-                        {view.apartment?.region_name && (
-                          <p className={`text-sm mt-1 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
-                            {view.apartment.city_name && `${view.apartment.city_name} `}
-                            {view.apartment.region_name}
+          </button>
+          {isRecentViewsExpanded && (
+            <div className="max-h-[400px] overflow-y-auto">
+              {recentViewsLoading ? (
+                <div className={`py-8 text-center ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                  <div className="inline-block w-6 h-6 border-2 border-sky-500 border-t-transparent rounded-full animate-spin"></div>
+                  <p className="mt-2 text-sm">최근 본 아파트를 불러오는 중...</p>
+                </div>
+              ) : recentViews.length > 0 ? (
+                <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                  {recentViews.map((view) => {
+                    const aptName = view.apartment?.apt_name || '알 수 없음';
+                    const address = view.apartment?.region_name 
+                      ? `${view.apartment.city_name || ''} ${view.apartment.region_name || ''}`.trim()
+                      : '';
+                    
+                    return (
+                      <button
+                        key={view.view_id}
+                        onClick={() => {
+                          if (view.apartment) {
+                            handleSelect({
+                              apt_id: view.apartment.apt_id,
+                              apt_name: view.apartment.apt_name,
+                              address: address,
+                              sigungu_name: view.apartment.region_name || '',
+                              location: { lat: 0, lng: 0 },
+                              price: '',
+                            });
+                          }
+                        }}
+                        className={`w-full text-left p-4 transition-colors ${
+                          isDarkMode
+                            ? 'hover:bg-zinc-800/50'
+                            : 'hover:bg-zinc-100/50'
+                        }`}
+                      >
+                      <div className="flex items-center gap-3">
+                        <Building2 className={`w-5 h-5 shrink-0 ${isDarkMode ? 'text-sky-400' : 'text-sky-600'}`} />
+                        <div className="flex-1 min-w-0 flex items-center gap-2">
+                          <p className={`font-bold truncate ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                            {aptName}
                           </p>
-                        )}
-                        {view.viewed_at && (
-                          <p className={`text-xs mt-1 ${isDarkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                            {new Date(view.viewed_at).toLocaleDateString('ko-KR', {
-                              month: 'short',
-                              day: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}에 조회
-                          </p>
-                        )}
+                          {address && (
+                            <span className={`text-xs flex items-center gap-1 shrink-0 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                              <MapPin className={`w-3 h-3 shrink-0 ${isDarkMode ? 'text-zinc-500' : 'text-zinc-500'}`} />
+                              <span className="truncate">{address}</span>
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          onClick={(e) => handleDeleteRecentView(e, view.view_id)}
+                          className={`shrink-0 p-1 rounded-full hover:bg-zinc-700 dark:hover:bg-zinc-700 transition-colors ${isDarkMode ? 'text-zinc-400 hover:text-white' : 'text-zinc-400 hover:text-zinc-600'}`}
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
                       </div>
-                      <ChevronRight 
-                        className={`w-5 h-5 mt-1 ${isDarkMode ? 'text-zinc-500' : 'text-zinc-400'}`} 
-                      />
-                    </div>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className={`py-8 text-center ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>
-                <Clock className={`w-8 h-8 mx-auto mb-2 ${isDarkMode ? 'text-zinc-600' : 'text-zinc-400'}`} />
-                <p className="text-sm">최근 본 아파트가 없습니다.</p>
-                <p className={`text-xs mt-1 ${isDarkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                  아파트 상세 페이지를 방문하면 여기에 표시됩니다.
-                </p>
-              </div>
-            )}
-          </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className={`py-8 text-center ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                  <Clock className={`w-8 h-8 mx-auto mb-2 ${isDarkMode ? 'text-zinc-600' : 'text-zinc-400'}`} />
+                  <p className="text-sm">최근 본 아파트가 없습니다.</p>
+                  <p className={`text-xs mt-1 ${isDarkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                    아파트 상세 페이지를 방문하면 여기에 표시됩니다.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
         </motion.div>
       )}
 
@@ -926,7 +957,7 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
                           change: `+${apt.change_rate.toFixed(2)}%`,
                         })}
                         className={`w-full py-2.5 px-2 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50 ${
-                          isDarkMode ? 'text-white' : 'text-zinc-900'
+                          isDarkMode ? 'text-zinc-400' : 'text-zinc-600'
                         }`}
                       >
                         <div className="flex items-center justify-between">
@@ -935,7 +966,7 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
                               {index + 1}
                             </span>
                             <div className="flex-1 min-w-0">
-                              <h4 className={`font-semibold text-xs truncate ${isDarkMode ? 'text-white' : 'text-zinc-900'}`}>
+                              <h4 className={`font-semibold text-xs truncate ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
                                 {apt.apt_name}
                               </h4>
                               <p className={`text-xs truncate ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
@@ -944,7 +975,7 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
                             </div>
                           </div>
                           <div className="text-right flex-shrink-0">
-                            <div className={`text-xs font-bold ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                            <div className={`text-xs font-bold ${isDarkMode ? 'text-red-300' : 'text-red-600'}`}>
                               +{apt.change_rate.toFixed(2)}%
                             </div>
                             <div className={`text-xs ${isDarkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
@@ -997,7 +1028,7 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
                           change: `${apt.change_rate.toFixed(2)}%`,
                         })}
                         className={`w-full py-2.5 px-2 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50 ${
-                          isDarkMode ? 'text-white' : 'text-zinc-900'
+                          isDarkMode ? 'text-zinc-400' : 'text-zinc-600'
                         }`}
                       >
                         <div className="flex items-center justify-between">
@@ -1006,7 +1037,7 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
                               {index + 1}
                             </span>
                             <div className="flex-1 min-w-0">
-                              <h4 className={`font-semibold text-xs truncate ${isDarkMode ? 'text-white' : 'text-zinc-900'}`}>
+                              <h4 className={`font-semibold text-xs truncate ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
                                 {apt.apt_name}
                               </h4>
                               <p className={`text-xs truncate ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
@@ -1015,7 +1046,7 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
                             </div>
                           </div>
                           <div className="text-right flex-shrink-0">
-                            <div className={`text-xs font-bold ${isDarkMode ? 'text-red-400' : 'text-red-600'}`}>
+                            <div className={`text-xs font-bold ${isDarkMode ? 'text-blue-400' : 'text-blue-600'}`}>
                               {apt.change_rate.toFixed(2)}%
                             </div>
                             <div className={`text-xs ${isDarkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
@@ -1105,7 +1136,7 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
                           change: `+${apt.change_rate.toFixed(2)}%`,
                         })}
                         className={`w-full py-2 px-2 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50 ${
-                          isDarkMode ? 'text-white' : 'text-zinc-900'
+                          isDarkMode ? 'text-zinc-400' : 'text-zinc-600'
                         }`}
                       >
                         <div className="flex items-center justify-between">
@@ -1114,7 +1145,7 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
                               {index + 1}
                             </span>
                             <div className="flex-1 min-w-0">
-                              <h4 className={`font-semibold text-xs truncate ${isDarkMode ? 'text-white' : 'text-zinc-900'}`}>
+                              <h4 className={`font-semibold text-xs truncate ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
                                 {apt.apt_name}
                               </h4>
                               <p className={`text-xs truncate ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
@@ -1123,7 +1154,7 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
                             </div>
                           </div>
                           <div className="text-right flex-shrink-0">
-                            <div className={`text-xs font-bold ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                            <div className={`text-xs font-bold ${isDarkMode ? 'text-red-300' : 'text-red-600'}`}>
                               +{apt.change_rate.toFixed(2)}%
                             </div>
                             <div className={`text-xs ${isDarkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
@@ -1176,7 +1207,7 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
                           change: `${apt.change_rate.toFixed(2)}%`,
                         })}
                         className={`w-full py-2 px-2 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50 ${
-                          isDarkMode ? 'text-white' : 'text-zinc-900'
+                          isDarkMode ? 'text-zinc-400' : 'text-zinc-600'
                         }`}
                       >
                         <div className="flex items-center justify-between">
@@ -1185,7 +1216,7 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
                               {index + 1}
                             </span>
                             <div className="flex-1 min-w-0">
-                              <h4 className={`font-semibold text-xs truncate ${isDarkMode ? 'text-white' : 'text-zinc-900'}`}>
+                              <h4 className={`font-semibold text-xs truncate ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
                                 {apt.apt_name}
                               </h4>
                               <p className={`text-xs truncate ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
@@ -1194,7 +1225,7 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
                             </div>
                           </div>
                           <div className="text-right flex-shrink-0">
-                            <div className={`text-xs font-bold ${isDarkMode ? 'text-red-400' : 'text-red-600'}`}>
+                            <div className={`text-xs font-bold ${isDarkMode ? 'text-blue-400' : 'text-blue-600'}`}>
                               {apt.change_rate.toFixed(2)}%
                             </div>
                             <div className={`text-xs ${isDarkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
