@@ -25,6 +25,7 @@ FastAPI 앱에 등록합니다.
 from fastapi import APIRouter
 
 
+from app.api.v1.endpoints import auth, admin, data_collection, favorites, apartments, my_properties, admin_web, indicators
 from app.api.v1.endpoints import auth, admin, data_collection, data_collection_test, favorites, apartments, my_properties, admin_web, ai, news, users, dashboard
 
 # 메인 API 라우터 생성
@@ -91,13 +92,6 @@ api_router.include_router(
     data_collection.router,
     prefix="/data-collection",  # URL prefix: /api/v1/data-collection/...
     tags=["📥 Data Collection (데이터 수집)"]  # Swagger UI에서 그룹화할 태그
-)
-
-# REB API 테스트 엔드포인트
-api_router.include_router(
-    data_collection_test.router,
-    prefix="/data-collection/house-scores",  # URL prefix: /api/v1/data-collection/house-scores/...
-    tags=["🔍 REB API 테스트"]  # Swagger UI에서 그룹화할 태그
 )
 
 # ============================================================
@@ -178,6 +172,18 @@ api_router.include_router(
 )
 
 # ============================================================
+# 지표 API
+# ============================================================
+# 부동산 지표 관련 조회 기능
+#
+# 엔드포인트:
+# - GET /api/v1/indicators/house-scores/{region_id}/{base_ym} - 부동산 지수 조회
+#
+# 파일 위치: app/api/v1/endpoints/indicators.py
+api_router.include_router(
+    indicators.router,
+    prefix="/indicators",  # URL prefix: /api/v1/indicators/...
+    tags=["📈 Indicators (지표)"]  # Swagger UI에서 그룹화할 태그
 # 사용자 관련 API
 # ============================================================
 # 사용자의 최근 본 아파트 목록 조회 기능
