@@ -136,6 +136,21 @@ class SimilarApartmentsResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class VolumeTrendItem(BaseModel):
+    """월별 거래량 항목 스키마"""
+    year_month: str = Field(..., description="연도-월 (YYYY-MM 형식)", example="2024-01")
+    volume: int = Field(..., description="해당 월의 거래량", ge=0)
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class VolumeTrendResponse(BaseModel):
+    """거래량 추이 응답 스키마"""
+    success: bool = Field(True, description="성공 여부")
+    apt_id: int = Field(..., description="아파트 ID")
+    data: list[VolumeTrendItem] = Field(..., description="월별 거래량 목록")
+    total_volume: int = Field(..., description="전체 거래량 합계", ge=0)
+
 class NearbyPriceResponse(BaseModel):
     """주변 아파트 평균 가격 응답 스키마"""
     apt_id: int = Field(..., description="아파트 ID")
@@ -147,9 +162,27 @@ class NearbyPriceResponse(BaseModel):
     estimated_price: Optional[float] = Field(None, description="예상 가격 (만원, 평당가 × 기준 아파트 면적)")
     transaction_count: int = Field(..., description="거래 개수")
     average_price: float = Field(..., description="평균 가격 (만원, 거래 개수 5개 이하면 -1)")
+
     
     model_config = ConfigDict(from_attributes=True)
 
+
+
+class PriceTrendItem(BaseModel):
+    """월별 평당가 항목 스키마"""
+    year_month: str = Field(..., description="연도-월 (YYYY-MM 형식)", example="2024-01")
+    price_per_pyeong: float = Field(..., description="해당 월의 평당가 (만원/평)", ge=0)
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PriceTrendResponse(BaseModel):
+    """평당가 추이 응답 스키마"""
+    success: bool = Field(True, description="성공 여부")
+    apt_id: int = Field(..., description="아파트 ID")
+    data: list[PriceTrendItem] = Field(..., description="월별 평당가 목록")
+    
+    model_config = ConfigDict(from_attributes=True)
 
 class NearbyComparisonItem(BaseModel):
     """주변 아파트 비교 항목 스키마"""

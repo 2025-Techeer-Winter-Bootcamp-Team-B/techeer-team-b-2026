@@ -5,7 +5,7 @@
 """
 import logging
 from typing import Optional, List, Tuple
-from sqlalchemy import select, case, and_, func as sql_func, literal_column
+from sqlalchemy import select, case, and_, func as sql_func, literal_column, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from geoalchemy2 import functions as geo_func
 
@@ -412,6 +412,122 @@ class CRUDApartment(CRUDBase[Apartment, ApartmentCreate, ApartmentUpdate]):
             logger.debug(f"✅ 주변 아파트 {len(results)}개 찾음: apt_id={apt_id}, 최소 거리={results[0][1] if results else 0:.2f}m")
         
         return results
+    
+    async def get_volume_trend(
+        self,
+        db: AsyncSession,
+        *,
+        apt_id: int
+    ) -> List[Tuple[str, int]]:
+        """
+        아파트의 월별 거래량 추이 조회
+        
+        sales 테이블에서 해당 아파트의 거래량을 월별로 집계합니다.
+        취소되지 않은 거래만 집계합니다.
+        
+        Args:
+            db: 데이터베이스 세션
+            apt_id: 아파트 ID
+            
+        Returns:
+            (연도-월 문자열, 거래량) 튜플 리스트
+            예: [("2024-01", 5), ("2024-02", 3), ...]
+        """
+        # PostgreSQL의 to_char 함수를 사용하여 연도-월 형식으로 변환
+        # contract_date가 NULL이 아닌 거래만 집계
+        # 취소되지 않은 거래만 집계 (is_canceled = False)
+        # 삭제되지 않은 거래만 집계 (is_deleted = False 또는 NULL)
+        
+        # GROUP BY와 ORDER BY에서 같은 표현식을 사용하기 위해 변수로 추출
+        year_month_expr = func.to_char(Sale.contract_date, 'YYYY-MM')
+        
+        stmt = (
+            select(
+                year_month_expr.label('year_month'),
+                func.count(Sale.trans_id).label('volume')
+            )
+            .where(
+                Sale.apt_id == apt_id,
+                Sale.contract_date.isnot(None),  # 계약일이 있는 거래만
+                Sale.is_canceled == False,  # 취소되지 않은 거래만
+                (Sale.is_deleted == False) | (Sale.is_deleted.is_(None))  # 삭제되지 않은 거래만
+            )
+            .group_by(year_month_expr)
+            .order_by(year_month_expr)
+        )
+        
+        result = await db.execute(stmt)
+        rows = result.all()
+        
+        # 튜플 리스트로 변환
+        return [(row.year_month, row.volume) for row in rows]
+    
+    async def get_price_trend(
+        self,
+        db: AsyncSession,
+        *,
+        apt_id: int
+    ) -> List[Tuple[str, float]]:
+        """
+        아파트의 월별 평당가 추이 조회
+        
+        sales 테이블에서 해당 아파트의 평당가를 월별로 집계합니다.
+        취소되지 않은 거래만 집계합니다.
+        
+        평당가 계산식:
+        - 평수 = 전용면적(m²) * 0.3025
+        - 평당가 = SUM(거래가격) / SUM(평수)
+        - 단위: 만원/평
+        
+        Args:
+            db: 데이터베이스 세션
+            apt_id: 아파트 ID
+            
+        Returns:
+            (연도-월 문자열, 평당가) 튜플 리스트
+            예: [("2024-01", 12500.5), ("2024-02", 13000.0), ...]
+        """
+        # PostgreSQL의 to_char 함수를 사용하여 연도-월 형식으로 변환
+        # contract_date가 NULL이 아닌 거래만 집계
+        # 취소되지 않은 거래만 집계 (is_canceled = False)
+        # 삭제되지 않은 거래만 집계 (is_deleted = False 또는 NULL)
+        # trans_price와 exclusive_area가 NULL이 아닌 거래만 집계
+        
+        # GROUP BY와 ORDER BY에서 같은 표현식을 사용하기 위해 변수로 추출
+        year_month_expr = func.to_char(Sale.contract_date, 'YYYY-MM')
+        
+        # 평수 계산: exclusive_area * 0.3025
+        pyeong_expr = Sale.exclusive_area * 0.3025
+        
+        # 평당가 계산: SUM(trans_price) / SUM(평수)
+        # NULL 값 처리: trans_price와 exclusive_area가 모두 NULL이 아닌 경우만 집계
+        price_per_pyeong_expr = (
+            func.sum(Sale.trans_price) / func.sum(pyeong_expr)
+        )
+        
+        stmt = (
+            select(
+                year_month_expr.label('year_month'),
+                price_per_pyeong_expr.label('price_per_pyeong')
+            )
+            .where(
+                Sale.apt_id == apt_id,
+                Sale.contract_date.isnot(None),  # 계약일이 있는 거래만
+                Sale.trans_price.isnot(None),  # 거래가격이 있는 거래만
+                Sale.exclusive_area.isnot(None),  # 전용면적이 있는 거래만
+                Sale.is_canceled == False,  # 취소되지 않은 거래만
+                (Sale.is_deleted == False) | (Sale.is_deleted.is_(None))  # 삭제되지 않은 거래만
+            )
+            .group_by(year_month_expr)
+            .having(func.sum(pyeong_expr) > 0)  # 평수 합계가 0보다 큰 경우만 (0으로 나누기 방지)
+            .order_by(year_month_expr)
+        )
+        
+        result = await db.execute(stmt)
+        rows = result.all()
+        
+        # 튜플 리스트로 변환 (평당가를 float로 변환)
+        return [(row.year_month, float(row.price_per_pyeong)) for row in rows]
 
 # CRUD 인스턴스 생성
 apartment = CRUDApartment(Apartment)
