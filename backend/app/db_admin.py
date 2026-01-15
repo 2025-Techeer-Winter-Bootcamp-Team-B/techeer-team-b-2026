@@ -22,10 +22,10 @@ import traceback
 import time
 import subprocess
 import random
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from typing import List, Optional
-from sqlalchemy import text, select, insert
+from sqlalchemy import text, select, insert, func
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import settings
@@ -514,49 +514,64 @@ class DatabaseAdmin:
             print(traceback.format_exc())
             return False
 
-    async def generate_dummy_transactions(self, confirm: bool = False) -> bool:
+    async def generate_dummy_for_empty_apartments(self, confirm: bool = False) -> bool:
         """
-        rents와 sales 테이블에 더미 거래 데이터 생성
+        매매와 전월세 거래가 모두 없는 아파트에만 더미 데이터 생성
         
-        2015년 1월부터 2025년 12월까지의 데이터를 생성합니다.
+        거래가 없는 아파트를 찾아서 2015년 1월부터 2025년 12월까지의 더미 데이터를 생성합니다.
         모든 아파트가 한 달에 최소 3개의 거래를 가지도록 합니다.
-        지역별 집값을 반영하여 랜덤값을 생성합니다.
+        remark 필드에 "더미"라는 텍스트가 들어갑니다.
         """
         if not confirm:
-            print("\n⚠️  경고: 더미 거래 데이터 생성")
-            print("   - rents와 sales 테이블의 기존 데이터가 모두 삭제됩니다!")
+            print("\n⚠️  경고: 거래가 없는 아파트에 더미 데이터 생성")
+            print("   - 매매와 전월세 거래가 모두 없는 아파트만 대상입니다.")
             print("   - 2015년 1월부터 2025년 12월까지의 데이터가 생성됩니다.")
             print("   - 모든 아파트가 매월 최소 3개의 거래를 가지게 됩니다.")
+            print("   - remark 필드에 '더미'가 표시됩니다.")
             if input("계속하시겠습니까? (yes/no): ").lower() != "yes":
                 return False
         
         try:
-            print("\n🔄 더미 거래 데이터 생성 시작...")
+            print("\n🔄 거래가 없는 아파트 찾기 시작...")
             
-            # 1. 기존 데이터 삭제
-            print("   📋 기존 데이터 삭제 중...")
+            # 1. 거래가 없는 아파트 찾기
             async with self.engine.begin() as conn:
-                await conn.execute(text('TRUNCATE TABLE "rents" RESTART IDENTITY CASCADE'))
-                await conn.execute(text('TRUNCATE TABLE "sales" RESTART IDENTITY CASCADE'))
-            print("   ✅ 기존 데이터 삭제 완료")
-            
-            # 2. 아파트 및 지역 정보 조회
-            print("   📋 아파트 및 지역 정보 조회 중...")
-            async with self.engine.begin() as conn:
-                result = await conn.execute(
-                    select(Apartment.apt_id, Apartment.region_id, State.city_name, State.region_name)
-                    .join(State, Apartment.region_id == State.region_id)
-                    .where((Apartment.is_deleted == False) | (Apartment.is_deleted.is_(None)))
+                # 매매와 전월세 거래가 모두 없는 아파트 조회
+                # NOT EXISTS를 사용하여 거래가 없는 아파트 찾기
+                from sqlalchemy import exists
+                
+                # 매매 거래가 없는 아파트 서브쿼리
+                no_sales = ~exists(
+                    select(1).where(Sale.apt_id == Apartment.apt_id)
                 )
-                apartments = result.fetchall()
+                # 전월세 거래가 없는 아파트 서브쿼리
+                no_rents = ~exists(
+                    select(1).where(Rent.apt_id == Apartment.apt_id)
+                )
+                
+                result = await conn.execute(
+                    select(
+                        Apartment.apt_id,
+                        Apartment.region_id,
+                        State.city_name,
+                        State.region_name
+                    )
+                    .join(State, Apartment.region_id == State.region_id)
+                    .where(
+                        ((Apartment.is_deleted == False) | (Apartment.is_deleted.is_(None))),
+                        no_sales,
+                        no_rents
+                    )
+                )
+                empty_apartments = result.fetchall()
             
-            if not apartments:
-                print("   ❌ 아파트 데이터가 없습니다. 먼저 아파트 데이터를 수집해주세요.")
-                return False
+            if not empty_apartments:
+                print("   ✅ 거래가 없는 아파트가 없습니다.")
+                return True
             
-            print(f"   ✅ {len(apartments)}개의 아파트 발견")
+            print(f"   ✅ 거래가 없는 아파트 {len(empty_apartments):,}개 발견")
             
-            # 3. 지역별 가격 계수 설정
+            # 2. 지역별 가격 계수 설정
             def get_price_multiplier(city_name: str) -> float:
                 """지역별 가격 계수 반환 (서울이 가장 비쌈)"""
                 city_name = city_name or ""
@@ -569,7 +584,7 @@ class DatabaseAdmin:
                 else:
                     return 0.6  # 기타 지역은 0.6배 (약 300만원/㎡)
             
-            # 4. 시간에 따른 가격 상승률 계산
+            # 3. 시간에 따른 가격 상승률 계산
             def get_time_multiplier(year: int, month: int) -> float:
                 """시간에 따른 가격 상승률 (2015년 1월 = 1.0, 2025년 12월 = 1.8)"""
                 base_year = 2015
@@ -579,8 +594,8 @@ class DatabaseAdmin:
                 # 선형 상승: 1.0에서 1.8까지
                 return 1.0 + (months_passed / total_months) * 0.8
             
-            # 5. 거래 데이터 생성 및 삽입 (메모리 효율적으로 배치 처리)
-            print("   📊 거래 데이터 생성 및 삽입 중...")
+            # 4. 거래 데이터 생성 및 삽입
+            print("   📊 더미 거래 데이터 생성 및 삽입 중...")
             
             # 기간 설정: 2015년 1월 ~ 2025년 12월
             start_date = date(2015, 1, 1)
@@ -597,7 +612,7 @@ class DatabaseAdmin:
             sales_batch = []
             
             total_transactions = 0
-            total_apartments = len(apartments)
+            total_apartments = len(empty_apartments)
             total_sales_inserted = 0
             total_rents_inserted = 0
             
@@ -625,7 +640,7 @@ class DatabaseAdmin:
                         await conn.execute(stmt)
                     total_rents_inserted += len(rents_batch_data)
             
-            for apt_idx, (apt_id, region_id, city_name, region_name) in enumerate(apartments, 1):
+            for apt_idx, (apt_id, region_id, city_name, region_name) in enumerate(empty_apartments, 1):
                 # 지역별 가격 계수
                 region_multiplier = get_price_multiplier(city_name)
                 
@@ -663,9 +678,6 @@ class DatabaseAdmin:
                         
                         # 가격 계산 (기본 단가 * 지역계수 * 시간계수 * 면적 * 랜덤변동)
                         # 기본 단가: 500만원/㎡ (광역시 기준, 만원 단위로 저장)
-                        # 서울: 1.8배 = 900만원/㎡, 경기/인천: 1.3배 = 650만원/㎡
-                        # 지방: 0.6배 = 300만원/㎡
-                        # 시간에 따라 2015년 1.0배 → 2025년 1.8배까지 상승
                         base_price_per_sqm = 500  # 기본 단가 (만원/㎡)
                         price_per_sqm = base_price_per_sqm * region_multiplier * time_multiplier
                         random_variation = random.uniform(0.85, 1.15)  # ±15% 변동
@@ -690,7 +702,7 @@ class DatabaseAdmin:
                             "contract_date": contract_date,
                             "is_canceled": is_canceled,
                             "cancel_date": cancel_date,
-                            "remarks": None,
+                            "remarks": "더미",  # 더미 데이터 표시
                             "created_at": datetime.now(),
                             "updated_at": datetime.now(),
                             "is_deleted": False
@@ -715,7 +727,7 @@ class DatabaseAdmin:
                             "apt_seq": str(random.randint(1, 100)) if random.random() > 0.3 else None,
                             "deal_date": deal_date,
                             "contract_date": contract_date,
-                            "remarks": None,
+                            "remarks": "더미",  # 더미 데이터 표시
                             "created_at": datetime.now(),
                             "updated_at": datetime.now(),
                             "is_deleted": False
@@ -777,22 +789,28 @@ class DatabaseAdmin:
                 print(f"   ✅ 남은 배치 데이터 삽입 완료")
             
             # 데이터 생성 및 삽입 완료 로깅
-            print(f"\n   ✅ 거래 데이터 생성 및 삽입 완료!")
+            print(f"\n   ✅ 더미 거래 데이터 생성 및 삽입 완료!")
             print(f"      - 총 생성된 거래: {total_transactions:,}개")
             print(f"      - DB 삽입된 매매 거래: {total_sales_inserted:,}개")
             print(f"      - DB 삽입된 전월세 거래: {total_rents_inserted:,}개")
             
-            # 7. 결과 확인
+            # 5. 결과 확인
             async with self.engine.begin() as conn:
-                sales_count = await conn.execute(text('SELECT COUNT(*) FROM sales'))
-                rents_count = await conn.execute(text('SELECT COUNT(*) FROM rents'))
+                sales_count = await conn.execute(
+                    text('SELECT COUNT(*) FROM sales WHERE remarks = :remark')
+                    .bindparams(remark="더미")
+                )
+                rents_count = await conn.execute(
+                    text('SELECT COUNT(*) FROM rents WHERE remarks = :remark')
+                    .bindparams(remark="더미")
+                )
                 sales_total = sales_count.scalar()
                 rents_total = rents_count.scalar()
             
             print("\n✅ 더미 거래 데이터 생성 완료!")
-            print(f"   - 매매 거래: {sales_total:,}개")
-            print(f"   - 전월세 거래: {rents_total:,}개")
-            print(f"   - 총 거래: {sales_total + rents_total:,}개")
+            print(f"   - 매매 거래 (더미): {sales_total:,}개")
+            print(f"   - 전월세 거래 (더미): {rents_total:,}개")
+            print(f"   - 총 거래 (더미): {sales_total + rents_total:,}개")
             
             return True
             
@@ -840,7 +858,7 @@ def print_menu():
     print("7. 테이블 관계 조회")
     print("8. 💾 데이터 백업 (CSV)")
     print("9. ♻️  데이터 복원 (CSV)")
-    print("10. 🎲 더미 거래 데이터 생성")
+    print("10. 🎲 거래 없는 아파트에 더미 데이터 생성")
     print("0. 종료")
     print("=" * 60)
 
@@ -871,7 +889,7 @@ async def interactive_mode(admin: DatabaseAdmin):
         elif choice == "9":
             table = input("테이블명 (전체는 엔터): ").strip()
             await restore_command(admin, table if table else None)
-        elif choice == "10": await admin.generate_dummy_transactions()
+        elif choice == "10": await admin.generate_dummy_for_empty_apartments()
         
         input("\n계속하려면 Enter...")
 
@@ -889,7 +907,8 @@ def main():
         restore_parser.add_argument("table_name", nargs="?", help="테이블명")
         restore_parser.add_argument("--force", action="store_true")
         
-        # ... 기타 파서들 ...
+        dummy_parser = subparsers.add_parser("dummy")
+        dummy_parser.add_argument("--force", action="store_true", help="확인 없이 실행")
         
         args = parser.parse_args()
         
@@ -899,6 +918,7 @@ def main():
                 if args.command == "list": await list_tables_command(admin)
                 elif args.command == "backup": await backup_command(admin, args.table_name)
                 elif args.command == "restore": await restore_command(admin, args.table_name, args.force)
+                elif args.command == "dummy": await admin.generate_dummy_for_empty_apartments(confirm=args.force)
             finally: await admin.close()
         
         asyncio.run(run())
