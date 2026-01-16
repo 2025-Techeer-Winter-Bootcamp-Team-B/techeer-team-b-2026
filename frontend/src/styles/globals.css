@@ -258,4 +258,27 @@ html {
   .dark .custom-scrollbar::-webkit-scrollbar-thumb:active {
     background-color: rgba(113, 113, 122, 1);
   }
+
+  /* 상승 TOP 5 수익률 강제 빨간색 적용 */
+  .rising-percentage-red {
+    color: rgba(239, 68, 68, 1) !important;
+    background-clip: unset !important;
+    -webkit-background-clip: unset !important;
+  }
+
+  .dark .rising-percentage-red {
+    color: rgba(239, 68, 68, 1) !important;
+    background-clip: unset !important;
+    -webkit-background-clip: unset !important;
+  }
+
+  /* 부모 요소의 색상 상속 무시 */
+  button .rising-percentage-red,
+  button.text-zinc-400 .rising-percentage-red,
+  .dark button .rising-percentage-red,
+  .dark button.text-zinc-400 .rising-percentage-red {
+    color: rgba(239, 68, 68, 1) !important;
+    background-clip: unset !important;
+    -webkit-background-clip: unset !important;
+  }
 }

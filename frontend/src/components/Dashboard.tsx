@@ -492,6 +492,10 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
           <button
             onClick={() => setIsRecentViewsExpanded(!isRecentViewsExpanded)}
             className="w-full p-4 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors"
+            style={isDarkMode ? {
+              backgroundColor: 'rgba(0, 0, 0, 1)',
+              boxShadow: '0px 4px 12px 0px rgba(0, 0, 0, 0.15)'
+            } : undefined}
           >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -1009,7 +1013,7 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
                             </div>
                           </div>
                           <div className="text-right flex-shrink-0">
-                            <div className={`text-xs font-bold ${isDarkMode ? 'text-red-300' : 'text-red-600'}`}>
+                            <div className={`text-xs font-bold ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>
                               +{apt.change_rate.toFixed(2)}%
                             </div>
                             <div className={`text-xs ${isDarkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
@@ -1188,7 +1192,7 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
                             </div>
                           </div>
                           <div className="text-right flex-shrink-0">
-                            <div className={`text-xs font-bold ${isDarkMode ? 'text-red-300' : 'text-red-600'}`}>
+                            <div className={`text-xs font-bold ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>
                               +{apt.change_rate.toFixed(2)}%
                             </div>
                             <div className={`text-xs ${isDarkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
