@@ -4,6 +4,7 @@
 .document
 .db_backup
 /db_backup
+db_backup
 
 # docs
 docs/

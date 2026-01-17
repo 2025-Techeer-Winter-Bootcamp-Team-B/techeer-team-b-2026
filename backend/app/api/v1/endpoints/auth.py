@@ -332,10 +332,14 @@ async def get_my_profile(
     # 1. 캐시에서 조회 시도
     cached_data = await get_from_cache(cache_key)
     if cached_data is not None:
-        # 캐시 히트: 캐시된 데이터 반환
+        # 캐시 히트: 캐시된 데이터를 AccountBase로 변환하여 반환
+        # is_dark_mode가 없으면 기본값 True 사용
+        if "is_dark_mode" not in cached_data:
+            cached_data["is_dark_mode"] = True
+        user_data = AccountBase(**cached_data)
         return {
             "success": True,
-            "data": cached_data
+            "data": user_data
         }
     
     # 2. 캐시 미스: 데이터베이스에서 조회
@@ -347,7 +351,8 @@ async def get_my_profile(
         is_admin=current_user.is_admin,
         created_at=current_user.created_at,
         updated_at=current_user.updated_at,
-        is_deleted=current_user.is_deleted
+        is_deleted=current_user.is_deleted,
+        is_dark_mode=current_user.is_dark_mode
     )
     
     # 3. 캐시에 저장 (TTL: 1시간)
@@ -358,7 +363,8 @@ async def get_my_profile(
         "is_admin": user_data.is_admin,
         "created_at": user_data.created_at.isoformat() if user_data.created_at else None,
         "updated_at": user_data.updated_at.isoformat() if user_data.updated_at else None,
-        "is_deleted": user_data.is_deleted
+        "is_deleted": user_data.is_deleted,
+        "is_dark_mode": user_data.is_dark_mode
     }
     await set_to_cache(cache_key, user_data_dict, ttl=3600)
     
