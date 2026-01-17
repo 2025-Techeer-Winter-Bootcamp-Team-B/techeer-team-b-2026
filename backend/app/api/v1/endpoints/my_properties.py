@@ -491,10 +491,130 @@ async def get_my_property(
         "use_approval_date": apart_detail.use_approval_date.isoformat() if apart_detail and apart_detail.use_approval_date else None,
         "total_household_cnt": apart_detail.total_household_cnt if apart_detail else None,
         "index_change_rate": index_change_rate,
+        # 주소 정보 추가
+        "road_address": apart_detail.road_address if apart_detail else None,
+        "jibun_address": apart_detail.jibun_address if apart_detail else None,
     }
     
     # 3. 캐시에 저장 (TTL: 1시간)
     await set_to_cache(cache_key, property_data, ttl=3600)
+    
+    return {
+        "success": True,
+        "data": property_data
+    }
+
+
+@router.patch(
+    "/{property_id}",
+    response_model=dict,
+    status_code=status.HTTP_200_OK,
+    tags=["🏠 My Properties (내 집)"],
+    summary="내 집 정보 수정",
+    description="""
+    내 집 정보를 수정합니다.
+    
+    ### 수정 가능한 필드
+    - `nickname`: 별칭
+    - `exclusive_area`: 전용면적 (㎡)
+    - `current_market_price`: 현재 시세 (만원)
+    - `memo`: 메모
+    
+    ### 요청 정보
+    - `property_id`: 수정할 내 집 ID (path parameter)
+    - 수정할 필드만 전달하면 됩니다 (부분 업데이트 지원)
+    """,
+    responses={
+        200: {
+            "description": "내 집 정보 수정 성공",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "success": True,
+                        "data": {
+                            "property_id": 1,
+                            "nickname": "투자용",
+                            "memo": "시세 상승"
+                        }
+                    }
+                }
+            }
+        },
+        404: {
+            "description": "내 집을 찾을 수 없음"
+        },
+        401: {
+            "description": "인증 필요"
+        }
+    }
+)
+async def update_my_property(
+    property_id: int,
+    property_update: MyPropertyUpdate = Body(
+        ...,
+        description="수정할 내 집 정보",
+        examples=[{
+            "memo": "2024년 구매, 투자 검토 중"
+        }]
+    ),
+    current_user: Account = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    내 집 정보 수정
+    
+    지정한 내 집 ID에 해당하는 내 집의 정보를 수정합니다.
+    """
+    # 내 집 조회
+    property_obj = await my_property_crud.get_by_account_and_id(
+        db,
+        account_id=current_user.account_id,
+        property_id=property_id
+    )
+    
+    if not property_obj:
+        raise NotFoundException("내 집")
+    
+    # 내 집 정보 수정
+    updated_property = await my_property_crud.update(
+        db,
+        db_obj=property_obj,
+        obj_in=property_update
+    )
+    
+    # 캐시 무효화 (해당 계정의 모든 내 집 캐시 삭제)
+    cache_pattern = get_my_property_pattern_key(current_user.account_id)
+    await delete_cache_pattern(cache_pattern)
+    
+    # 응답 데이터 구성 (Apartment 관계 정보 포함)
+    apartment = updated_property.apartment
+    region = apartment.region if apartment else None
+    apart_detail = apartment.apart_detail if apartment else None
+    
+    property_data = {
+        "property_id": updated_property.property_id,
+        "account_id": updated_property.account_id,
+        "apt_id": updated_property.apt_id,
+        "nickname": updated_property.nickname,
+        "exclusive_area": float(updated_property.exclusive_area) if updated_property.exclusive_area else None,
+        "current_market_price": updated_property.current_market_price,
+        "risk_checked_at": updated_property.risk_checked_at.isoformat() if updated_property.risk_checked_at else None,
+        "memo": updated_property.memo,
+        "created_at": updated_property.created_at.isoformat() if updated_property.created_at else None,
+        "updated_at": updated_property.updated_at.isoformat() if updated_property.updated_at else None,
+        "is_deleted": updated_property.is_deleted,
+        "apt_name": apartment.apt_name if apartment else None,
+        "kapt_code": apartment.kapt_code if apartment else None,
+        "region_name": region.region_name if region else None,
+        "city_name": region.city_name if region else None,
+        "builder_name": apart_detail.builder_name if apart_detail else None,
+        "code_heat_nm": apart_detail.code_heat_nm if apart_detail else None,
+        "educationFacility": apart_detail.educationFacility if apart_detail else None,
+        "subway_line": apart_detail.subway_line if apart_detail else None,
+        "subway_station": apart_detail.subway_station if apart_detail else None,
+        "subway_time": apart_detail.subway_time if apart_detail else None,
+        "total_parking_cnt": apart_detail.total_parking_cnt if apart_detail else None,
+    }
     
     return {
         "success": True,

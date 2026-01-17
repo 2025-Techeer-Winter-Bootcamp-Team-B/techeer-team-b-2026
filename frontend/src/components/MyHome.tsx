@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Building2, MapPin, Calendar, TrendingUp, TrendingDown, Sparkles, ChevronRight, ChevronDown, Home, Plus, User, X, Newspaper, ExternalLink } from 'lucide-react';
+import { Building2, MapPin, Calendar, TrendingUp, TrendingDown, Sparkles, ChevronRight, ChevronDown, Home, Plus, User, X, Newspaper, ExternalLink, FileText, Save, Menu } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { motion } from 'framer-motion';
 import { useUser, useAuth } from '@/lib/clerk';
 import AddMyPropertyModal from './AddMyPropertyModal';
-import { getMyProperties, getMyProperty, deleteMyProperty, getMyPropertyCompliment, MyProperty } from '@/lib/myPropertyApi';
+import { getMyProperties, getMyProperty, deleteMyProperty, getMyPropertyCompliment, updateMyProperty, MyProperty } from '@/lib/myPropertyApi';
 import { getApartmentTransactions, PriceTrendData, ApartmentTransactionsResponse } from '@/lib/apartmentApi';
 import { getNewsList, NewsResponse, formatTimeAgo } from '@/lib/newsApi';
 import { useToast } from '../hooks/useToast';
@@ -41,6 +41,9 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
   const [hoveredPropertyId, setHoveredPropertyId] = useState<number | null>(null);
   const [showAllAreaGroups, setShowAllAreaGroups] = useState(false);
   const [showRecentTransactions, setShowRecentTransactions] = useState(false);
+  const [memoText, setMemoText] = useState<string>('');
+  const [isSavingMemo, setIsSavingMemo] = useState(false);
+  const [showMemoCard, setShowMemoCard] = useState(false);
   
   // selectedPropertyId의 최신 값을 참조하기 위한 ref
   const selectedPropertyIdRef = useRef<number | null>(null);
@@ -79,7 +82,8 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
         
         // 0.5초마다 자동으로 갱신되므로 캐시를 무시하고 최신 데이터를 가져오기
         const properties = await getMyProperties(token, true);
-        setMyProperties(properties);
+        // 오름차순 정렬 (오래된 순서)
+        setMyProperties([...properties].reverse());
         
         // 현재 선택된 내 집 ID (ref를 통해 최신 값 참조)
         const currentSelectedId = selectedPropertyIdRef.current;
@@ -133,11 +137,13 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
       
       // 등록 직후이므로 캐시를 무시하고 최신 데이터를 가져오기
       const properties = await getMyProperties(token, true);
-      setMyProperties(properties);
+      // 오름차순 정렬 (오래된 순서)
+      const reversedProperties = [...properties].reverse();
+      setMyProperties(reversedProperties);
       
-      // 방금 추가한 내 집을 선택 (가장 최신)
-      if (properties.length > 0) {
-        setSelectedPropertyId(properties[0].property_id);
+      // 방금 추가한 내 집을 선택 (가장 최신 - 뒤집은 배열의 마지막 요소)
+      if (reversedProperties.length > 0) {
+        setSelectedPropertyId(reversedProperties[reversedProperties.length - 1].property_id);
       }
     } catch (error) {
       console.error('Failed to refresh properties:', error);
@@ -162,6 +168,7 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
         
         const detail = await getMyProperty(selectedPropertyId, token);
         setSelectedPropertyDetail(detail);
+        setMemoText(detail.memo || '');
       } catch (error) {
         console.error('Failed to fetch property detail:', error);
         setSelectedPropertyDetail(null);
@@ -272,6 +279,37 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
     fetchNews();
   }, [selectedPropertyDetail?.apt_id, getToken]);
   
+  // 메모 저장 핸들러
+  const handleSaveMemo = async () => {
+    if (!selectedPropertyId || !getToken) return;
+    
+    setIsSavingMemo(true);
+    try {
+      const token = await getToken();
+      if (!token) {
+        toast.error('로그인이 필요합니다.');
+        return;
+      }
+      
+      await updateMyProperty(selectedPropertyId, { memo: memoText || null }, token);
+      
+      // 로컬 상태 업데이트
+      if (selectedPropertyDetail) {
+        setSelectedPropertyDetail({
+          ...selectedPropertyDetail,
+          memo: memoText || null
+        });
+      }
+      
+      toast.success('메모가 저장되었습니다.');
+    } catch (error: any) {
+      console.error('Failed to save memo:', error);
+      toast.error(error.message || '메모 저장에 실패했습니다.');
+    } finally {
+      setIsSavingMemo(false);
+    }
+  };
+
   // 내 집 삭제 핸들러
   const handleDeleteProperty = async (propertyId: number, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -389,10 +427,24 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
     const city = detail.city_name || '';
     const region = detail.region_name || '';
     const address = detail.road_address || detail.jibun_address || '';
-    if (city && region && address) {
-      return `${city} ${region} ${address}`;
+    
+    // address가 이미 city와 region을 포함하고 있는지 확인
+    if (address) {
+      // address에 city와 region이 이미 포함되어 있으면 그대로 사용
+      if (city && address.includes(city) && region && address.includes(region)) {
+        return address;
+      }
+      // address에 city와 region이 포함되어 있지 않으면 조합
+      if (city && region) {
+        return `${city} ${region} ${address}`;
+      }
+      return address;
     }
-    if (address) return address;
+    
+    // address가 없는 경우 city와 region만 사용
+    if (city && region) {
+      return `${city} ${region}`;
+    }
     return null;
   };
 
@@ -597,16 +649,14 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
                       }}
                       className={`flex items-center gap-2 px-4 py-3 rounded-full transition-all whitespace-nowrap flex-shrink-0 ${
                         isSelected
-                          ? 'bg-gradient-to-r from-sky-500 to-blue-500 text-white shadow-lg'
+                          ? 'bg-sky-500 text-white shadow-lg'
                           : isDarkMode
                           ? 'bg-slate-700 text-slate-300 hover:bg-slate-600'
                           : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
                       }`}
                     >
-                      {isSelected ? (
+                      {isSelected && (
                         <Home className="w-4 h-4" />
-                      ) : (
-                        <Building2 className="w-4 h-4" />
                       )}
                       <span className="font-medium text-sm">{displayName}</span>
                     </motion.button>
@@ -698,8 +748,7 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0 }}
-            className={`mt-5 w-full rounded-2xl p-6 bg-gradient-to-br from-slate-800 to-slate-900 shadow-xl ${isDarkMode ? '' : 'border border-slate-700'} ${onApartmentClick ? 'cursor-pointer hover:opacity-90 transition-opacity' : ''}`}
-            style={{ backgroundColor: onApartmentClick ? undefined : undefined }}
+            className={`mt-5 w-full rounded-2xl p-6 shadow-xl ${isDarkMode ? 'bg-gradient-to-br from-zinc-900 to-zinc-900/50' : 'bg-white border border-sky-100'} ${onApartmentClick ? 'cursor-pointer hover:opacity-90 transition-opacity' : ''}`}
             onClick={() => {
               if (onApartmentClick && selectedPropertyDetail.apt_id) {
                 onApartmentClick({
@@ -714,44 +763,119 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
           >
             {/* 상단: 아파트명 및 주소 */}
             <div className="flex items-start gap-4 mb-6">
-              <div className="p-3 rounded-xl bg-slate-700/50 flex-shrink-0">
-                <Building2 className="w-6 h-6 text-white" />
+              <div className={`p-3 rounded-xl flex-shrink-0 flex items-center justify-center h-[48px] ${isDarkMode ? 'bg-slate-700/50' : 'bg-sky-100'}`}>
+                <Home className={`w-6 h-6 ${isDarkMode ? 'text-white' : 'text-sky-600'}`} />
               </div>
               
               <div className="flex-1 min-w-0">
-                <h3 className="text-xl font-bold text-white mb-2 truncate">
-                  {selectedPropertyDetail.apt_name || selectedPropertyDetail.nickname || '내 집'}
+                <h3 className={`text-xl font-bold mb-2 truncate ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
+                  {(() => {
+                    const aptName = selectedPropertyDetail.apt_name || '내 집';
+                    const nickname = selectedPropertyDetail.nickname;
+                    if (nickname && nickname !== aptName) {
+                      return (
+                        <>
+                          {aptName} <span className={isDarkMode ? 'text-slate-400' : 'text-slate-500'}>({nickname})</span>
+                        </>
+                      );
+                    }
+                    return aptName;
+                  })()}
                 </h3>
                 {getFullAddress(selectedPropertyDetail) && (
-                  <div className="flex items-center gap-2 text-slate-300 text-sm">
-                    <MapPin className="w-4 h-4 flex-shrink-0" />
-                    <span className="truncate">{getFullAddress(selectedPropertyDetail)}</span>
+                  <div className="flex items-center gap-2 -mt-[3px]">
+                    <MapPin className="w-4 h-4 text-sky-400 flex-shrink-0" />
+                    <p className={`text-sm leading-none ${textSecondary}`}>{getFullAddress(selectedPropertyDetail)}</p>
                   </div>
                 )}
               </div>
+              
+              {/* 햄버거 버튼 - 오른쪽 끝 */}
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowMemoCard(!showMemoCard);
+                }}
+                className={`p-3 rounded-xl flex-shrink-0 flex items-center justify-center transition-colors h-[48px] w-[48px] ${isDarkMode ? 'bg-slate-700/50 hover:bg-slate-700/70' : 'bg-sky-100 hover:bg-sky-200'}`}
+              >
+                <Menu className={`w-6 h-6 ${isDarkMode ? 'text-white' : 'text-sky-600'}`} />
+              </motion.button>
             </div>
+            
+            {/* 메모 카드 (햄버거 버튼 클릭 시 표시) */}
+            {showMemoCard && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.2 }}
+                className={`mb-3 w-full rounded-2xl p-6 shadow-xl ${isDarkMode ? 'bg-gradient-to-br from-zinc-900 to-zinc-900/50' : 'bg-white border border-sky-100'}`}
+              >
+                <div className="flex items-center gap-3 mb-4">
+                  <div className={`p-2 rounded-xl flex-shrink-0 ${isDarkMode ? 'bg-slate-700/50' : 'bg-sky-100'}`}>
+                    <FileText className={`w-5 h-5 ${isDarkMode ? 'text-sky-400' : 'text-sky-600'}`} />
+                  </div>
+                  <h3 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>메모</h3>
+                </div>
+
+                <div className="space-y-3">
+                  <textarea
+                    value={memoText}
+                    onChange={(e) => setMemoText(e.target.value)}
+                    placeholder="메모를 작성하세요..."
+                    className={`w-full min-h-[120px] p-4 rounded-xl border resize-none transition-all focus:outline-none focus:ring-2 focus:ring-sky-500/50 ${
+                      isDarkMode
+                        ? 'bg-slate-800/50 border-slate-700 text-white placeholder-slate-500'
+                        : 'bg-white border-slate-300 text-slate-800 placeholder-slate-400'
+                    }`}
+                    rows={5}
+                  />
+                  
+                  <div className="flex justify-end">
+                    <motion.button
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={handleSaveMemo}
+                      disabled={isSavingMemo}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all ${
+                        isSavingMemo
+                          ? 'bg-slate-600 text-slate-400 cursor-not-allowed'
+                          : 'bg-sky-500 text-white hover:bg-sky-600'
+                      }`}
+                    >
+                      <Save className="w-4 h-4" />
+                      <span className="text-sm font-medium">
+                        {isSavingMemo ? '저장 중...' : '저장'}
+                      </span>
+                    </motion.button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
             
             {/* 하단: 3개 정보 카드 */}
             <div className="grid grid-cols-3 gap-3">
-              <div className="rounded-xl p-4 bg-slate-700/50 border border-slate-600/50">
-                <Calendar className="w-5 h-5 text-white mb-2" />
-                <p className="text-xs text-slate-300 mb-1">완공년도</p>
-                <p className="text-sm font-bold text-white">
+              <div className={`rounded-xl p-4 border ${isDarkMode ? 'bg-slate-700/50 border-slate-600/50' : 'bg-sky-50 border-sky-100'}`}>
+                <Calendar className={`w-5 h-5 mb-2 ${isDarkMode ? 'text-white' : 'text-sky-600'}`} />
+                <p className={`text-xs mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-500'}`}>완공년도</p>
+                <p className={`text-sm font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
                   {getCompletionYear(selectedPropertyDetail.use_approval_date) || '-'}
                 </p>
               </div>
               
-              <div className="rounded-xl p-4 bg-slate-700/50 border border-slate-600/50">
-                <Building2 className="w-5 h-5 text-white mb-2" />
-                <p className="text-xs text-slate-300 mb-1">세대수</p>
-                <p className="text-sm font-bold text-white">
+              <div className={`rounded-xl p-4 border ${isDarkMode ? 'bg-slate-700/50 border-slate-600/50' : 'bg-sky-50 border-sky-100'}`}>
+                <Building2 className={`w-5 h-5 mb-2 ${isDarkMode ? 'text-white' : 'text-sky-600'}`} />
+                <p className={`text-xs mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-500'}`}>세대수</p>
+                <p className={`text-sm font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
                   {formatHouseholdCount(selectedPropertyDetail.total_household_cnt) || '-'}
                 </p>
               </div>
               
-              <div className="rounded-xl p-4 bg-slate-700/50 border border-slate-600/50">
-                <TrendingUp className="w-5 h-5 text-white mb-2" />
-                <p className="text-xs text-slate-300 mb-1">변동률</p>
+              <div className={`rounded-xl p-4 border ${isDarkMode ? 'bg-slate-700/50 border-slate-600/50' : 'bg-sky-50 border-sky-100'}`}>
+                <TrendingUp className={`w-5 h-5 mb-2 ${isDarkMode ? 'text-white' : 'text-sky-600'}`} />
+                <p className={`text-xs mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-500'}`}>변동률</p>
                 {(transactionsData?.change_summary?.change_rate !== undefined || (selectedPropertyDetail.index_change_rate !== null && selectedPropertyDetail.index_change_rate !== undefined)) ? (
                   <p className={`text-sm font-bold ${
                     (() => {
@@ -760,7 +884,7 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
                         ? 'text-green-500'
                         : changeRate < 0
                         ? 'text-red-400'
-                        : 'text-white';
+                        : isDarkMode ? 'text-white' : 'text-slate-800';
                     })()
                   }`}>
                     {(() => {
@@ -774,7 +898,7 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
                     })()}
                   </p>
                 ) : (
-                  <p className="text-sm font-bold text-white">-</p>
+                  <p className={`text-sm font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>-</p>
                 )}
               </div>
             </div>
@@ -785,8 +909,7 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
-            className="mt-5 w-full rounded-2xl p-6 relative overflow-hidden cursor-pointer hover:opacity-90 transition-opacity"
-            style={{ backgroundColor: '#1a1f26' }}
+            className={`mt-5 w-full rounded-2xl p-6 relative overflow-hidden cursor-pointer hover:opacity-90 transition-opacity ${isDarkMode ? 'bg-gradient-to-br from-zinc-900 to-zinc-900/50' : 'bg-white border border-sky-100 shadow-xl'}`}
             onClick={() => setShowRecentTransactions(!showRecentTransactions)}
           >
             <div className="absolute bottom-6 right-6">
@@ -797,7 +920,7 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
               />
             </div>
 
-            <p className="text-sm text-slate-400 mb-3">
+            <p className={`text-sm mb-3 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
               {(() => {
                 // 아파트 상세정보 화면과 동일하게 최근 거래가 우선 사용
                 const recentPrice = transactionsData?.recent_transactions?.[0]?.price;
@@ -816,7 +939,7 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
               })()}
             </p>
 
-            <h2 className="text-3xl font-bold text-sky-400 mb-3">
+            <h2 className={`text-3xl font-bold mb-3 ${isDarkMode ? 'text-sky-400' : 'text-sky-600'}`}>
               {(() => {
                 // 아파트 상세정보 화면과 동일하게 최근 거래가 우선 사용
                 const recentPrice = transactionsData?.recent_transactions?.[0]?.price;
@@ -850,14 +973,13 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
               animate={{ opacity: 1, height: 'auto' }}
               exit={{ opacity: 0, height: 0 }}
               transition={{ duration: 0.3 }}
-              className="mt-3 w-full rounded-2xl p-6 relative overflow-hidden"
-              style={{ backgroundColor: '#1a1f26' }}
+              className={`mt-3 w-full rounded-2xl p-6 relative overflow-hidden ${isDarkMode ? 'bg-gradient-to-br from-zinc-900 to-zinc-900/50' : 'bg-white border border-sky-100 shadow-lg'}`}
             >
               <div className="flex items-center gap-2 mb-4">
-                <Calendar className="w-5 h-5 text-sky-400" />
+                <Calendar className={`w-5 h-5 ${isDarkMode ? 'text-sky-400' : 'text-sky-600'}`} />
                 <div>
-                  <h3 className="text-lg font-bold text-white">최근 거래 내역</h3>
-                  <p className="text-xs text-slate-400 mt-0.5">
+                  <h3 className={`text-lg font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>최근 거래 내역</h3>
+                  <p className={`text-xs mt-0.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                     최근 {Math.min(transactionsData.recent_transactions.length, 5)}건
                   </p>
                 </div>
@@ -867,12 +989,12 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
                 {transactionsData.recent_transactions.slice(0, 5).map((transaction, index) => (
                   <div
                     key={transaction.trans_id || index}
-                    className="p-4 rounded-xl border bg-slate-800/50 border-slate-700 hover:bg-slate-800 transition-all"
+                    className={`p-4 rounded-xl border transition-all ${isDarkMode ? 'bg-slate-800/50 border-slate-700 hover:bg-slate-800' : 'bg-sky-50 border-sky-100 hover:bg-sky-100'}`}
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-2">
-                          <span className="text-xs font-semibold px-2 py-1 rounded bg-slate-700 text-slate-300">
+                          <span className={`text-xs font-semibold px-2 py-1 rounded ${isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-sky-100 text-sky-700'}`}>
                             {transaction.date ? new Date(transaction.date).toLocaleDateString('ko-KR', { 
                               year: 'numeric', 
                               month: 'short', 
@@ -880,28 +1002,28 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
                             }) : '날짜 미상'}
                           </span>
                           {transaction.floor && (
-                            <span className="text-xs text-slate-400">
+                            <span className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                               {transaction.floor}층
                             </span>
                           )}
                           {transaction.area && (
-                            <span className="text-xs text-slate-400">
+                            <span className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                               {transaction.area.toFixed(2)}㎡ ({Math.round(transaction.area * 0.3025 * 10) / 10}평)
                             </span>
                           )}
                         </div>
                         <div className="flex items-baseline gap-2">
-                          <span className="text-lg font-bold text-white">
+                          <span className={`text-lg font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
                             {transaction.price ? `${(transaction.price / 10000).toLocaleString()}억` : '가격 정보 없음'}
                           </span>
                           {transaction.price_per_pyeong && (
-                            <span className="text-sm text-slate-400">
+                            <span className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                               ({transaction.price_per_pyeong.toLocaleString()}만원/평)
                             </span>
                           )}
                         </div>
                         {transaction.trans_type && (
-                          <div className="text-xs mt-1 text-slate-400">
+                          <div className={`text-xs mt-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                             거래 유형: {transaction.trans_type === '중도금지급' ? '중도금지급' : transaction.trans_type}
                           </div>
                         )}
@@ -924,25 +1046,24 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
               exit={{ opacity: 0, height: 0 }}
-              className="mt-3 w-full rounded-2xl p-6 relative overflow-hidden"
-              style={{ backgroundColor: '#1a1f26' }}
+              className={`mt-3 w-full rounded-2xl p-6 relative overflow-hidden ${isDarkMode ? 'bg-gradient-to-br from-zinc-900 to-zinc-900/50' : 'bg-white border border-sky-100 shadow-lg'}`}
             >
-              <p className="text-sm text-slate-400 mb-4">면적별 평균 가격</p>
+              <p className={`text-sm mb-4 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>면적별 평균 가격</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {selectedPropertyDetail.all_area_groups.map((group, index) => (
                   <div
                     key={index}
-                    className="rounded-xl p-4 bg-slate-800/50 border border-slate-700/50"
+                    className={`rounded-xl p-4 border ${isDarkMode ? 'bg-slate-800/50 border-slate-700/50' : 'bg-sky-50 border-sky-100'}`}
                   >
                     <div className="flex items-center justify-between mb-2">
-                      <p className="text-sm text-slate-300">
+                      <p className={`text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
                         {Math.round(group.pyeong)}평 ({Math.round(group.exclusive_area_m2)}m²)
                       </p>
-                      <p className="text-xs text-slate-500">
+                      <p className={`text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
                         {group.transaction_count}건
                       </p>
                     </div>
-                    <p className="text-2xl font-bold text-sky-400">
+                    <p className={`text-2xl font-bold ${isDarkMode ? 'text-sky-400' : 'text-sky-600'}`}>
                       {formatMarketPrice(group.avg_price)}
                     </p>
                   </div>
@@ -957,20 +1078,20 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
-              className={`mt-5 w-full rounded-2xl p-6 bg-gradient-to-br from-slate-800 to-slate-900 shadow-xl ${isDarkMode ? '' : 'border border-slate-700'}`}
+              className={`mt-5 w-full rounded-2xl p-6 shadow-xl ${isDarkMode ? 'bg-gradient-to-br from-zinc-900 to-zinc-900/50' : 'bg-white border border-sky-100'}`}
             >
               <div className="flex items-center gap-4 mb-4">
-                <div className="p-3 rounded-xl bg-slate-700/50 flex-shrink-0">
-                  <Sparkles className="w-6 h-6 text-sky-400" />
+                <div className={`p-3 rounded-xl flex-shrink-0 ${isDarkMode ? 'bg-slate-700/50' : 'bg-sky-100'}`}>
+                  <Sparkles className={`w-6 h-6 ${isDarkMode ? 'text-sky-400' : 'text-sky-600'}`} />
                 </div>
                 
-                <h3 className="text-xl font-bold text-white">AI 칭찬글</h3>
+                <h3 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>AI 칭찬글</h3>
               </div>
 
               {isLoadingCompliment ? (
-                <div className="text-slate-400 text-sm">AI 칭찬글을 생성하는 중...</div>
+                <div className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>AI 칭찬글을 생성하는 중...</div>
               ) : propertyCompliment ? (
-                <div className="text-white text-sm leading-relaxed whitespace-pre-line">
+                <div className={`text-sm leading-relaxed whitespace-pre-line ${isDarkMode ? 'text-white' : 'text-slate-700'}`}>
                   {propertyCompliment.split('\n\n').map((paragraph, index) => (
                     <p key={index} className="mb-3 last:mb-0">
                       {paragraph.split(/(교통|접근성|편의성|가격|투자|지역|인프라|GTX|지하철역|공원|학교|상권|환경|안전|주거|생활)/).map((part, i) => {
@@ -981,7 +1102,7 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
                         const shouldHighlight = highlightKeywords.some(keyword => part.includes(keyword));
                         
                         return shouldHighlight ? (
-                          <span key={i} className="text-sky-400 font-medium">{part}</span>
+                          <span key={i} className={`font-medium ${isDarkMode ? 'text-sky-400' : 'text-sky-600'}`}>{part}</span>
                         ) : (
                           <span key={i}>{part}</span>
                         );
@@ -990,9 +1111,9 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
                   ))}
                 </div>
               ) : (
-                <div className="text-slate-400 text-sm">
+                <div className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                   <p>AI 칭찬글을 불러올 수 없습니다.</p>
-                  <p className="text-xs mt-2 text-slate-500">
+                  <p className={`text-xs mt-2 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
                     AI 서비스가 일시적으로 사용 불가능할 수 있습니다.
                   </p>
                 </div>
@@ -1007,17 +1128,17 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.4 }}
-              className={`mt-5 w-full rounded-2xl p-6 bg-gradient-to-br from-slate-800 to-slate-900 shadow-xl ${isDarkMode ? '' : 'border border-slate-700'}`}
+              className={`mt-5 w-full rounded-2xl p-6 shadow-xl ${isDarkMode ? 'bg-gradient-to-br from-zinc-900 to-zinc-900/50' : 'bg-white border border-sky-100'}`}
             >
               <div className="flex items-center gap-3 mb-6">
-                <div className="p-2 rounded-xl bg-slate-700/50 flex-shrink-0">
-                  <Newspaper className="w-5 h-5 text-sky-400" />
+                <div className={`p-2 rounded-xl flex-shrink-0 ${isDarkMode ? 'bg-slate-700/50' : 'bg-sky-100'}`}>
+                  <Newspaper className={`w-5 h-5 ${isDarkMode ? 'text-sky-400' : 'text-sky-600'}`} />
                 </div>
-                <h3 className="text-xl font-bold text-white">관련 뉴스</h3>
+                <h3 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>관련 뉴스</h3>
               </div>
 
               {isLoadingNews ? (
-                <div className="h-[200px] flex items-center justify-center text-slate-400 text-sm">
+                <div className={`h-[200px] flex items-center justify-center text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                   뉴스를 불러오는 중...
                 </div>
               ) : newsData.length > 0 ? (
@@ -1028,39 +1149,40 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
                       href={news.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="block p-4 rounded-xl border bg-slate-800/50 border-slate-700 hover:bg-slate-800 transition-all group"
+                      className={`block p-4 rounded-xl border transition-all group ${isDarkMode ? 'bg-slate-800/50 border-slate-700 hover:bg-slate-800' : 'bg-sky-50 border-sky-100 hover:bg-sky-100'}`}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-2">
-                            <span className="text-xs px-2 py-1 rounded bg-slate-700 text-slate-300">
+                            <span className={`text-xs px-2 py-1 rounded ${isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-sky-100 text-sky-700'}`}>
                               {news.source}
                             </span>
-                            <span className="text-xs text-slate-400">
+                            <span className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                               {formatTimeAgo(news.published_at)}
                             </span>
                           </div>
-                          <h4 className="text-sm font-semibold text-white mb-1 line-clamp-2 group-hover:text-sky-400 transition-colors">
+                          <h4 className={`text-sm font-semibold mb-1 line-clamp-2 transition-colors ${isDarkMode ? 'text-white group-hover:text-sky-400' : 'text-slate-800 group-hover:text-sky-600'}`}>
                             {news.title}
                           </h4>
                           {news.content && (
-                            <p className="text-xs text-slate-400 line-clamp-2">
+                            <p className={`text-xs line-clamp-2 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                               {news.content.replace(/\s+/g, ' ').trim()}
                             </p>
                           )}
                         </div>
-                        <ExternalLink className="w-4 h-4 text-slate-400 flex-shrink-0 mt-1 group-hover:text-sky-400 transition-colors" />
+                        <ExternalLink className={`w-4 h-4 flex-shrink-0 mt-1 transition-colors ${isDarkMode ? 'text-slate-400 group-hover:text-sky-400' : 'text-slate-400 group-hover:text-sky-600'}`} />
                       </div>
                     </a>
                   ))}
                 </div>
               ) : (
-                <div className="h-[200px] flex items-center justify-center text-slate-400 text-sm">
+                <div className={`h-[200px] flex items-center justify-center text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                   관련 뉴스가 없습니다.
                 </div>
               )}
             </motion.div>
           )}
+
         </>
       )}
 

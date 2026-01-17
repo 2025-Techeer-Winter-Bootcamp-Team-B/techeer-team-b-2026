@@ -161,6 +161,59 @@ export const deleteMyProperty = async (
 };
 
 /**
+ * 내 집 정보를 수정합니다
+ * @param propertyId 수정할 내 집 ID
+ * @param updateData 수정할 정보
+ * @param token 인증 토큰
+ */
+export const updateMyProperty = async (
+  propertyId: number,
+  updateData: { memo?: string; nickname?: string; exclusive_area?: number; current_market_price?: number },
+  token: string
+): Promise<MyProperty> => {
+  try {
+    const response = await apiClient.patch<{ success: boolean; data: MyProperty }>(
+      `/my-properties/${propertyId}`,
+      updateData,
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      }
+    );
+    
+    if (response.data && response.data.success) {
+      // 캐시 무효화
+      deleteFromCache('/my-properties');
+      return response.data.data;
+    }
+    
+    throw new Error('내 집 정보 수정에 실패했습니다.');
+  } catch (error: any) {
+    console.error('Failed to update my property:', error);
+    if (error.response) {
+      const errorData = error.response.data;
+      let message = '내 집 정보 수정에 실패했습니다.';
+      
+      if (errorData?.detail) {
+        if (typeof errorData.detail === 'string') {
+          message = errorData.detail;
+        } else if (errorData.detail?.message) {
+          message = errorData.detail.message;
+        } else if (errorData.detail?.code) {
+          message = `${errorData.detail.code}: ${errorData.detail.message || '알 수 없는 오류'}`;
+        }
+      } else if (errorData?.error) {
+        message = errorData.error;
+      }
+      
+      throw new Error(message);
+    }
+    throw error;
+  }
+};
+
+/**
  * 내 집 상세 정보를 조회합니다
  * @param propertyId 내 집 ID
  * @param token 인증 토큰
