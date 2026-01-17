@@ -108,7 +108,12 @@ export default function App() {
   const handleApartmentSelect = React.useCallback((apartment: any) => {
     setSelectedApartment(apartment);
     setShowApartmentDetail(true);
-  }, []);
+    // RegionDetail이 열려있으면 닫기
+    if (showRegionDetail) {
+      setShowRegionDetail(false);
+      setSelectedRegion(null);
+    }
+  }, [showRegionDetail]);
 
   const handleBackFromDetail = React.useCallback(() => {
     const willShowMap = currentView === 'map';
@@ -149,6 +154,11 @@ export default function App() {
       setSelectedApartment(null);
     }
     
+    if (showRegionDetail) {
+      setShowRegionDetail(false);
+      setSelectedRegion(null);
+    }
+    
     const isMapTransition = view === 'map' || currentView === 'map';
     
     if (isMapTransition) {
@@ -168,7 +178,7 @@ export default function App() {
       setCurrentView(view);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
-  }, [currentView, showApartmentDetail]);
+  }, [currentView, showApartmentDetail, showRegionDetail]);
 
   const handleToggleDarkMode = useCallback(async () => {
     const newDarkMode = !isDarkMode;
@@ -195,7 +205,7 @@ export default function App() {
   // 맵 뷰: 전체 화면 (스크롤 없음, 고정)
   // 일반 뷰: 스크롤 가능
   // 상세 페이지가 열려있으면 맵 뷰가 아니어도 일반 레이아웃 사용
-  const isMapView = currentView === 'map' && !showApartmentDetail;
+  const isMapView = currentView === 'map' && !showApartmentDetail && !showRegionDetail;
 
   return (
     <div className={isDarkMode ? 'dark' : ''}>
