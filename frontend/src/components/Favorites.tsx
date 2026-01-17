@@ -984,7 +984,7 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
                             {/* 평균 집값 */}
                             <div className="flex items-center justify-between">
                               <span className={`text-sm ${textSecondary}`}>평균 집값</span>
-                              <span className={`font-bold text-lg ${textPrimary}`}>
+                              <span className={`font-semibold text-base ${textPrimary}`}>
                                 {stats.avg_price_per_pyeong > 0 
                                   ? `${Math.round(stats.avg_price_per_pyeong).toLocaleString()}만원/평`
                                   : '데이터 없음'}
@@ -998,15 +998,15 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
                                 {stats.change_rate > 0 ? (
                                   <>
                                     <TrendingUp className="w-4 h-4 text-red-500" />
-                                    <span className="font-bold text-red-500">+{stats.change_rate.toFixed(1)}%</span>
+                                    <span className="font-semibold text-sm text-red-500">+{stats.change_rate.toFixed(1)}%</span>
                                   </>
                                 ) : stats.change_rate < 0 ? (
                                   <>
                                     <TrendingDown className="w-4 h-4 text-blue-500" />
-                                    <span className="font-bold text-blue-500">{stats.change_rate.toFixed(1)}%</span>
+                                    <span className="font-semibold text-sm text-blue-500">{stats.change_rate.toFixed(1)}%</span>
                                   </>
                                 ) : (
-                                  <span className={`font-bold ${textSecondary}`}>변동 없음</span>
+                                  <span className={`font-medium text-sm ${textSecondary}`}>변동 없음</span>
                                 )}
                               </div>
                             </div>
@@ -1014,7 +1014,7 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
                             {/* 거래량 */}
                             <div className="flex items-center justify-between">
                               <span className={`text-sm ${textSecondary}`}>최근 거래량</span>
-                              <span className={`font-semibold ${textPrimary}`}>
+                              <span className={`font-medium text-sm ${textPrimary}`}>
                                 {stats.transaction_count}건
                               </span>
                             </div>
@@ -1022,7 +1022,7 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
                             {/* 아파트 수 */}
                             <div className="flex items-center justify-between">
                               <span className={`text-sm ${textSecondary}`}>아파트 수</span>
-                              <span className={`font-semibold ${textPrimary}`}>
+                              <span className={`font-medium text-sm ${textPrimary}`}>
                                 {stats.apartment_count}개
                               </span>
                             </div>
