@@ -44,6 +44,81 @@ class NewsCrawler:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
     
+    def _extract_text_with_paragraph_breaks(self, element) -> str:
+        """
+        요소에서 텍스트를 추출하되, 문단 태그 사이에 명시적인 줄바꿈을 추가합니다.
+        
+        Args:
+            element: BeautifulSoup 요소
+            
+        Returns:
+            문단 태그 사이에 줄바꿈이 추가된 텍스트
+        """
+        if not element:
+            return ""
+        
+        # 문단 태그 목록 (블록 레벨 요소)
+        paragraph_tags = ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'blockquote', 'pre']
+        # 컨테이너 태그 (내부에 문단이 있을 수 있음)
+        container_tags = ['div', 'section', 'article', 'main', 'aside']
+        
+        paragraphs = []
+        
+        # 직접 자식 요소들을 순회하면서 문단 태그 찾기
+        for child in element.children:
+            if hasattr(child, 'name') and child.name:
+                # 문단 태그인 경우 (p, h1-h6 등) - 직접 텍스트 추출
+                if child.name in paragraph_tags:
+                    text = child.get_text(separator=" ", strip=True)
+                    if text:
+                        paragraphs.append(text)
+                # br 태그인 경우 명시적인 줄바꿈 추가
+                elif child.name == 'br':
+                    paragraphs.append("")
+                # div 등 컨테이너 요소인 경우 재귀적으로 처리
+                elif child.name in container_tags:
+                    nested_text = self._extract_text_with_paragraph_breaks(child)
+                    if nested_text:
+                        paragraphs.append(nested_text)
+                # 기타 태그는 무시 (script, style 등은 이미 decompose됨)
+            elif isinstance(child, str):
+                # 텍스트 노드인 경우
+                text = child.strip()
+                if text:
+                    # 마지막 문단이 있으면 공백으로 연결, 없으면 새 문단 생성
+                    if paragraphs:
+                        paragraphs[-1] += " " + text
+                    else:
+                        paragraphs.append(text)
+        
+        # 문단들을 두 개의 줄바꿈으로 연결 (명시적인 문단 구분)
+        result = "\n\n".join(paragraphs)
+        
+        # 연속된 빈 줄 정리 (3개 이상 -> 2개로)
+        result = re.sub(r'\n{3,}', '\n\n', result)
+        
+        # 앞뒤 공백 제거
+        result = result.strip()
+        
+        # 결과가 비어있거나 너무 짧으면 fallback으로 기존 방식 사용
+        if not result or len(result) < 10:
+            fallback_text = element.get_text(separator="\n", strip=True)
+            if fallback_text and len(fallback_text) > len(result):
+                # fallback 텍스트를 문단 단위로 정리
+                fallback_text = re.sub(r'\n{3,}', '\n\n', fallback_text)
+                logger.debug(f"[_extract_text_with_paragraph_breaks] Fallback 사용: 원본 길이={len(result)}, fallback 길이={len(fallback_text)}")
+                return fallback_text.strip()
+        
+        # 결과가 여전히 비어있으면 경고 로그
+        if not result:
+            logger.warning(f"[_extract_text_with_paragraph_breaks] 빈 결과 반환: element={element.name if hasattr(element, 'name') else 'unknown'}")
+            # 최후의 수단: 전체 텍스트 추출
+            final_fallback = element.get_text(separator="\n", strip=True)
+            if final_fallback:
+                return re.sub(r'\n{3,}', '\n\n', final_fallback).strip()
+        
+        return result
+    
     async def crawl_mbnmoney_realestate_rss(self, limit: int = 50) -> List[Dict]:
         """
         매일경제 부동산 RSS 피드에서 뉴스 수집
@@ -558,8 +633,7 @@ class NewsCrawler:
                     if content_elem:
                         for elem in content_elem.find_all(["script", "style", "iframe", "aside", "nav", "div.comment-wrap", "div.list_type_01b", "div.list_type_05a"]):
                             elem.decompose()
-                        content = content_elem.get_text(separator="\n", strip=True)
-                        content = re.sub(r'\n{3,}', '\n\n', content)
+                        content = self._extract_text_with_paragraph_breaks(content_elem)
                 
                 if (not content or len(content) < 50) and is_chosun:
                     content_selectors_chosun = [
@@ -574,7 +648,7 @@ class NewsCrawler:
                         if content_elem:
                             for elem in content_elem.find_all(["script", "style", "iframe", "aside", "nav", "div.ad", "div.related"]):
                                 elem.decompose()
-                            content = content_elem.get_text(separator="\n", strip=True)
+                            content = self._extract_text_with_paragraph_breaks(content_elem)
                             if content and len(content) > 50:
                                 break
                 
@@ -591,7 +665,7 @@ class NewsCrawler:
                         if content_elem:
                             for elem in content_elem.find_all(["script", "style", "iframe", "aside", "nav", "div.ad"]):
                                 elem.decompose()
-                            content = content_elem.get_text(separator="\n", strip=True)
+                            content = self._extract_text_with_paragraph_breaks(content_elem)
                             if content and len(content) > 50:
                                 break
                 
@@ -608,7 +682,7 @@ class NewsCrawler:
                         if content_elem:
                             for elem in content_elem.find_all(["script", "style", "iframe", "aside", "nav", "div.ad"]):
                                 elem.decompose()
-                            content = content_elem.get_text(separator="\n", strip=True)
+                            content = self._extract_text_with_paragraph_breaks(content_elem)
                             if content and len(content) > 50:
                                 break
                 
@@ -629,7 +703,7 @@ class NewsCrawler:
                         if content_elem:
                             for elem in content_elem.find_all(["script", "style", "iframe", "aside", "nav"]):
                                 elem.decompose()
-                            content = content_elem.get_text(separator="\n", strip=True)
+                            content = self._extract_text_with_paragraph_breaks(content_elem)
                             if content and len(content) > 50:
                                 break
                 
@@ -638,7 +712,35 @@ class NewsCrawler:
                     if article:
                         for elem in article.find_all(["script", "style", "iframe"]):
                             elem.decompose()
-                        content = article.get_text(separator="\n", strip=True)
+                        content = self._extract_text_with_paragraph_breaks(article)
+                
+                # content가 여전히 없거나 너무 짧으면 최후의 수단으로 전체 본문 추출
+                if not content or len(content) < 50:
+                    logger.warning(f"[crawl_news_detail] 본문 추출 실패, 최후의 수단 사용: url={url}")
+                    # 모든 p 태그 찾기
+                    all_paragraphs = soup.find_all('p')
+                    if all_paragraphs:
+                        paragraph_texts = []
+                        for p in all_paragraphs:
+                            text = p.get_text(strip=True)
+                            if text and len(text) > 10:  # 너무 짧은 문단 제외
+                                paragraph_texts.append(text)
+                        if paragraph_texts:
+                            content = "\n\n".join(paragraph_texts)
+                            logger.info(f"[crawl_news_detail] p 태그로 본문 추출 성공: {len(content)}자")
+                    
+                    # 여전히 없으면 전체 텍스트 추출
+                    if not content or len(content) < 50:
+                        full_text = soup.get_text(separator="\n", strip=True)
+                        if full_text and len(full_text) > 50:
+                            # 연속된 줄바꿈 정리
+                            content = re.sub(r'\n{3,}', '\n\n', full_text)
+                            logger.warning(f"[crawl_news_detail] 전체 텍스트로 본문 추출: {len(content)}자")
+                
+                # 최종 검증: content가 없으면 빈 문자열로 설정
+                if not content:
+                    content = ""
+                    logger.error(f"[crawl_news_detail] 본문 추출 완전 실패: url={url}")
                 
                 # 썸네일 추출
                 thumbnail_url = None

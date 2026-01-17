@@ -71,7 +71,6 @@ export function ToastContainer({ toasts, onClose, isDarkMode = false }: ToastCon
                     : 'hover:bg-zinc-100 text-zinc-500 hover:text-zinc-700'
                 }`}
               >
-                <X className="w-4 h-4" />
               </button>
             </div>
           </motion.div>

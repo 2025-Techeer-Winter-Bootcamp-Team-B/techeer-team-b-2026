@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Star, MapPin, Plus, X, Search, Building2, TrendingUp, TrendingDown, Home, BarChart3 } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Star, MapPin, Plus, X, Search, Building2, TrendingUp, TrendingDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../lib/clerk';
 import { 
@@ -14,12 +14,13 @@ import {
   getRegionStats,
   RegionStats
 } from '../lib/favoritesApi';
-import { searchLocations, LocationSearchResult } from '../lib/searchApi';
+import { searchLocations, LocationSearchResult, getApartmentsByRegion } from '../lib/searchApi';
 import { searchApartments, ApartmentSearchResult } from '../lib/searchApi';
 import { getApartmentTransactions } from '../lib/apartmentApi';
+import { getNewsList, getNewsDetail, NewsResponse, formatTimeAgo } from '../lib/newsApi';
 import { useToast } from '../hooks/useToast';
 import { ToastContainer } from './ui/Toast';
-import { useDynamicIslandToast } from './ui/DynamicIslandToast';
+import { ChevronRight, ArrowLeft } from 'lucide-react';
 
 interface FavoritesProps {
   onApartmentClick?: (apartment: any) => void;
@@ -30,7 +31,6 @@ interface FavoritesProps {
 export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = false }: FavoritesProps) {
   const { isSignedIn, getToken } = useAuth();
   const toast = useToast();
-  const { showToast: showDynamicToast, ToastComponent } = useDynamicIslandToast(isDarkMode, 3000);
   const [activeTab, setActiveTab] = useState<'regions' | 'apartments'>('regions');
   
   // 즐겨찾기 데이터
@@ -49,6 +49,30 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
   // 아파트 최근 시세 데이터
   const [apartmentPricesMap, setApartmentPricesMap] = useState<Record<number, number | null>>({});
   
+  // 즐겨찾기 해제 중인 항목들 (애니메이션용)
+  const [unfavoritingLocations, setUnfavoritingLocations] = useState<Set<number>>(new Set());
+  const [unfavoritingApartments, setUnfavoritingApartments] = useState<Set<number>>(new Set());
+  
+  // 지역 목록 스크롤 컨테이너 ref
+  const locationsScrollRef = useRef<HTMLDivElement>(null);
+  
+  // 뉴스 데이터
+  const [regionNewsMap, setRegionNewsMap] = useState<Record<number, NewsResponse[]>>({});
+  const [loadingRegionNews, setLoadingRegionNews] = useState<Record<number, boolean>>({});
+  const [regionNewsPageMap, setRegionNewsPageMap] = useState<Record<number, number>>({});
+  
+  // 뉴스 상세 정보
+  const [selectedNews, setSelectedNews] = useState<NewsResponse | null>(null);
+  const [loadingNewsDetail, setLoadingNewsDetail] = useState(false);
+
+  // 지역별 아파트 리스트
+  const [regionApartmentsMap, setRegionApartmentsMap] = useState<Record<number, ApartmentSearchResult[]>>({});
+  const [loadingRegionApartments, setLoadingRegionApartments] = useState<Record<number, boolean>>({});
+  
+  // 아파트 가격 변화율 데이터 (아파트 ID -> 변화율)
+  const [apartmentChangeRates, setApartmentChangeRates] = useState<Record<number, number | null>>({});
+  const [loadingApartmentChanges, setLoadingApartmentChanges] = useState<Record<number, boolean>>({});
+  
   // 검색 모드
   const [isSearchingLocation, setIsSearchingLocation] = useState(false);
   const [isSearchingApartment, setIsSearchingApartment] = useState(false);
@@ -61,14 +85,14 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
 
   // 즐겨찾기 데이터 로드
   useEffect(() => {
-    if (isSignedIn && getToken) {
+    if (isSignedIn) {
       loadFavoriteLocations();
       loadFavoriteApartments();
     } else {
       setFavoriteLocations([]);
       setFavoriteApartments([]);
     }
-  }, [isSignedIn, getToken, activeTab]);
+  }, [isSignedIn, activeTab]);
 
   // 첫 번째 즐겨찾는 지역을 기본 선택
   useEffect(() => {
@@ -84,6 +108,22 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
     if (activeTab === 'regions' && selectedRegionId) {
       if (!regionStatsMap[selectedRegionId] && !loadingRegionStats[selectedRegionId]) {
         loadRegionStats(selectedRegionId);
+      }
+      // 지역이 선택될 때마다 뉴스를 다시 검색 (항상 새로 로드)
+      if (!loadingRegionNews[selectedRegionId]) {
+        // 기존 뉴스 데이터를 초기화하고 새로 로드
+        setRegionNewsMap(prev => {
+          const newMap = { ...prev };
+          delete newMap[selectedRegionId];
+          return newMap;
+        });
+        loadRegionNews(selectedRegionId);
+        // 지역 변경 시 페이지 인덱스 초기화
+        setRegionNewsPageMap(prev => ({ ...prev, [selectedRegionId]: 0 }));
+      }
+      // 지역별 아파트 리스트 로드
+      if (!regionApartmentsMap[selectedRegionId] && !loadingRegionApartments[selectedRegionId]) {
+        loadRegionApartments(selectedRegionId);
       }
     }
   }, [activeTab, selectedRegionId]);
@@ -119,11 +159,194 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
     }
   };
 
+  // 지역 이름에서 접미사 제거 함수
+  const removeRegionSuffix = (name: string): string => {
+    if (!name) return '';
+    
+    // 특수 케이스: 도 이름을 줄임말로 변환
+    if (name === '경상북도') return '경북';
+    if (name === '경상남도') return '경남';
+    if (name === '충청북도') return '충북';
+    if (name === '충청남도') return '충남';
+    if (name === '전라북도') return '전북';
+    if (name === '전라남도') return '전남';
+    
+    // 일반적인 접미사 제거: 특별시, 광역시, 시, 도, 구, 군 등
+    return name
+      .replace(/특별시$/, '')
+      .replace(/광역시$/, '')
+      .replace(/북도$/, '')
+      .replace(/남도$/, '')
+      .replace(/시$/, '')
+      .replace(/도$/, '')
+      .replace(/구$/, '')
+      .replace(/군$/, '')
+      .trim();
+  };
+
+  const loadRegionNews = async (regionId: number) => {
+    const selectedFav = favoriteLocations.find(f => f.region_id === regionId);
+    if (!selectedFav) return;
+
+    setLoadingRegionNews(prev => ({ ...prev, [regionId]: true }));
+    try {
+      const token = await getToken();
+      const regionName = selectedFav.region_name || selectedFav.location?.region_name || '';
+      const cityName = selectedFav.city_name || selectedFav.location?.city_name || '';
+      
+      // 시/군/구 정보를 포함한 뉴스 검색
+      // 접미사 제거: "서울특별시" → "서울", "경주시" → "경주", "경상북도" → "경북"
+      const cleanedCityName = cityName ? removeRegionSuffix(cityName) : null;
+      const cleanedRegionName = regionName ? removeRegionSuffix(regionName) : null;
+      
+      // 도, 시, 군, 구 정보를 키워드 배열로 전달
+      const keywords: string[] = [];
+      if (cleanedCityName) {
+        keywords.push(cleanedCityName);
+      }
+      if (cleanedRegionName && cleanedRegionName !== cleanedCityName) {
+        keywords.push(cleanedRegionName);
+      }
+      
+      console.log(`[loadRegionNews] 지역 ID: ${regionId}, 지역명: ${regionName}, 시명: ${cityName}`);
+      console.log(`[loadRegionNews] 정제된 지역: ${cleanedRegionName}, 정제된 시: ${cleanedCityName}`);
+      console.log(`[loadRegionNews] 전달할 keywords 배열:`, keywords);
+      
+      // 먼저 지역별 뉴스를 가져옵니다
+      const newsResponse = await getNewsList(9, token, keywords.length > 0 ? keywords : undefined);
+      console.log(`[loadRegionNews] 뉴스 응답:`, newsResponse);
+      
+      let regionNews: NewsResponse[] = [];
+      if (newsResponse && newsResponse.success && newsResponse.data) {
+        // 지역별 뉴스 내부 중복 제거 (URL 기준)
+        const seenUrls = new Set<string>();
+        regionNews = newsResponse.data.filter(news => {
+          if (seenUrls.has(news.url)) {
+            return false;
+          }
+          seenUrls.add(news.url);
+          return true;
+        });
+      }
+      
+      // 지역별 뉴스가 3개 미만이면 일반 부동산 뉴스를 추가로 가져옵니다
+      if (regionNews.length < 3) {
+        try {
+          const generalNewsResponse = await getNewsList(9, token, undefined);
+          if (generalNewsResponse && generalNewsResponse.success && generalNewsResponse.data) {
+            // 일반 뉴스 내부 중복 제거 (URL 기준)
+            const generalSeenUrls = new Set<string>();
+            const uniqueGeneralNews = generalNewsResponse.data.filter(news => {
+              if (generalSeenUrls.has(news.url)) {
+                return false;
+              }
+              generalSeenUrls.add(news.url);
+              return true;
+            });
+            
+            // 지역별 뉴스와 중복 제거 (URL 기준)
+            const existingUrls = new Set(regionNews.map(n => n.url));
+            const additionalNews = uniqueGeneralNews.filter(n => !existingUrls.has(n.url));
+            
+            // 최소 3개가 되도록 추가
+            const neededCount = 3 - regionNews.length;
+            regionNews = [...regionNews, ...additionalNews.slice(0, neededCount)];
+          }
+        } catch (error) {
+          console.error(`Failed to load general news for ${regionId}:`, error);
+          // 일반 뉴스 로드 실패해도 지역별 뉴스는 표시
+        }
+      }
+      
+      // 최종 중복 제거 (혹시 모를 중복 방지)
+      const finalSeenUrls = new Set<string>();
+      const finalNews = regionNews.filter(news => {
+        if (finalSeenUrls.has(news.url)) {
+          return false;
+        }
+        finalSeenUrls.add(news.url);
+        return true;
+      });
+      
+      setRegionNewsMap(prev => ({ ...prev, [regionId]: finalNews }));
+    } catch (error) {
+      console.error(`Failed to load region news for ${regionId}:`, error);
+      setRegionNewsMap(prev => ({ ...prev, [regionId]: [] }));
+    } finally {
+      setLoadingRegionNews(prev => ({ ...prev, [regionId]: false }));
+    }
+  };
+
+  const loadNewsDetail = async (newsUrl: string) => {
+    setLoadingNewsDetail(true);
+    try {
+      const token = await getToken();
+      const response = await getNewsDetail(newsUrl, token || undefined);
+      if (response && response.success && response.data) {
+        setSelectedNews(response.data);
+      } else {
+        toast.error('뉴스 상세 정보를 불러올 수 없습니다.');
+      }
+    } catch (error) {
+      console.error('Failed to load news detail:', error);
+      toast.error('뉴스 상세 정보를 불러오는 중 오류가 발생했습니다.');
+    } finally {
+      setLoadingNewsDetail(false);
+    }
+  };
+
+  const loadRegionApartments = async (regionId: number) => {
+    setLoadingRegionApartments(prev => ({ ...prev, [regionId]: true }));
+    try {
+      const apartments = await getApartmentsByRegion(regionId, 5, 0); // 상위 5개만
+      setRegionApartmentsMap(prev => ({ ...prev, [regionId]: apartments }));
+      
+      // 각 아파트의 가격 변화율 로드
+      apartments.forEach((apartment) => {
+        loadApartmentChangeRate(apartment.apt_id);
+      });
+    } catch (error) {
+      console.error(`Failed to load region apartments for ${regionId}:`, error);
+      setRegionApartmentsMap(prev => ({ ...prev, [regionId]: [] }));
+    } finally {
+      setLoadingRegionApartments(prev => ({ ...prev, [regionId]: false }));
+    }
+  };
+
+  const loadApartmentChangeRate = async (aptId: number) => {
+    // 이미 로드된 데이터가 있으면 스킵
+    if (apartmentChangeRates[aptId] !== undefined) {
+      return;
+    }
+    
+    setLoadingApartmentChanges(prev => ({ ...prev, [aptId]: true }));
+    try {
+      const transactions = await getApartmentTransactions(aptId, 'sale', 10, 6); // 최근 6개월 데이터
+      
+      if (transactions?.change_summary) {
+        const changeRate = transactions.change_summary.change_rate;
+        setApartmentChangeRates(prev => ({ ...prev, [aptId]: changeRate }));
+      } else {
+        setApartmentChangeRates(prev => ({ ...prev, [aptId]: null }));
+      }
+    } catch (error) {
+      console.error(`Failed to load apartment change rate for ${aptId}:`, error);
+      setApartmentChangeRates(prev => ({ ...prev, [aptId]: null }));
+    } finally {
+      setLoadingApartmentChanges(prev => ({ ...prev, [aptId]: false }));
+    }
+  };
+
   const loadApartmentPrice = async (aptId: number) => {
+    // 이미 로드된 데이터가 있으면 스킵
+    if (apartmentPricesMap[aptId] !== undefined) {
+      return;
+    }
+    
     try {
       const transactions = await getApartmentTransactions(aptId, 'sale', 1, 1);
       if (transactions?.recent_transactions && transactions.recent_transactions.length > 0) {
-        const latestPrice = transactions.recent_transactions[0].trans_price || null;
+        const latestPrice = transactions.recent_transactions[0].price || null;
         setApartmentPricesMap(prev => ({ ...prev, [aptId]: latestPrice }));
       } else {
         setApartmentPricesMap(prev => ({ ...prev, [aptId]: null }));
@@ -141,7 +364,24 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
     try {
       const data = await getFavoriteLocations(getToken);
       if (data) {
-        setFavoriteLocations(data.favorites.filter(f => !f.is_deleted));
+        const loadedLocations = data.favorites.filter(f => !f.is_deleted);
+        setFavoriteLocations(loadedLocations);
+        // 로드된 항목에 없는 지역은 해제 중 상태에서 제거
+        const loadedRegionIds = new Set(loadedLocations.map(f => f.region_id));
+        setUnfavoritingLocations(prev => {
+          const newSet = new Set(prev);
+          loadedRegionIds.forEach(id => newSet.delete(id));
+          return newSet;
+        });
+        // 선택된 지역이 삭제되었거나 목록에 없으면 첫 번째 지역 선택
+        if (loadedLocations.length > 0) {
+          const currentSelectedExists = selectedRegionId && loadedRegionIds.has(selectedRegionId);
+          if (!currentSelectedExists) {
+            setSelectedRegionId(loadedLocations[0].region_id);
+          }
+        } else {
+          setSelectedRegionId(null);
+        }
       }
     } catch (error) {
       console.error('Failed to load favorite locations:', error);
@@ -157,7 +397,15 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
     try {
       const data = await getFavoriteApartments(getToken);
       if (data) {
-        setFavoriteApartments(data.favorites.filter(f => !f.is_deleted));
+        const loadedApartments = data.favorites.filter(f => !f.is_deleted);
+        setFavoriteApartments(loadedApartments);
+        // 로드된 항목에 없는 아파트는 해제 중 상태에서 제거
+        const loadedAptIds = new Set(loadedApartments.map(f => f.apt_id));
+        setUnfavoritingApartments(prev => {
+          const newSet = new Set(prev);
+          loadedAptIds.forEach(id => newSet.delete(id));
+          return newSet;
+        });
       }
     } catch (error) {
       console.error('Failed to load favorite apartments:', error);
@@ -223,13 +471,21 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
       return;
     }
 
+    const addedRegionId = region.region_id;
     try {
-      await addFavoriteLocation(getToken, region.region_id);
+      await addFavoriteLocation(getToken, addedRegionId);
       toast.success('즐겨찾는 지역에 추가되었습니다.');
-      showDynamicToast('즐겨찾는 지역에 추가되었습니다.');
       setIsSearchingLocation(false);
       setLocationSearchQuery('');
       await loadFavoriteLocations();
+      // 추가된 지역을 선택 상태로 설정 (파란색으로 표시)
+      setSelectedRegionId(addedRegionId);
+      // 스크롤을 오른쪽 끝으로 이동하여 추가된 지역이 보이도록 함
+      setTimeout(() => {
+        if (locationsScrollRef.current) {
+          locationsScrollRef.current.scrollLeft = locationsScrollRef.current.scrollWidth;
+        }
+      }, 100);
     } catch (error: any) {
       console.error('지역 추가 실패:', error);
       if (error.response?.status === 404) {
@@ -249,12 +505,22 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
   const handleDeleteLocation = async (regionId: number) => {
     if (!isSignedIn || !getToken) return;
 
+    // 즉시 회색으로 변경 (애니메이션)
+    setUnfavoritingLocations(prev => new Set(prev).add(regionId));
+
     try {
       await deleteFavoriteLocation(getToken, regionId);
       toast.success('즐겨찾는 지역에서 제거되었습니다.');
-      showDynamicToast('즐겨찾는 지역에서 제거되었습니다.');
+      // 애니메이션을 0.2초 더 보여주기 위해 지연
+      await new Promise(resolve => setTimeout(resolve, 200));
       await loadFavoriteLocations();
     } catch (error) {
+      // 실패 시 회색 상태 해제
+      setUnfavoritingLocations(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(regionId);
+        return newSet;
+      });
       toast.error('지역 제거에 실패했습니다.');
     }
   };
@@ -268,7 +534,6 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
     try {
       await addFavoriteApartment(getToken, apartment.apt_id);
       toast.success('즐겨찾는 매물에 추가되었습니다.');
-      showDynamicToast('즐겨찾는 매물에 추가되었습니다.');
       setIsSearchingApartment(false);
       setApartmentSearchQuery('');
       await loadFavoriteApartments();
@@ -286,12 +551,22 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
   const handleDeleteApartment = async (aptId: number) => {
     if (!isSignedIn || !getToken) return;
 
+    // 즉시 회색으로 변경 (애니메이션)
+    setUnfavoritingApartments(prev => new Set(prev).add(aptId));
+
     try {
       await deleteFavoriteApartment(getToken, aptId);
       toast.success('즐겨찾는 매물에서 제거되었습니다.');
-      showDynamicToast('즐겨찾는 매물에서 제거되었습니다.');
+      // 애니메이션을 0.2초 더 보여주기 위해 지연
+      await new Promise(resolve => setTimeout(resolve, 500));
       await loadFavoriteApartments();
     } catch (error) {
+      // 실패 시 회색 상태 해제
+      setUnfavoritingApartments(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(aptId);
+        return newSet;
+      });
       toast.error('아파트 제거에 실패했습니다.');
     }
   };
@@ -299,6 +574,118 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
   const textPrimary = isDarkMode ? 'text-white' : 'text-zinc-900';
   const textSecondary = isDarkMode ? 'text-zinc-400' : 'text-zinc-600';
   const textMuted = isDarkMode ? 'text-zinc-500' : 'text-zinc-500';
+
+  // 뉴스 상세 페이지 표시
+  if (selectedNews) {
+    return (
+      <div className={`w-full min-h-screen ${isDarkMode ? 'bg-zinc-950' : 'bg-white'}`}>
+        <div className="sticky top-0 z-10 bg-white dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800">
+          <div className="flex items-center gap-3 px-4 py-3">
+            <button
+              onClick={() => setSelectedNews(null)}
+              className={`p-2 rounded-xl transition-colors ${
+                isDarkMode
+                  ? 'bg-zinc-800/50 hover:bg-zinc-800'
+                  : 'bg-white hover:bg-sky-50 border border-sky-200'
+              }`}
+            >
+              <ArrowLeft className="w-5 h-5 text-sky-500" />
+            </button>
+            <h1 className={`text-lg font-bold ${textPrimary}`}>뉴스 상세</h1>
+          </div>
+        </div>
+        
+        <div className="px-4 py-6 max-w-3xl mx-auto">
+          {loadingNewsDetail ? (
+            <div className={`text-center py-12 ${textSecondary}`}>로딩 중...</div>
+          ) : (
+            <div className="space-y-6">
+              {/* 제목 */}
+              <h2 className={`text-2xl font-bold leading-tight ${textPrimary}`}>
+                {selectedNews.title}
+              </h2>
+              
+              {/* 메타 정보 */}
+              <div className="flex items-center gap-3 flex-wrap">
+                {selectedNews.category && (
+                  <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${
+                    isDarkMode 
+                      ? 'bg-zinc-800 text-zinc-400' 
+                      : 'bg-sky-50 text-sky-700'
+                  }`}>
+                    {selectedNews.category}
+                  </span>
+                )}
+                <span className={`text-sm ${textSecondary}`}>
+                  {selectedNews.source}
+                </span>
+                <span className={`text-sm ${textMuted}`}>·</span>
+                <span className={`text-sm ${textSecondary}`}>
+                  {formatTimeAgo(selectedNews.published_at)}
+                </span>
+              </div>
+              
+              {/* 이미지들 (중복 제거) */}
+              {(() => {
+                // 썸네일과 images 배열에서 중복 제거
+                const allImages: string[] = [];
+                if (selectedNews.thumbnail_url) {
+                  allImages.push(selectedNews.thumbnail_url);
+                }
+                if (selectedNews.images && selectedNews.images.length > 0) {
+                  // thumbnail_url과 중복되지 않는 이미지만 추가
+                  selectedNews.images.forEach(img => {
+                    if (img !== selectedNews.thumbnail_url && !allImages.includes(img)) {
+                      allImages.push(img);
+                    }
+                  });
+                }
+                
+                return allImages.length > 0 ? (
+                  <div className="space-y-4">
+                    {allImages.map((imageUrl, index) => (
+                      <div key={index} className="w-full rounded-2xl overflow-hidden">
+                        <img 
+                          src={imageUrl} 
+                          alt={index === 0 ? selectedNews.title : `${selectedNews.title} - 이미지 ${index}`}
+                          className="w-full h-auto object-cover"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ) : null;
+              })()}
+              
+              {/* 내용 */}
+              {selectedNews.content && (
+                <div 
+                  className={`text-base leading-relaxed ${textPrimary}`}
+                  style={{
+                    wordBreak: 'keep-all',
+                    lineHeight: '1.8'
+                  }}
+                  dangerouslySetInnerHTML={{ __html: selectedNews.content }}
+                />
+              )}
+              
+              {/* 원문 링크 */}
+              <div className="pt-4 border-t border-zinc-200 dark:border-zinc-800">
+                <a
+                  href={selectedNews.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`inline-flex items-center gap-2 text-sm font-medium text-sky-600 dark:text-sky-400 hover:underline`}
+                >
+                  원문 보기
+                  <ChevronRight className="w-4 h-4" />
+                </a>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   // 로그인하지 않은 경우
   if (!isSignedIn) {
@@ -315,8 +702,6 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
 
   return (
     <div className={`w-full ${isDesktop ? 'space-y-6 max-w-6xl mx-auto' : 'space-y-5'}`}>
-      {/* 다이나믹 아일랜드 토스트 */}
-      {ToastComponent}
       <ToastContainer toasts={toast.toasts} onClose={toast.removeToast} isDarkMode={isDarkMode} />
       
       {/* Tab Selector */}
@@ -453,17 +838,19 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
               exit={{ opacity: 0, y: -20 }}
               className="space-y-5"
             >
-              {/* 지역 목록 헤더 */}
-              <div className="flex items-center justify-between">
-                <h2 className={`text-xl font-bold ${textPrimary}`}>즐겨찾는 지역</h2>
-              </div>
-
               {/* 지역 Pill 탭 */}
               {loadingLocations ? (
                 <div className={`text-center py-8 ${textSecondary}`}>로딩 중...</div>
               ) : favoriteLocations.length > 0 ? (
                 <div className="space-y-4">
-                  <div className="flex flex-wrap gap-2">
+                  {/* 목록과 추가 버튼을 나란히 배치 */}
+                  <div className="flex items-center gap-2">
+                    {/* 목록 영역 - 버튼을 제외한 나머지 공간, 그라데이션 마스크 적용 */}
+                    <div className="flex-1 relative overflow-hidden">
+                      <div 
+                        ref={locationsScrollRef} 
+                        className="flex gap-2 overflow-x-auto overflow-y-hidden scrollbar-hide pb-2 pr-2"
+                      >
                     {favoriteLocations.map((fav) => {
                       // 백엔드 응답 구조에 맞춤: region_name, city_name이 직접 포함됨
                       const regionName = fav.region_name || fav.location?.region_name || '';
@@ -475,11 +862,11 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
                           initial={{ opacity: 0, scale: 0.9 }}
                           animate={{ opacity: 1, scale: 1 }}
                           exit={{ opacity: 0, scale: 0.9 }}
-                          className="group relative"
+                          className="group relative flex-shrink-0"
                         >
                           <button
                             onClick={() => setSelectedRegionId(fav.region_id)}
-                            className={`w-full px-5 py-2.5 rounded-full font-semibold text-sm transition-all ${
+                            className={`px-5 py-2.5 rounded-full font-semibold text-sm transition-all whitespace-nowrap ${
                               isSelected
                                 ? isDarkMode
                                   ? 'bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-lg shadow-sky-500/30 ring-2 ring-sky-400'
@@ -490,27 +877,34 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
                             }`}
                           >
                             <div className="flex items-center gap-1.5">
-                              <MapPin className="w-4 h-4" />
                               <span>{regionName}</span>
                               {cityName && <span className="text-xs opacity-70">{cityName}</span>}
                             </div>
                           </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteLocation(fav.region_id);
-                              if (selectedRegionId === fav.region_id) {
-                                const remaining = favoriteLocations.filter(f => f.region_id !== fav.region_id);
-                                setSelectedRegionId(remaining.length > 0 ? remaining[0].region_id : null);
-                              }
-                            }}
-                            className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center z-10"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
                         </motion.div>
                       );
                     })}
+                      </div>
+                      {/* 그라데이션 마스크 - 오른쪽 10px 지점부터 투명하게 */}
+                      <div 
+                        className={`absolute right-10 top-0 bottom-2 w-10 pointer-events-none ${
+                          isDarkMode 
+                            ? 'bg-gradient-to-l from-transparent to-zinc-950' 
+                            : 'bg-gradient-to-l from-transparent to-white'
+                        }`}
+                      />
+                    </div>
+                    {/* 추가 버튼 - 고정 위치 (오른쪽 끝) */}
+                    <button
+                      onClick={() => setIsSearchingLocation(true)}
+                      className={`flex-shrink-0 p-2 rounded-full transition-all ${
+                        isDarkMode
+                          ? 'bg-gradient-to-br from-sky-500 to-blue-600 hover:shadow-lg hover:shadow-sky-500/30'
+                          : 'bg-gradient-to-br from-sky-500 to-blue-600 hover:shadow-lg hover:shadow-sky-500/30'
+                      }`}
+                    >
+                      <Plus className="w-5 h-5 text-white" />
+                    </button>
                   </div>
                   
                   {/* 선택된 지역의 통계 정보 */}
@@ -532,12 +926,29 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
                           isDarkMode ? 'bg-zinc-900 border border-zinc-800' : 'bg-white border border-zinc-200'
                         }`}
                       >
-                        <div className="flex items-center gap-2 mb-3">
-                          <MapPin className={`w-5 h-5 ${isDarkMode ? 'text-sky-400' : 'text-sky-600'}`} />
-                          <h3 className={`font-bold text-lg ${textPrimary}`}>
-                            {regionName}
-                            {cityName && <span className="text-sm font-normal opacity-70 ml-1">({cityName})</span>}
-                          </h3>
+                        <div className="flex items-center justify-between gap-2 mb-3">
+                          <div className="flex items-center gap-2">
+                            <MapPin className={`w-5 h-5 ${isDarkMode ? 'text-sky-400' : 'text-sky-600'}`} />
+                            <h3 className={`font-bold text-lg ${textPrimary}`}>
+                              {regionName}
+                              {cityName && <span className="text-sm font-normal opacity-70 ml-1">({cityName})</span>}
+                            </h3>
+                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteLocation(selectedRegionId);
+                            }}
+                            className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center transition-all active:scale-95 relative overflow-hidden ${
+                              unfavoritingLocations.has(selectedRegionId)
+                                ? isDarkMode
+                                  ? 'bg-zinc-800 text-zinc-400 border-2 border-zinc-700'
+                                  : 'bg-white text-zinc-400 border-2 border-zinc-200'
+                                : 'bg-gradient-to-br from-yellow-400 via-yellow-500 to-yellow-600 text-yellow-900 border-2 border-yellow-400 shadow-lg shadow-yellow-500/50 ring-2 ring-yellow-400/50 hover:scale-110'
+                            }`}
+                          >
+                            <Star className={`w-5 h-5 ${unfavoritingLocations.has(selectedRegionId) ? '' : 'fill-current'}`} />
+                          </button>
                         </div>
                         
                         {isLoadingStats ? (
@@ -593,6 +1004,198 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
                         ) : (
                           <div className={`text-center py-4 text-sm ${textSecondary}`}>
                             통계 데이터를 불러올 수 없습니다
+                          </div>
+                        )}
+                      </motion.div>
+                    );
+                  })()}
+                  
+                  {/* 뉴스 섹션 */}
+                  {selectedRegionId && (() => {
+                    const news = regionNewsMap[selectedRegionId];
+                    const isLoadingNews = loadingRegionNews[selectedRegionId];
+                        
+                        return (
+                          <motion.div
+                            key={`news-${selectedRegionId}`}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className={`rounded-2xl overflow-hidden border mt-4 ${
+                              isDarkMode ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
+                            }`}
+                          >
+                            <div className="p-5 pb-3">
+                              <h2 className={`font-bold ${textPrimary}`}>
+                                주요 뉴스
+                              </h2>
+                              <p className={`text-xs mt-0.5 ${textSecondary}`}>
+                                부동산 시장 소식
+                              </p>
+                            </div>
+                            
+                            {isLoadingNews ? (
+                              <div className={`text-center py-8 ${textSecondary}`}>뉴스 로딩 중...</div>
+                            ) : news && news.length > 0 ? (
+                              <>
+                                <div>
+                                  {(() => {
+                                    const currentPage = regionNewsPageMap[selectedRegionId] || 0;
+                                    const startIndex = currentPage * 3;
+                                    const endIndex = startIndex + 3;
+                                    const currentNews = news.slice(startIndex, endIndex);
+                                    
+                                    return currentNews.map((newsItem) => (
+                                      <button
+                                        key={newsItem.id}
+                                        onClick={() => loadNewsDetail(newsItem.url)}
+                                        className={`w-full p-4 text-left transition-all active:scale-[0.98] border-t ${
+                                          isDarkMode
+                                            ? 'hover:bg-zinc-800/50 active:bg-zinc-800/70 border-zinc-800'
+                                            : 'hover:bg-sky-50/50 active:bg-sky-50 border-zinc-200'
+                                        }`}
+                                      >
+                                        <div className="flex items-start justify-between gap-3">
+                                          <div className="flex-1 min-w-0">
+                                            <h3 className={`font-semibold leading-snug mb-2 ${textPrimary}`}>
+                                              {newsItem.title}
+                                            </h3>
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                              {newsItem.category && (
+                                                <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${
+                                                  isDarkMode 
+                                                    ? 'bg-zinc-800 text-zinc-400' 
+                                                    : 'bg-sky-50 text-sky-700'
+                                                }`}>
+                                                  {newsItem.category}
+                                                </span>
+                                              )}
+                                              <span className={`text-xs ${textSecondary}`}>
+                                                {newsItem.source}
+                                              </span>
+                                              <span className={`text-xs ${textMuted}`}>
+                                                ·
+                                              </span>
+                                              <span className={`text-xs ${textSecondary}`}>
+                                                {formatTimeAgo(newsItem.published_at)}
+                                              </span>
+                                            </div>
+                                          </div>
+                                          <ChevronRight className={`w-5 h-5 flex-shrink-0 ${isDarkMode ? 'text-zinc-700' : 'text-zinc-300'}`} />
+                                        </div>
+                                      </button>
+                                    ));
+                                  })()}
+                                </div>
+                                
+                                {/* 페이지네이션 인덱스 */}
+                                {news.length > 3 && (
+                                  <div className="flex items-center justify-center gap-2 px-5 py-4 border-t border-zinc-200 dark:border-zinc-800">
+                                    {[0, 1, 2].map((pageIndex) => {
+                                      const currentPage = regionNewsPageMap[selectedRegionId] || 0;
+                                      const hasNews = news.length > pageIndex * 3;
+                                      
+                                      if (!hasNews) return null;
+                                      
+                                      return (
+                                        <button
+                                          key={pageIndex}
+                                          onClick={() => {
+                                            setRegionNewsPageMap(prev => ({
+                                              ...prev,
+                                              [selectedRegionId]: pageIndex
+                                            }));
+                                          }}
+                                          className={`w-8 h-8 rounded-full text-sm font-semibold transition-all ${
+                                            currentPage === pageIndex
+                                              ? isDarkMode
+                                                ? 'bg-sky-500 text-white'
+                                                : 'bg-sky-500 text-white'
+                                              : isDarkMode
+                                                ? 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+                                                : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+                                          }`}
+                                        >
+                                          {pageIndex + 1}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </>
+                            ) : (
+                              <div className={`text-center py-8 text-sm ${textSecondary}`}>
+                                관련 뉴스가 없습니다
+                              </div>
+                            )}
+                          </motion.div>
+                        );
+                      })()}
+                  
+                  {/* 아파트 실시간 정보 섹션 */}
+                  {selectedRegionId && (() => {
+                    const apartments = regionApartmentsMap[selectedRegionId];
+                    const isLoadingApartments = loadingRegionApartments[selectedRegionId];
+                    
+                    return (
+                      <motion.div
+                        key={`apartments-${selectedRegionId}`}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className={`rounded-2xl overflow-hidden border mt-4 ${
+                          isDarkMode ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
+                        }`}
+                      >
+                        <div className="p-5 pb-3">
+                          <h2 className={`font-bold ${textPrimary}`}>
+                            아파트 실시간 정보
+                          </h2>
+                          <p className={`text-xs mt-0.5 ${textSecondary}`}>
+                            지역별 아파트 시세 정보
+                          </p>
+                        </div>
+                        
+                        {isLoadingApartments ? (
+                          <div className={`text-center py-8 ${textSecondary}`}>아파트 정보 로딩 중...</div>
+                        ) : apartments && apartments.length > 0 ? (
+                          <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                            {apartments.slice(0, 5).map((apartment, index) => {
+                              return (
+                                <button
+                                  key={apartment.apt_id}
+                                  onClick={() => onApartmentClick && onApartmentClick(apartment)}
+                                  className={`w-full p-4 text-left transition-all hover:bg-zinc-50 dark:hover:bg-zinc-800/50 active:scale-[0.98] ${
+                                    isDarkMode ? '' : ''
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-4">
+                                    {/* 랭킹 배지 */}
+                                    <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
+                                      index === 0
+                                        ? 'bg-gradient-to-br from-sky-500 to-blue-600 text-white'
+                                        : isDarkMode
+                                        ? 'bg-zinc-800 text-zinc-400'
+                                        : 'bg-zinc-100 text-zinc-600'
+                                    }`}>
+                                      {index + 1}
+                                    </div>
+                                    
+                                    {/* 아파트 정보 */}
+                                    <div className="flex-1 min-w-0">
+                                      <h3 className={`font-semibold mb-1 ${textPrimary} truncate`}>
+                                        {apartment.apt_name}
+                                      </h3>
+                                      <p className={`text-xs ${textSecondary} truncate`}>
+                                        {apartment.address || apartment.sigungu_name}
+                                      </p>
+                                    </div>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className={`text-center py-8 text-sm ${textSecondary}`}>
+                            해당 지역의 아파트 정보가 없습니다
                           </div>
                         )}
                       </motion.div>
@@ -737,12 +1340,11 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
               {loadingApartments ? (
                 <div className={`text-center py-8 ${textSecondary}`}>로딩 중...</div>
               ) : favoriteApartments.length > 0 ? (
-                <div className={isDesktop ? "grid grid-cols-2 gap-6" : "space-y-3"}>
+                <div className={isDesktop ? "grid grid-cols-2 gap-3" : "space-y-3"}>
                   {favoriteApartments.map((fav, index) => {
                     // 백엔드 응답 구조에 맞춤: apt_name이 직접 포함됨
                     const aptName = fav.apt_name || fav.apartment?.apt_name || '이름 없음';
                     const address = fav.apartment?.address || (fav.region_name && fav.city_name ? `${fav.city_name} ${fav.region_name}` : '주소 없음');
-                    const recentPrice = apartmentPricesMap[fav.apt_id];
                     return (
                       <motion.div
                         key={fav.favorite_id}
@@ -764,24 +1366,21 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
                               <h3 className={`font-bold ${textPrimary}`}>{aptName}</h3>
                             </div>
                             <p className={`text-xs ${textSecondary} mb-2`}>{address}</p>
-                            {recentPrice !== null && recentPrice !== undefined && (
-                              <p className={`text-xl font-bold ${isDarkMode ? 'text-sky-400' : 'text-sky-600'}`}>
-                                {Math.round(recentPrice / 10000).toLocaleString()}만원
-                              </p>
-                            )}
                           </div>
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
                               handleDeleteApartment(fav.apt_id);
                             }}
-                            className={`p-2 rounded-lg transition-all ${
-                              isDarkMode
-                                ? 'hover:bg-zinc-800 text-zinc-400 hover:text-red-400'
-                                : 'hover:bg-red-50 text-zinc-400 hover:text-red-500'
+                            className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center transition-all active:scale-95 relative overflow-hidden ${
+                              unfavoritingApartments.has(fav.apt_id)
+                                ? isDarkMode
+                                  ? 'bg-zinc-800 text-zinc-400 border-2 border-zinc-700'
+                                  : 'bg-white text-zinc-400 border-2 border-zinc-200'
+                                : 'bg-gradient-to-br from-yellow-400 via-yellow-500 to-yellow-600 text-yellow-900 border-2 border-yellow-400 shadow-lg shadow-yellow-500/50 ring-2 ring-yellow-400/50 hover:scale-110'
                             }`}
                           >
-                            <X className="w-4 h-4" />
+                            <Star className={`w-5 h-5 ${unfavoritingApartments.has(fav.apt_id) ? '' : 'fill-current'}`} />
                           </button>
                         </div>
                         {fav.nickname && (

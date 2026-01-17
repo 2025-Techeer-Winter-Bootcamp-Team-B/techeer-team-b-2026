@@ -35,21 +35,19 @@ export interface NewsDetailResponse {
  * 뉴스 목록 조회
  * @param limitPerSource 소스당 최대 수집 개수 (기본값: 20, 최대: 100)
  * @param token 인증 토큰 (선택사항)
- * @param si 시 이름 (예: "서울시", "부산시") - 선택사항
- * @param dong 동 이름 (예: "강남동", "서초동") - 선택사항
+ * @param keywords 검색 키워드 배열 (예: ["서울시", "강남구"]) - 선택사항
  * @param apartment 아파트 이름 (예: "래미안", "힐스테이트") - 선택사항
+ * @param aptId 아파트 ID - 선택사항
  * 
- * 지역 파라미터가 모두 제공되면:
- * - 시 관련 뉴스 1개
- * - 동 관련 뉴스 2개
- * - 아파트 관련 뉴스 2개
- * 총 5개 뉴스 반환
+ * 키워드가 제공되면:
+ * - 각 키워드가 뉴스 제목이나 본문에 포함되어 있는지 확인
+ * - 제목에 포함된 키워드는 높은 점수, 본문에 포함된 키워드는 낮은 점수
+ * - 관련성 점수가 높은 순으로 최대 5개 뉴스 반환
  */
 export async function getNewsList(
   limitPerSource: number = 20,
   token?: string | null,
-  si?: string | null,
-  dong?: string | null,
+  keywords?: string[] | null,
   apartment?: string | null,
   aptId?: number | null
 ): Promise<NewsListResponse> {
@@ -62,12 +60,11 @@ export async function getNewsList(
     limit_per_source: limitPerSource,
   };
 
-  // 지역 파라미터 추가
-  if (si) {
-    params.si = si;
-  }
-  if (dong) {
-    params.dong = dong;
+  // 키워드 파라미터 추가 (배열 형태)
+  // axios는 배열을 자동으로 keywords=value1&keywords=value2 형식으로 변환
+  if (keywords && keywords.length > 0) {
+    params.keywords = keywords;
+    console.log('[getNewsList] 전달할 keywords:', keywords);
   }
   if (apartment) {
     params.apartment = apartment;
@@ -77,10 +74,16 @@ export async function getNewsList(
     params.apt_id = aptId;
   }
 
+  console.log('[getNewsList] 최종 params:', params);
+  console.log('[getNewsList] keywords 파라미터:', params.keywords);
   const response = await apiClient.get<NewsListResponse>('/news', {
     params,
     headers,
+    paramsSerializer: {
+      indexes: null, // 배열을 regions=value1&regions=value2 형식으로 전달
+    },
   });
+  console.log('[getNewsList] 응답 데이터:', response.data);
   return response.data;
 }
 

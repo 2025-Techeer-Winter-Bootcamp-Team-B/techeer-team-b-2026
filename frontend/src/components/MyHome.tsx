@@ -254,7 +254,7 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
       setIsLoadingNews(true);
       try {
         const token = await getToken();
-        const newsResponse = await getNewsList(20, token, null, null, null, selectedPropertyDetail.apt_id);
+        const newsResponse = await getNewsList(20, token, undefined, undefined, selectedPropertyDetail.apt_id);
         
         if (newsResponse && newsResponse.data) {
           setNewsData(newsResponse.data.slice(0, 5)); // 최대 5개만 표시

@@ -7,13 +7,13 @@ DB 저장이 없으므로 크롤링 결과만 반환합니다.
 """
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, Tuple, Any, Optional
+from typing import Dict, Tuple, Any, Optional, List
 from fastapi import APIRouter, HTTPException, status, Query, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.news import news_service
 from app.schemas.news import NewsListResponse, NewsDetailResponse, NewsResponse
-from app.utils.news import generate_news_id, filter_news_by_location
+from app.utils.news import generate_news_id, filter_news_by_location, filter_news_by_keywords
 from app.api.v1.deps import get_db
 from app.crud.apartment import apartment as apartment_crud
 from app.crud.state import state as state_crud
@@ -63,9 +63,10 @@ def set_cached_data(cache_key: str, data: any):
     파라미터:
     - limit_per_source: 소스당 최대 수집 개수 (필수)
     - apt_id: 아파트 ID (선택적)
+    - keywords: 검색 키워드 리스트 (선택적, 예: ["서울시", "강남구", "역삼동"])
     
     동작 방식:
-    - apt_id가 전달되지 않을 경우: 기존 기능과 같이 개수만큼 크롤링하여 반환
+    - apt_id가 전달되지 않고 keywords도 없는 경우: 기존 기능과 같이 개수만큼 크롤링하여 반환
     - apt_id가 전달될 경우: 
       * apartment 테이블과 state 테이블을 참고해서 시, 동, 아파트 이름 알아내기
       * 검색 단계별로 관련 뉴스 검색:
@@ -74,6 +75,12 @@ def set_cached_data(cache_key: str, data: any):
         3. 시 + 동 + 아파트이름 + 부동산
       * 관련된 뉴스 5개 목록을 반환
       * 반환값에 시, 동, 아파트 이름 포함 (meta 필드)
+    - keywords가 전달될 경우:
+      * apt_id가 있어도 keywords를 우선 사용
+      * 각 키워드가 뉴스 제목이나 본문에 포함되어 있는지 확인
+      * 제목에 포함된 키워드는 높은 점수, 본문에 포함된 키워드는 낮은 점수
+      * 관련성 점수가 높은 순으로 최대 5개 뉴스 반환
+      * 반환값에 keywords 포함 (meta 필드)
     """,
     responses={
         200: {"description": "크롤링 완료"},
@@ -84,17 +91,22 @@ def set_cached_data(cache_key: str, data: any):
 async def get_news(
     limit_per_source: int = Query(20, ge=1, le=100, description="소스당 최대 수집 개수"),
     apt_id: Optional[int] = Query(None, description="아파트 ID (apartments.apt_id)"),
+    keywords: Optional[List[str]] = Query(None, description="검색 키워드 리스트 (선택적, 예: ['서울시', '강남구', '역삼동'])"),
     db: AsyncSession = Depends(get_db)
 ):
     """뉴스 목록 크롤링 및 조회"""
     try:
-        si = None
-        dong = None
+        search_keywords = keywords if keywords else []  # 키워드 리스트
         apartment_name = None
         region_name = None
+        si_value = None
+        dong_value = None
         
-        # apt_id가 전달된 경우, 아파트 정보 조회
-        if apt_id is not None:
+        # 키워드가 전달되지 않은 경우에만 apt_id로부터 정보 추출
+        has_keywords = search_keywords and len(search_keywords) > 0
+        
+        # apt_id가 전달되고 키워드가 없는 경우, 아파트 정보 조회
+        if apt_id is not None and not has_keywords:
             # 1. Apartments 테이블에서 region_id와 apt_name 찾기
             apartment = await apartment_crud.get(db, id=apt_id)
             if not apartment or apartment.is_deleted:
@@ -119,23 +131,28 @@ async def get_news(
             
             # 3. 시는 city_name에서, 동은 region_name에서 가져오기
             # city_name을 시로 사용 (예: "서울특별시" -> "서울시")
-            si = city_name
-            if si:
-                if "특별시" in si:
-                    si = si.replace("특별시", "시")
-                elif "광역시" in si:
-                    si = si.replace("광역시", "시")
-                elif not si.endswith("시"):
-                    si = si + "시"
+            si_value = city_name
+            if si_value:
+                if "특별시" in si_value:
+                    si_value = si_value.replace("특별시", "시")
+                elif "광역시" in si_value:
+                    si_value = si_value.replace("광역시", "시")
+                elif not si_value.endswith("시"):
+                    si_value = si_value + "시"
             
             # 동은 region_name에서 "동"으로 끝나는 경우만 추출 (예: "잠실동")
             if region_name and region_name.endswith("동"):
-                dong = region_name
+                dong_value = region_name
             else:
-                dong = None
+                dong_value = None
         
-        # 캐시 키 생성 (apt_id 또는 지역 파라미터 포함)
-        if apt_id is not None:
+        # 캐시 키 생성 (apt_id 또는 keywords 포함)
+        if has_keywords:
+            # 키워드를 정렬하여 동일한 키워드 조합에 대해 같은 캐시 사용
+            sorted_keywords = sorted([kw.strip() for kw in search_keywords if kw and kw.strip()])
+            keywords_str = "_".join(sorted_keywords)
+            cache_key = f"news_list_{limit_per_source}_keywords_{keywords_str}"
+        elif apt_id is not None:
             cache_key = f"news_list_{limit_per_source}_apt_{apt_id}"
         else:
             cache_key = f"news_list_{limit_per_source}"
@@ -148,16 +165,23 @@ async def get_news(
         # 캐시 없으면 크롤링 실행
         crawled_news = await news_service.crawl_only(limit_per_source=limit_per_source)
         
-        # apt_id가 전달된 경우, 지역 필터링 적용하여 5개 반환
-        if apt_id is not None:
+        # 키워드가 있으면 키워드 기반 필터링, apt_id만 있으면 지역 기반 필터링
+        if has_keywords:
+            # 키워드 기반 필터링
+            filtered_news = filter_news_by_keywords(
+                news_list=crawled_news,
+                keywords=search_keywords
+            )
+        elif apt_id is not None:
+            # apt_id 기반 지역 필터링
             filtered_news = filter_news_by_location(
                 news_list=crawled_news,
-                si=si,
-                dong=dong,
+                si=si_value,
+                dong=dong_value,
                 apartment=apartment_name
             )
         else:
-            # apt_id가 없으면 기존처럼 모든 뉴스 반환
+            # 키워드도 없고 apt_id도 없으면 기존처럼 모든 뉴스 반환
             filtered_news = crawled_news
         
         # 크롤링 결과를 NewsResponse 스키마로 변환 (간단한 해시 ID 추가)
@@ -176,14 +200,23 @@ async def get_news(
             "offset": 0
         }
         
-        # apt_id가 전달된 경우 메타 정보에 추가
+        # 키워드가 있는 경우 메타 정보에 추가
+        if has_keywords:
+            meta["keywords"] = search_keywords
+        
+        # apt_id가 전달된 경우 메타 정보에 추가 (키워드보다 우선순위 낮음)
         if apt_id is not None:
-            meta.update({
+            apt_meta = {
                 "apt_id": apt_id,
-                "apt_name": apartment_name,
-                "si": si,
-                "dong": dong
-            })
+                "apt_name": apartment_name
+            }
+            # 키워드가 없는 경우에만 si, dong 추가 (apt_id로부터 추출한 값)
+            if not has_keywords:
+                if si_value:
+                    apt_meta["si"] = si_value
+                if dong_value:
+                    apt_meta["dong"] = dong_value
+            meta.update(apt_meta)
         
         response = NewsListResponse(
             success=True,

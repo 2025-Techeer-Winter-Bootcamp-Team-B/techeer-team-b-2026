@@ -263,3 +263,68 @@ def filter_news_by_location(
     
     # 최대 5개까지만 반환
     return result[:5]
+
+
+def filter_news_by_keywords(
+    news_list: List[Dict],
+    keywords: List[str]
+) -> List[Dict]:
+    """
+    뉴스 목록을 키워드별로 필터링하고 관련성 점수로 정렬합니다.
+    
+    각 키워드가 뉴스 제목이나 본문에 포함되어 있는지 확인하고,
+    포함된 키워드 수와 위치에 따라 점수를 계산합니다.
+    
+    Args:
+        news_list: 뉴스 딕셔너리 리스트
+        keywords: 검색 키워드 리스트 (예: ["서울시", "강남구", "역삼동"])
+        
+    Returns:
+        관련성 점수가 높은 순으로 정렬된 뉴스 리스트 (최대 5개)
+    """
+    if not keywords or len(keywords) == 0:
+        return news_list
+    
+    # 키워드 정규화 (공백 제거, 소문자 변환)
+    normalized_keywords = [kw.strip().lower() for kw in keywords if kw and kw.strip()]
+    if not normalized_keywords:
+        return news_list
+    
+    # 각 뉴스에 관련성 점수 계산
+    scored_news = []
+    for news in news_list:
+        title = (news.get("title", "") or "").lower()
+        content = (news.get("content", "") or "").lower()
+        
+        score = 0.0
+        matched_keywords = []
+        
+        # 각 키워드에 대해 점수 계산
+        for keyword in normalized_keywords:
+            keyword_lower = keyword.lower()
+            
+            # 제목에 포함된 경우 높은 점수
+            if keyword_lower in title:
+                # 제목에서 키워드가 몇 번 나타나는지 확인
+                count = title.count(keyword_lower)
+                score += 20.0 * count  # 제목에 포함되면 20점씩
+                matched_keywords.append(keyword)
+            # 본문에 포함된 경우 낮은 점수
+            elif keyword_lower in content:
+                # 본문에서 키워드가 몇 번 나타나는지 확인
+                count = content.count(keyword_lower)
+                score += 5.0 * count  # 본문에 포함되면 5점씩
+                matched_keywords.append(keyword)
+        
+        # 매칭된 키워드가 있으면 추가
+        if matched_keywords:
+            news_with_score = news.copy()
+            news_with_score["relevance_score"] = score
+            news_with_score["matched_keywords"] = matched_keywords
+            scored_news.append(news_with_score)
+    
+    # 관련성 점수 기준으로 내림차순 정렬
+    scored_news.sort(key=lambda x: x.get("relevance_score", 0.0), reverse=True)
+    
+    # 최대 5개까지만 반환
+    return scored_news[:5]

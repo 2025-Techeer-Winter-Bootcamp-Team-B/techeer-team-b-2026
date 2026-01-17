@@ -239,7 +239,7 @@ export default function ApartmentDetail({ apartment, onBack, isDarkMode, isDeskt
   const parkingPerHousehold = totalParking > 0 ? (totalParking / totalHouseholds).toFixed(2) : "-";
 
   return (
-    <div className={`space-y-6 pb-10 ${isDesktop ? 'max-w-full' : ''}`} style={{ paddingTop: isDesktop ? '3rem' : '2rem' }}>
+    <div className={`space-y-6 pb-10 ${isDesktop ? 'max-w-full' : ''}`}>
       {/* Header with Back Button */}
       <div className="flex items-center gap-3">
         <button
@@ -330,7 +330,7 @@ export default function ApartmentDetail({ apartment, onBack, isDarkMode, isDeskt
                     {changeStr}
                 </span>
                 </div>
-                <p className={`text-xs ${textSecondary} mt-1 text-center`}>최근 6개월</p>
+                <p className={`text-sm ${textSecondary} mt-1 text-center`}>최근 6개월</p>
             </div>
           )}
         </div>
@@ -341,7 +341,7 @@ export default function ApartmentDetail({ apartment, onBack, isDarkMode, isDeskt
         <div className={`rounded-2xl p-4 ${cardClass} flex flex-col justify-center`}>
           <div className="flex items-center gap-2 mb-2">
             <Building className="w-4 h-4 text-sky-400" />
-            <span className={`text-xs ${textSecondary}`}>건축년도</span>
+            <span className={`text-sm ${textSecondary}`}>건축년도</span>
           </div>
           <p className={`text-lg font-bold ${textPrimary}`}>
             {loading ? <span className="opacity-50 text-sm">로딩중...</span> : buildYear}
@@ -351,7 +351,7 @@ export default function ApartmentDetail({ apartment, onBack, isDarkMode, isDeskt
         <div className={`rounded-2xl p-4 ${cardClass} flex flex-col justify-center`}>
           <div className="flex items-center gap-2 mb-2">
             <Layers className="w-4 h-4 text-sky-400" />
-            <span className={`text-xs ${textSecondary}`}>총 세대수</span>
+            <span className={`text-sm ${textSecondary}`}>총 세대수</span>
           </div>
           <p className={`text-lg font-bold ${textPrimary}`}>
             {loading ? <span className="opacity-50 text-sm">로딩중...</span> : totalUnits}
@@ -361,7 +361,7 @@ export default function ApartmentDetail({ apartment, onBack, isDarkMode, isDeskt
         <div className={`rounded-2xl p-4 ${cardClass} flex flex-col justify-center`}>
           <div className="flex items-center gap-2 mb-2">
             <Home className="w-4 h-4 text-sky-400" />
-            <span className={`text-xs ${textSecondary}`}>세대당 주차</span>
+            <span className={`text-sm ${textSecondary}`}>세대당 주차</span>
           </div>
           <p className={`text-lg font-bold ${textPrimary}`}>
              {loading ? <span className="opacity-50 text-sm">로딩중...</span> : parkingPerHousehold}대
@@ -399,15 +399,15 @@ export default function ApartmentDetail({ apartment, onBack, isDarkMode, isDeskt
                   {/* Left Column */}
                   <div className="space-y-4">
                      <div>
-                        <p className={`text-xs ${textSecondary} mb-1`}>난방 방식</p>
+                        <p className={`text-sm ${textSecondary} mb-1`}>난방 방식</p>
                         <p className={`font-medium ${textPrimary}`}>{detailData?.code_heat_nm || "-"}</p>
                      </div>
                      <div>
-                        <p className={`text-xs ${textSecondary} mb-1`}>복도 유형</p>
+                        <p className={`text-sm ${textSecondary} mb-1`}>복도 유형</p>
                         <p className={`font-medium ${textPrimary}`}>{detailData?.hallway_type || "-"}</p>
                      </div>
                      <div>
-                        <p className={`text-xs ${textSecondary} mb-1`}>관리 방식</p>
+                        <p className={`text-sm ${textSecondary} mb-1`}>관리 방식</p>
                         <p className={`font-medium ${textPrimary}`}>{detailData?.manage_type || "-"}</p>
                      </div>
                   </div>
@@ -415,11 +415,11 @@ export default function ApartmentDetail({ apartment, onBack, isDarkMode, isDeskt
                   {/* Right Column */}
                   <div className="space-y-4">
                      <div>
-                        <p className={`text-xs ${textSecondary} mb-1`}>건설사</p>
+                        <p className={`text-sm ${textSecondary} mb-1`}>건설사</p>
                         <p className={`font-medium ${textPrimary}`}>{detailData?.builder_name || "-"}</p>
                      </div>
                      <div>
-                        <p className={`text-xs ${textSecondary} mb-1`}>시행사</p>
+                        <p className={`text-sm ${textSecondary} mb-1`}>시행사</p>
                         <p className={`font-medium ${textPrimary}`}>{detailData?.developer_name || "-"}</p>
                      </div>
                   </div>
@@ -431,7 +431,7 @@ export default function ApartmentDetail({ apartment, onBack, isDarkMode, isDeskt
                         <div className="flex items-start gap-3">
                             <Train className="w-5 h-5 text-orange-500 shrink-0 mt-0.5" />
                             <div>
-                                <p className={`text-xs font-bold ${textSecondary} mb-1`}>교통 정보</p>
+                                <p className={`text-sm font-bold ${textSecondary} mb-1`}>교통 정보</p>
                                 <p className={`text-sm ${textPrimary} leading-relaxed`}>
                                     {detailData?.subway_station 
                                         ? `${detailData.subway_line} ${detailData.subway_station} (${detailData.subway_time})`
@@ -445,7 +445,7 @@ export default function ApartmentDetail({ apartment, onBack, isDarkMode, isDeskt
                         <div className="flex items-start gap-3">
                             <School className="w-5 h-5 text-green-500 shrink-0 mt-0.5" />
                             <div>
-                                <p className={`text-xs font-bold ${textSecondary} mb-1`}>교육 시설</p>
+                                <p className={`text-sm font-bold ${textSecondary} mb-1`}>교육 시설</p>
                                 <p className={`text-sm ${textPrimary} leading-relaxed`}>
                                     {detailData?.educationFacility || "교육 시설 정보 없음"}
                                 </p>
@@ -464,7 +464,7 @@ export default function ApartmentDetail({ apartment, onBack, isDarkMode, isDeskt
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className={`text-lg font-bold ${textPrimary} mb-1`}>가격 변화 추이</h2>
-            <p className={`text-xs ${textSecondary}`}>최근 6개월 평균 거래가 (단위: 만원/평)</p>
+            <p className={`text-sm ${textSecondary}`}>최근 6개월 평균 거래가 (단위: 만원/평)</p>
           </div>
           {transactionsData?.change_summary && (
             <div className={`px-3 py-2 rounded-xl border ${
@@ -486,7 +486,7 @@ export default function ApartmentDetail({ apartment, onBack, isDarkMode, isDeskt
                   {transactionsData.change_summary.change_rate >= 0 ? '+' : ''}{transactionsData.change_summary.change_rate.toFixed(2)}%
                 </span>
               </div>
-              <p className={`text-xs ${textSecondary} mt-0.5 text-center`}>최근 6개월</p>
+              <p className={`text-sm ${textSecondary} mt-0.5 text-center`}>최근 6개월</p>
             </div>
           )}
         </div>
@@ -544,7 +544,7 @@ export default function ApartmentDetail({ apartment, onBack, isDarkMode, isDeskt
           <Calendar className="w-5 h-5 text-sky-400" />
           <div>
             <h2 className={`text-lg font-bold ${textPrimary}`}>실거래 내역</h2>
-            <p className={`text-xs ${textSecondary} mt-0.5`}>
+            <p className={`text-sm ${textSecondary} mt-0.5`}>
               {transactionsData?.recent_transactions && transactionsData.recent_transactions.length > 0
                 ? `최근 ${transactionsData.recent_transactions.length}건`
                 : '실거래 내역'}
@@ -570,7 +570,7 @@ export default function ApartmentDetail({ apartment, onBack, isDarkMode, isDeskt
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-2">
-                      <span className={`text-xs font-semibold px-2 py-1 rounded ${
+                      <span className={`text-sm font-semibold px-2 py-1 rounded ${
                         isDarkMode ? 'bg-zinc-700 text-zinc-300' : 'bg-zinc-200 text-zinc-700'
                       }`}>
                         {transaction.date ? new Date(transaction.date).toLocaleDateString('ko-KR', { 
@@ -580,12 +580,12 @@ export default function ApartmentDetail({ apartment, onBack, isDarkMode, isDeskt
                         }) : '날짜 미상'}
                       </span>
                       {transaction.floor && (
-                        <span className={`text-xs ${textSecondary}`}>
+                        <span className={`text-sm ${textSecondary}`}>
                           {transaction.floor}층
                         </span>
                       )}
                       {transaction.area && (
-                        <span className={`text-xs ${textSecondary}`}>
+                        <span className={`text-sm ${textSecondary}`}>
                           {transaction.area.toFixed(2)}㎡ ({Math.round(transaction.area * 0.3025 * 10) / 10}평)
                         </span>
                       )}
@@ -601,13 +601,13 @@ export default function ApartmentDetail({ apartment, onBack, isDarkMode, isDeskt
                       )}
                     </div>
                     {transaction.trans_type && (
-                      <div className={`text-xs mt-1 ${textSecondary}`}>
+                      <div className={`text-sm mt-1 ${textSecondary}`}>
                         거래 유형: {transaction.trans_type === '중도금지급' ? '중도금지급' : transaction.trans_type}
                       </div>
                     )}
                   </div>
                   {transaction.is_canceled && (
-                    <span className={`text-xs px-2 py-1 rounded ${
+                    <span className={`text-sm px-2 py-1 rounded ${
                       isDarkMode ? 'bg-red-500/20 text-red-400' : 'bg-red-100 text-red-600'
                     }`}>
                       취소
@@ -632,7 +632,7 @@ export default function ApartmentDetail({ apartment, onBack, isDarkMode, isDeskt
           <TrendingUp className="w-4 h-4 text-blue-500" />
           거래 정보 활용 팁
         </h3>
-        <ul className={`text-xs ${textSecondary} space-y-1.5 leading-relaxed`}>
+        <ul className={`text-sm ${textSecondary} space-y-1.5 leading-relaxed`}>
           <li>• <span className="font-semibold">층수별 차이:</span> 같은 평형이라도 층수에 따라 가격이 다를 수 있어요</li>
           <li>• <span className="font-semibold">거래 빈도:</span> 최근 거래가 많다면 시세가 투명하고 매매가 활발해요</li>
           <li>• <span className="font-semibold">가격 추세:</span> 지속적으로 오르는지 내리는지 확인하세요</li>
