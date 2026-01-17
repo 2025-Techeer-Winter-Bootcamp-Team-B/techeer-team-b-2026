@@ -937,35 +937,32 @@ export default function Favorites({ onApartmentClick, isDarkMode, isDesktop = fa
                         key={`stats-${selectedRegionId}`}
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="mb-4"
+                        className={`rounded-2xl p-5 ${
+                          isDarkMode ? 'bg-zinc-900 border border-zinc-800' : 'bg-white border border-zinc-200'
+                        }`}
                       >
-                        {/* 헤더 라인 */}
-                        <div className="flex items-center justify-between pb-3 border-b border-zinc-200 dark:border-zinc-800 mb-3">
-                          <h3 className={`font-bold text-lg flex items-center gap-2 ${textPrimary}`}>
+                        <div className="flex items-center justify-between gap-2 mb-3">
+                          <div className="flex items-center gap-2">
                             <MapPin className={`w-5 h-5 ${isDarkMode ? 'text-sky-400' : 'text-sky-600'}`} />
-                            {regionName}
-                            {cityName && (
-                              <span className={`text-sm font-normal opacity-70 ml-2 ${isDarkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>
-                                {' '}({cityName})
-                              </span>
-                            )}
-                          </h3>
+                            <h3 className={`font-bold text-lg ${textPrimary}`}>
+                              {regionName}
+                              {cityName && <span className="text-sm font-normal opacity-70 ml-1">({cityName})</span>}
+                            </h3>
+                          </div>
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
                               handleDeleteLocation(selectedRegionId);
                             }}
-                            className={`w-6 h-6 rounded flex items-center justify-center transition-colors ${
+                            className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center transition-all active:scale-95 relative overflow-hidden ${
                               unfavoritingLocations.has(selectedRegionId)
                                 ? isDarkMode
-                                  ? 'text-zinc-400 hover:bg-zinc-800'
-                                  : 'text-zinc-500 hover:bg-zinc-100'
-                                : isDarkMode
-                                  ? 'text-yellow-400 hover:bg-zinc-800'
-                                  : 'text-yellow-600 hover:bg-zinc-100'
+                                  ? 'bg-zinc-800 text-zinc-400 border-2 border-zinc-700'
+                                  : 'bg-white text-zinc-400 border-2 border-zinc-200'
+                                : 'bg-gradient-to-br from-yellow-400 via-yellow-500 to-yellow-600 text-yellow-900 border-2 border-yellow-400 shadow-lg shadow-yellow-500/50 ring-2 ring-yellow-400/50 hover:scale-110'
                             }`}
                           >
-                            <Star className={`w-4 h-4 ${unfavoritingLocations.has(selectedRegionId) ? '' : 'fill-current'}`} />
+                            <Star className={`w-5 h-5 ${unfavoritingLocations.has(selectedRegionId) ? '' : 'fill-current'}`} />
                           </button>
                         </div>
                         

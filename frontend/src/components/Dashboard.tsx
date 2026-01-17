@@ -594,55 +594,32 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="mb-4"
+          className={`mb-4 p-4 rounded-2xl border ${
+            isDarkMode
+              ? 'bg-zinc-900 border-zinc-800'
+              : 'bg-white border-zinc-200'
+          }`}
         >
-          {/* 헤더 라인 */}
-          <div className="flex items-center justify-between pb-3 border-b border-zinc-200 dark:border-zinc-800">
-            <h3 className={`font-bold text-lg flex items-center ${isDarkMode ? 'text-white' : 'text-zinc-900'}`}>
-              {(() => {
-                const fullName = selectedLocation.full_name;
-                const match = fullName.match(/^(.+?)(\(.+?\))$/);
-                if (match) {
-                  const [, regionName, cityPart] = match;
-                  return (
-                    <>
-                      <span>{regionName}</span>
-                      <span className={`text-sm font-normal opacity-70 ml-2 ${isDarkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>
-                        {' '}{cityPart}
-                      </span>
-                    </>
-                  );
-                }
-                return fullName.replace(/([가-힣])(\()/g, '$1 $2');
-              })()}
-            </h3>
-            <div className="flex items-center gap-2">
-              <button
-                className={`w-6 h-6 rounded flex items-center justify-center transition-colors ${
-                  isDarkMode
-                    ? 'text-yellow-400 hover:bg-zinc-800'
-                    : 'text-yellow-600 hover:bg-zinc-100'
-                }`}
-              >
-                <Star className="w-4 h-4 fill-current" />
-              </button>
-              <button
-                onClick={handleClearLocation}
-                className={`w-6 h-6 rounded flex items-center justify-center transition-colors ${
-                  isDarkMode
-                    ? 'text-zinc-400 hover:bg-zinc-800 hover:text-white'
-                    : 'text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900'
-                }`}
-              >
-                <X size={16} />
-              </button>
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className={`font-bold text-lg ${isDarkMode ? 'text-white' : 'text-zinc-900'}`}>
+                {selectedLocation.full_name.replace(/([가-힣])(\()/g, '$1 $2')}
+              </h3>
+              <p className={`text-sm mt-1 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                {isLoadingRegionApartments ? '아파트 조회 중...' : `${regionApartments.length}개의 아파트`}
+              </p>
             </div>
+            <button
+              onClick={handleClearLocation}
+              className={`p-2 rounded-lg transition-colors ${
+                isDarkMode
+                  ? 'hover:bg-zinc-800 text-zinc-400 hover:text-white'
+                  : 'hover:bg-zinc-100 text-zinc-600 hover:text-zinc-900'
+              }`}
+            >
+              <X size={20} />
+            </button>
           </div>
-          
-          {/* 정보 */}
-          <p className={`text-sm mt-2 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
-            {isLoadingRegionApartments ? '아파트 조회 중...' : `${regionApartments.length}개의 아파트`}
-          </p>
         </motion.div>
       )}
 
@@ -680,15 +657,18 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
                     }`}
                   >
                     <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <p className={`font-bold ${isDarkMode ? 'text-white' : 'text-zinc-900'}`}>
-                          {apt.apt_name}
-                        </p>
-                        {apt.address && (
-                          <p className={`text-sm mt-1 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
-                            {apt.address}
+                      <div className="flex-1 flex items-center gap-2">
+                        <Building2 className={`w-4 h-4 shrink-0 ${isDarkMode ? 'text-blue-400' : 'text-blue-600'}`} />
+                        <div className="flex-1 min-w-0">
+                          <p className={`font-bold ${isDarkMode ? 'text-white' : 'text-zinc-900'}`}>
+                            {apt.apt_name}
                           </p>
-                        )}
+                          {apt.address && (
+                            <p className={`text-sm mt-1 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                              {apt.address}
+                            </p>
+                          )}
+                        </div>
                       </div>
                       <div className={`ml-4 px-2 py-1 rounded-full text-xs font-medium ${
                         isDarkMode
