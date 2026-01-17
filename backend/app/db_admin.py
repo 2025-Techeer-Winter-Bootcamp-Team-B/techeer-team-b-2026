@@ -26,7 +26,7 @@ import calendar
 from datetime import date, datetime
 from pathlib import Path
 from typing import List, Optional
-from sqlalchemy import text, select, insert, func
+from sqlalchemy import text, select, insert, func, and_, or_
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import settings
@@ -282,6 +282,97 @@ class DatabaseAdmin:
             return True
         except Exception as e:
             print(f" 실패! ({str(e)})")
+            return False
+
+    async def backup_dummy_data(self) -> bool:
+        """더미 데이터만 백업 (sales와 rents 테이블의 remarks='더미'인 데이터)"""
+        print(f"\n📦 더미 데이터 백업 시작 (저장 경로: {self.backup_dir})")
+        print("=" * 60)
+        
+        try:
+            async with self.engine.connect() as conn:
+                raw_conn = await conn.get_raw_connection()
+                pg_conn = raw_conn.driver_connection
+                
+                # 1. 매매 더미 데이터 백업
+                sales_file = self.backup_dir / "sales_dummy.csv"
+                print(f"   💾 매매 더미 데이터 백업 중...", end="", flush=True)
+                try:
+                    with open(sales_file, 'wb') as f:
+                        await pg_conn.copy_from_query(
+                            "SELECT * FROM sales WHERE remarks = '더미'",
+                            output=f,
+                            format='csv',
+                            header=True
+                        )
+                        f.flush()
+                        os.fsync(f.fileno())
+                    file_size = sales_file.stat().st_size if sales_file.exists() else 0
+                    print(f" 완료! -> {sales_file} ({file_size:,} bytes)")
+                except Exception as e:
+                    print(f" 실패! ({str(e)})")
+                    # 일반 SELECT 방식으로 대체
+                    result = await conn.execute(text("SELECT * FROM sales WHERE remarks = '더미'"))
+                    rows = result.fetchall()
+                    columns = result.keys()
+                    with open(sales_file, 'w', encoding='utf-8', newline='') as f:
+                        writer = csv.writer(f)
+                        writer.writerow(columns)
+                        for row in rows:
+                            writer.writerow(row)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    file_size = sales_file.stat().st_size if sales_file.exists() else 0
+                    print(f" 완료! -> {sales_file} ({file_size:,} bytes)")
+                
+                # 2. 전월세 더미 데이터 백업
+                rents_file = self.backup_dir / "rents_dummy.csv"
+                print(f"   💾 전월세 더미 데이터 백업 중...", end="", flush=True)
+                try:
+                    with open(rents_file, 'wb') as f:
+                        await pg_conn.copy_from_query(
+                            "SELECT * FROM rents WHERE remarks = '더미'",
+                            output=f,
+                            format='csv',
+                            header=True
+                        )
+                        f.flush()
+                        os.fsync(f.fileno())
+                    file_size = rents_file.stat().st_size if rents_file.exists() else 0
+                    print(f" 완료! -> {rents_file} ({file_size:,} bytes)")
+                except Exception as e:
+                    print(f" 실패! ({str(e)})")
+                    # 일반 SELECT 방식으로 대체
+                    result = await conn.execute(text("SELECT * FROM rents WHERE remarks = '더미'"))
+                    rows = result.fetchall()
+                    columns = result.keys()
+                    with open(rents_file, 'w', encoding='utf-8', newline='') as f:
+                        writer = csv.writer(f)
+                        writer.writerow(columns)
+                        for row in rows:
+                            writer.writerow(row)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    file_size = rents_file.stat().st_size if rents_file.exists() else 0
+                    print(f" 완료! -> {rents_file} ({file_size:,} bytes)")
+                
+                # 3. 통계 출력
+                sales_count = await conn.execute(text("SELECT COUNT(*) FROM sales WHERE remarks = '더미'"))
+                rents_count = await conn.execute(text("SELECT COUNT(*) FROM rents WHERE remarks = '더미'"))
+                sales_total = sales_count.scalar() or 0
+                rents_total = rents_count.scalar() or 0
+                
+                print("=" * 60)
+                print(f"✅ 더미 데이터 백업 완료!")
+                print(f"   - 매매 더미 데이터: {sales_total:,}개 -> {sales_file.name}")
+                print(f"   - 전월세 더미 데이터: {rents_total:,}개 -> {rents_file.name}")
+                print(f"   📁 백업 위치: {self.backup_dir} (로컬: ./db_backup)")
+                return True
+                
+        except Exception as e:
+            print(f"❌ 더미 데이터 백업 중 오류 발생: {e}")
+            import traceback
+            print(traceback.format_exc())
             return False
 
     async def backup_all(self):
@@ -759,21 +850,25 @@ class DatabaseAdmin:
                 """배치 데이터를 DB에 벌크 삽입 (PostgreSQL 파라미터 제한 고려)"""
                 nonlocal total_sales_inserted, total_rents_inserted
                 
-                if sales_batch_data:
-                    # 매매 데이터를 작은 배치로 나눠서 삽입 (파라미터 제한 방지)
-                    for i in range(0, len(sales_batch_data), batch_size_insert):
-                        batch = sales_batch_data[i:i + batch_size_insert]
-                        stmt = insert(Sale).values(batch)
-                        await conn.execute(stmt)
-                    total_sales_inserted += len(sales_batch_data)
-                
-                if rents_batch_data:
-                    # 전월세 데이터를 작은 배치로 나눠서 삽입 (파라미터 제한 방지)
-                    for i in range(0, len(rents_batch_data), batch_size_insert):
-                        batch = rents_batch_data[i:i + batch_size_insert]
-                        stmt = insert(Rent).values(batch)
-                        await conn.execute(stmt)
-                    total_rents_inserted += len(rents_batch_data)
+                try:
+                    if sales_batch_data:
+                        # 매매 데이터를 작은 배치로 나눠서 삽입 (파라미터 제한 방지)
+                        for i in range(0, len(sales_batch_data), batch_size_insert):
+                            batch = sales_batch_data[i:i + batch_size_insert]
+                            stmt = insert(Sale).values(batch)
+                            await conn.execute(stmt)
+                        total_sales_inserted += len(sales_batch_data)
+                    
+                    if rents_batch_data:
+                        # 전월세 데이터를 작은 배치로 나눠서 삽입 (파라미터 제한 방지)
+                        for i in range(0, len(rents_batch_data), batch_size_insert):
+                            batch = rents_batch_data[i:i + batch_size_insert]
+                            stmt = insert(Rent).values(batch)
+                            await conn.execute(stmt)
+                        total_rents_inserted += len(rents_batch_data)
+                except Exception as e:
+                    print(f"   ❌ 배치 삽입 중 오류 발생: {e}")
+                    raise
             
             # 날짜 계산 최적화: 월별 일수 캐싱
             days_in_month_cache = {}
@@ -816,7 +911,15 @@ class DatabaseAdmin:
                 
                 print(f"\n   📅 처리 중: {year}년 {month}월 ({current_ym}) | 진행: {month_count}/{total_months}개월")
                 
+                # 아파트별 진행 상황 로깅 (매 1000개마다)
+                apt_log_interval = 1000
+                
                 for apt_idx, (apt_id, region_id, city_name, region_name) in enumerate(empty_apartments, 1):
+                    # 아파트별 진행 상황 로깅
+                    if apt_idx % apt_log_interval == 0 or apt_idx == total_apartments:
+                        apt_progress = (apt_idx / total_apartments) * 100
+                        print(f"      ⏳ 아파트 처리 중: {apt_idx:,}/{total_apartments:,}개 ({apt_progress:.1f}%) | "
+                              f"생성된 거래: {total_transactions:,}개")
                     # 지역별 가격 계수 (캐시에서 가져오기)
                     region_multiplier = apartment_multipliers[apt_id]
                     
@@ -994,19 +1097,31 @@ class DatabaseAdmin:
                         
                         # 배치 크기에 도달하면 DB에 삽입
                         if len(sales_batch) + len(rents_batch) >= batch_size_transactions:
-                            async with self.engine.begin() as conn:
-                                await insert_batch(conn, sales_batch, rents_batch)
-                            sales_batch.clear()
-                            rents_batch.clear()
-                            current_timestamp = datetime.now()
+                            try:
+                                async with self.engine.begin() as conn:
+                                    await insert_batch(conn, sales_batch, rents_batch)
+                                sales_batch.clear()
+                                rents_batch.clear()
+                                current_timestamp = datetime.now()
+                                
+                                # 배치 삽입 완료 로깅 (매 5회마다)
+                                if (total_sales_inserted + total_rents_inserted) % (batch_size_transactions * 5) == 0:
+                                    print(f"      💾 배치 삽입 완료: 매매 {total_sales_inserted:,}개, 전월세 {total_rents_inserted:,}개")
+                            except Exception as e:
+                                print(f"      ❌ 배치 삽입 실패: {e}")
+                                raise
                 
                 # 월별 완료 후 배치 삽입 및 진행 상황 표시
                 if sales_batch or rents_batch:
-                    async with self.engine.begin() as conn:
-                        await insert_batch(conn, sales_batch, rents_batch)
-                    sales_batch.clear()
-                    rents_batch.clear()
-                    current_timestamp = datetime.now()
+                    try:
+                        async with self.engine.begin() as conn:
+                            await insert_batch(conn, sales_batch, rents_batch)
+                        sales_batch.clear()
+                        rents_batch.clear()
+                        current_timestamp = datetime.now()
+                    except Exception as e:
+                        print(f"      ❌ 월별 배치 삽입 실패: {e}")
+                        raise
                 
                 # 진행 상황 로깅
                 month_progress = (month_count / total_months) * 100
@@ -1024,9 +1139,13 @@ class DatabaseAdmin:
             # 마지막 남은 배치 데이터 삽입
             if sales_batch or rents_batch:
                 print(f"\n   💾 남은 배치 데이터 삽입 중...")
-                async with self.engine.begin() as conn:
-                    await insert_batch(conn, sales_batch, rents_batch)
-                print(f"   ✅ 남은 배치 데이터 삽입 완료")
+                try:
+                    async with self.engine.begin() as conn:
+                        await insert_batch(conn, sales_batch, rents_batch)
+                    print(f"   ✅ 남은 배치 데이터 삽입 완료")
+                except Exception as e:
+                    print(f"   ❌ 남은 배치 데이터 삽입 실패: {e}")
+                    raise
             
             # 전세/월세 통계 출력
             async with self.engine.begin() as conn:
@@ -1114,13 +1233,14 @@ def print_menu():
     print("8. 💾 데이터 백업 (CSV)")
     print("9. ♻️  데이터 복원 (CSV)")
     print("10. 🎲 거래 없는 아파트에 더미 데이터 생성")
+    print("11. 📥 더미 데이터만 백업 (CSV)")
     print("0. 종료")
     print("=" * 60)
 
 async def interactive_mode(admin: DatabaseAdmin):
     while True:
         print_menu()
-        choice = input("\n선택하세요 (0-10): ").strip()
+        choice = input("\n선택하세요 (0-11): ").strip()
         
         if choice == "0": break
         elif choice == "1": await list_tables_command(admin)
@@ -1145,6 +1265,7 @@ async def interactive_mode(admin: DatabaseAdmin):
             table = input("테이블명 (전체는 엔터): ").strip()
             await restore_command(admin, table if table else None)
         elif choice == "10": await admin.generate_dummy_for_empty_apartments()
+        elif choice == "11": await admin.backup_dummy_data()
         
         input("\n계속하려면 Enter...")
 
@@ -1165,6 +1286,8 @@ def main():
         dummy_parser = subparsers.add_parser("dummy")
         dummy_parser.add_argument("--force", action="store_true", help="확인 없이 실행")
         
+        subparsers.add_parser("backup-dummy", help="더미 데이터만 백업")
+        
         args = parser.parse_args()
         
         async def run():
@@ -1174,6 +1297,7 @@ def main():
                 elif args.command == "backup": await backup_command(admin, args.table_name)
                 elif args.command == "restore": await restore_command(admin, args.table_name, args.force)
                 elif args.command == "dummy": await admin.generate_dummy_for_empty_apartments(confirm=args.force)
+                elif args.command == "backup-dummy": await admin.backup_dummy_data()
             finally: await admin.close()
         
         asyncio.run(run())

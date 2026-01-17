@@ -46,9 +46,10 @@ class CRUDAccount(CRUDBase[Account, dict, AccountUpdate]):
             select(Account).where(
                 Account.clerk_user_id == clerk_user_id,
                 Account.is_deleted == False
-            )
+            ).order_by(Account.account_id.asc())
         )
-        return result.scalar_one_or_none()
+        # 중복 레코드가 있을 경우 첫 번째 레코드만 반환
+        return result.scalars().first()
     
     async def get_by_email(
         self,

@@ -68,6 +68,7 @@ class AccountBase(BaseModel):
     created_at: Optional[datetime] = Field(None, description="가입일")
     updated_at: Optional[datetime] = Field(None, description="수정일")
     is_deleted: bool = Field(False, description="삭제 여부")
+    is_dark_mode: bool = Field(True, description="다크모드 활성화 여부")
     
     class Config:
         from_attributes = True  # SQLAlchemy 모델에서 변환 가능
@@ -79,7 +80,8 @@ class AccountBase(BaseModel):
                 "is_admin": "Y",
                 "created_at": "2026-01-01T00:00:00Z",
                 "updated_at": "2026-01-01T00:00:00Z",
-                "is_deleted": False
+                "is_deleted": False,
+                "is_dark_mode": True
             }
         }
 

@@ -206,7 +206,8 @@ async def get_current_user(
                 "is_admin": user.is_admin,
                 "created_at": user.created_at.isoformat() if user.created_at else None,
                 "updated_at": user.updated_at.isoformat() if user.updated_at else None,
-                "is_deleted": user.is_deleted
+                "is_deleted": user.is_deleted,
+                "is_dark_mode": user.is_dark_mode
             }
             await set_to_cache(cache_key, user_data_dict, ttl=3600)
     except Exception as e:
