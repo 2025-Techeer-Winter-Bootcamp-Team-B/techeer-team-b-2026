@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Search, X, TrendingUp, History, Filter, MapPin, Trash2, Navigation, Settings, Clock, ChevronRight, ChevronDown, ChevronUp, Building2, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ApartmentSearchResult, getRecentSearches, RecentSearch, searchLocations, LocationSearchResult, deleteRecentSearch, deleteAllRecentSearches, searchApartments } from '../../lib/searchApi';
+import { ApartmentSearchResult, getRecentSearches, RecentSearch, searchLocations, LocationSearchResult, deleteRecentSearch, deleteAllRecentSearches, searchApartments, getTrendingApartments, TrendingApartment, detailedSearchApartments, DetailedSearchResult, DetailedSearchRequest } from '../../lib/searchApi';
 import { aiSearchApartments, AISearchApartmentResult, AISearchHistoryItem, saveAISearchHistory, getAISearchHistory } from '../../lib/aiApi';
 import AIChatMessages from './AIChatMessages';
 import { useApartmentSearch } from '../../hooks/useApartmentSearch';
@@ -239,6 +239,19 @@ export default function MapSearchControl({
   const [isLoadingRecentViews, setIsLoadingRecentViews] = useState(false);
   // 쿠키 기반 최근 본 아파트 상태 추가
   const [cookieRecentViews, setCookieRecentViews] = useState<CookieRecentView[]>([]);
+  // 급상승 아파트 상태 추가
+  const [trendingApartments, setTrendingApartments] = useState<TrendingApartment[]>([]);
+  const [isLoadingTrending, setIsLoadingTrending] = useState(false);
+  // 상세 검색 상태
+  const [detailedSearchLocation, setDetailedSearchLocation] = useState('');
+  const [detailedSearchMinArea, setDetailedSearchMinArea] = useState('');
+  const [detailedSearchMaxArea, setDetailedSearchMaxArea] = useState('');
+  const [detailedSearchMinPrice, setDetailedSearchMinPrice] = useState('');
+  const [detailedSearchMaxPrice, setDetailedSearchMaxPrice] = useState('');
+  const [detailedSearchSubwayMinutes, setDetailedSearchSubwayMinutes] = useState('');
+  const [detailedSearchHasEducation, setDetailedSearchHasEducation] = useState<boolean | null>(null);
+  const [detailedSearchResults, setDetailedSearchResults] = useState<DetailedSearchResult[]>([]);
+  const [isSearchingDetailed, setIsSearchingDetailed] = useState(false);
   const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
   const [showDeleteAllRecentViewsDialog, setShowDeleteAllRecentViewsDialog] = useState(false);
   const [isRecentSearchesExpanded, setIsRecentSearchesExpanded] = useState(true);
@@ -536,6 +549,27 @@ export default function MapSearchControl({
     fetchRecentViews();
   }, [isExpanded, activeTab, query, isSignedIn, getToken]);
 
+  // 급상승 아파트 가져오기
+  useEffect(() => {
+    const fetchTrendingApartments = async () => {
+      if (isExpanded && activeTab === 'trending' && query.length < 1) {
+        setIsLoadingTrending(true);
+        try {
+          const token = isSignedIn && getToken ? await getToken() : null;
+          const apartments = await getTrendingApartments(token);
+          setTrendingApartments(apartments);
+        } catch (error) {
+          console.error('Failed to fetch trending apartments:', error);
+          setTrendingApartments([]);
+        } finally {
+          setIsLoadingTrending(false);
+        }
+      }
+    };
+
+    fetchTrendingApartments();
+  }, [isExpanded, activeTab, query, isSignedIn, getToken]);
+
   // 지역 검색 (AI 모드가 아닐 때만)
   useEffect(() => {
     const timer = setTimeout(async () => {
@@ -680,7 +714,7 @@ export default function MapSearchControl({
   const tabs = [
     { id: 'recent', label: '최근 검색', icon: History },
     { id: 'trending', label: '급상승', icon: TrendingUp },
-    { id: 'settings', label: '설정', icon: Settings },
+    { id: 'settings', label: '상세 검색', icon: Settings },
   ];
 
   return (
@@ -1425,66 +1459,394 @@ export default function MapSearchControl({
                                         </>
                                     )
                                 ) : !isAIMode && activeTab === 'settings' ? (
-                                    <div className="flex flex-col gap-3">
-                                        <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-2">지도 설정</h3>
-                                        
-                                        {/* 내 위치로 이동 */}
-                                        {onMoveToCurrentLocation && (
-                                            <button
-                                                onClick={() => {
-                                                    onMoveToCurrentLocation();
-                                                    setIsExpanded(false);
-                                                }}
-                                                className="w-full flex items-center gap-3 p-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors text-left border border-transparent hover:border-zinc-300 dark:hover:border-zinc-600"
-                                            >
-                                                <div className="w-10 h-10 rounded-lg bg-blue-500/10 dark:bg-blue-400/20 flex items-center justify-center">
-                                                    <Navigation size={20} className="text-blue-600 dark:text-blue-400" />
+                                    <div className="flex flex-col gap-4">
+                                        <div className="space-y-3">
+                                            {/* 지역 */}
+                                            <div>
+                                                <label className={`block text-xs font-medium mb-1.5 ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                                                    지역
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    placeholder="예: 강남구, 서울시 강남구"
+                                                    value={detailedSearchLocation}
+                                                    onChange={(e) => setDetailedSearchLocation(e.target.value)}
+                                                    className={`w-full px-3 py-2 text-sm rounded-lg border transition-all ${
+                                                        isDarkMode 
+                                                            ? 'bg-zinc-800 border-zinc-700 text-white placeholder:text-zinc-500 focus:border-sky-500/50 focus:ring-2 focus:ring-sky-500/10' 
+                                                            : 'bg-white border-zinc-300 text-zinc-900 placeholder:text-zinc-400 focus:border-sky-500/50 focus:ring-2 focus:ring-sky-500/10'
+                                                    }`}
+                                                />
+                                            </div>
+                                            
+                                            {/* 평수 범위 */}
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <div>
+                                                    <label className={`block text-xs font-medium mb-1.5 ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                                                        최소 평수 (㎡)
+                                                    </label>
+                                                    <input
+                                                        type="number"
+                                                        placeholder="최소"
+                                                        value={detailedSearchMinArea}
+                                                        onChange={(e) => setDetailedSearchMinArea(e.target.value)}
+                                                        className={`w-full px-3 py-2 text-sm rounded-lg border transition-all ${
+                                                            isDarkMode 
+                                                                ? 'bg-zinc-800 border-zinc-700 text-white placeholder:text-zinc-500 focus:border-sky-500/50 focus:ring-2 focus:ring-sky-500/10' 
+                                                                : 'bg-white border-zinc-300 text-zinc-900 placeholder:text-zinc-400 focus:border-sky-500/50 focus:ring-2 focus:ring-sky-500/10'
+                                                        }`}
+                                                    />
                                                 </div>
-                                                <div className="flex-1">
-                                                    <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">내 위치로 이동</div>
-                                                    <div className="text-xs text-zinc-500 dark:text-zinc-400">현재 위치로 지도 이동</div>
+                                                <div>
+                                                    <label className={`block text-xs font-medium mb-1.5 ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                                                        최대 평수 (㎡)
+                                                    </label>
+                                                    <input
+                                                        type="number"
+                                                        placeholder="최대"
+                                                        value={detailedSearchMaxArea}
+                                                        onChange={(e) => setDetailedSearchMaxArea(e.target.value)}
+                                                        className={`w-full px-3 py-2 text-sm rounded-lg border transition-all ${
+                                                            isDarkMode 
+                                                                ? 'bg-zinc-800 border-zinc-700 text-white placeholder:text-zinc-500 focus:border-sky-500/50 focus:ring-2 focus:ring-sky-500/10' 
+                                                                : 'bg-white border-zinc-300 text-zinc-900 placeholder:text-zinc-400 focus:border-sky-500/50 focus:ring-2 focus:ring-sky-500/10'
+                                                        }`}
+                                                    />
                                                 </div>
-                                            </button>
-                                        )}
-                                        
-                                        {/* 거리뷰 토글 */}
-                                        {onToggleRoadviewMode && (
-                                            <button
-                                                onClick={() => {
-                                                    onToggleRoadviewMode();
+                                            </div>
+                                            
+                                            {/* 가격 범위 */}
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <div>
+                                                    <label className={`block text-xs font-medium mb-1.5 ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                                                        최소 가격 (만원)
+                                                    </label>
+                                                    <input
+                                                        type="number"
+                                                        placeholder="최소"
+                                                        value={detailedSearchMinPrice}
+                                                        onChange={(e) => setDetailedSearchMinPrice(e.target.value)}
+                                                        className={`w-full px-3 py-2 text-sm rounded-lg border transition-all ${
+                                                            isDarkMode 
+                                                                ? 'bg-zinc-800 border-zinc-700 text-white placeholder:text-zinc-500 focus:border-sky-500/50 focus:ring-2 focus:ring-sky-500/10' 
+                                                                : 'bg-white border-zinc-300 text-zinc-900 placeholder:text-zinc-400 focus:border-sky-500/50 focus:ring-2 focus:ring-sky-500/10'
+                                                        }`}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className={`block text-xs font-medium mb-1.5 ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                                                        최대 가격 (만원)
+                                                    </label>
+                                                    <input
+                                                        type="number"
+                                                        placeholder="최대"
+                                                        value={detailedSearchMaxPrice}
+                                                        onChange={(e) => setDetailedSearchMaxPrice(e.target.value)}
+                                                        className={`w-full px-3 py-2 text-sm rounded-lg border transition-all ${
+                                                            isDarkMode 
+                                                                ? 'bg-zinc-800 border-zinc-700 text-white placeholder:text-zinc-500 focus:border-sky-500/50 focus:ring-2 focus:ring-sky-500/10' 
+                                                                : 'bg-white border-zinc-300 text-zinc-900 placeholder:text-zinc-400 focus:border-sky-500/50 focus:ring-2 focus:ring-sky-500/10'
+                                                        }`}
+                                                    />
+                                                </div>
+                                            </div>
+                                            
+                                            {/* 지하철 거리 */}
+                                            <div>
+                                                <label className={`block text-xs font-medium mb-1.5 ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                                                    지하철 도보 시간 (분, 최대)
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    placeholder="예: 10"
+                                                    min="0"
+                                                    max="60"
+                                                    value={detailedSearchSubwayMinutes}
+                                                    onChange={(e) => setDetailedSearchSubwayMinutes(e.target.value)}
+                                                    className={`w-full px-3 py-2 text-sm rounded-lg border transition-all ${
+                                                        isDarkMode 
+                                                            ? 'bg-zinc-800 border-zinc-700 text-white placeholder:text-zinc-500 focus:border-sky-500/50 focus:ring-2 focus:ring-sky-500/10' 
+                                                            : 'bg-white border-zinc-300 text-zinc-900 placeholder:text-zinc-400 focus:border-sky-500/50 focus:ring-2 focus:ring-sky-500/10'
+                                                    }`}
+                                                />
+                                            </div>
+                                            
+                                            {/* 교육시설 */}
+                                            <div>
+                                                <label className={`block text-xs font-medium mb-1.5 ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                                                    교육시설
+                                                </label>
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        onClick={() => setDetailedSearchHasEducation(detailedSearchHasEducation === true ? null : true)}
+                                                        className={`flex-1 px-3 py-2 text-xs font-medium rounded-lg transition-all ${
+                                                            detailedSearchHasEducation === true
+                                                                ? isDarkMode
+                                                                    ? 'bg-sky-500 text-white'
+                                                                    : 'bg-sky-500 text-white'
+                                                                : isDarkMode
+                                                                    ? 'bg-zinc-800 text-zinc-400 border border-zinc-700'
+                                                                    : 'bg-zinc-50 text-zinc-600 border border-zinc-300'
+                                                        }`}
+                                                    >
+                                                        있음
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setDetailedSearchHasEducation(detailedSearchHasEducation === false ? null : false)}
+                                                        className={`flex-1 px-3 py-2 text-xs font-medium rounded-lg transition-all ${
+                                                            detailedSearchHasEducation === false
+                                                                ? isDarkMode
+                                                                    ? 'bg-sky-500 text-white'
+                                                                    : 'bg-sky-500 text-white'
+                                                                : isDarkMode
+                                                                    ? 'bg-zinc-800 text-zinc-400 border border-zinc-700'
+                                                                    : 'bg-zinc-50 text-zinc-600 border border-zinc-300'
+                                                        }`}
+                                                    >
+                                                        없음
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setDetailedSearchHasEducation(null)}
+                                                        className={`flex-1 px-3 py-2 text-xs font-medium rounded-lg transition-all ${
+                                                            detailedSearchHasEducation === null
+                                                                ? isDarkMode
+                                                                    ? 'bg-sky-500 text-white'
+                                                                    : 'bg-sky-500 text-white'
+                                                                : isDarkMode
+                                                                    ? 'bg-zinc-800 text-zinc-400 border border-zinc-700'
+                                                                    : 'bg-zinc-50 text-zinc-600 border border-zinc-300'
+                                                        }`}
+                                                    >
+                                                        상관없음
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            
+                                            {/* 검색 버튼 */}
+                                            <motion.button
+                                                whileHover={{ scale: 1.02 }}
+                                                whileTap={{ scale: 0.98 }}
+                                                onClick={async () => {
+                                                    setIsSearchingDetailed(true);
+                                                    try {
+                                                        const token = isSignedIn && getToken ? await getToken() : null;
+                                                        const request: DetailedSearchRequest = {
+                                                            location: detailedSearchLocation.trim() || undefined,
+                                                            min_area: detailedSearchMinArea ? parseFloat(detailedSearchMinArea) : undefined,
+                                                            max_area: detailedSearchMaxArea ? parseFloat(detailedSearchMaxArea) : undefined,
+                                                            min_price: detailedSearchMinPrice ? parseInt(detailedSearchMinPrice) : undefined,
+                                                            max_price: detailedSearchMaxPrice ? parseInt(detailedSearchMaxPrice) : undefined,
+                                                            subway_max_distance_minutes: detailedSearchSubwayMinutes ? parseInt(detailedSearchSubwayMinutes) : undefined,
+                                                            has_education_facility: detailedSearchHasEducation,
+                                                            limit: 50
+                                                        };
+                                                        const result = await detailedSearchApartments(request, token);
+                                                        setDetailedSearchResults(result.results.filter(apt => apt.location != null && apt.location.lat != null && apt.location.lng != null));
+                                                        
+                                                        // 검색 결과를 지도에 표시
+                                                        if (onSearchResultsChange && result.results.length > 0) {
+                                                            const markers = result.results
+                                                                .filter(apt => apt.location && apt.location.lat && apt.location.lng)
+                                                                .map(apt => ({
+                                                                    id: apt.apt_id,
+                                                                    apt_id: apt.apt_id,
+                                                                    name: apt.apt_name,
+                                                                    apt_name: apt.apt_name,
+                                                                    lat: apt.location!.lat,
+                                                                    lng: apt.location!.lng,
+                                                                    address: apt.address || '',
+                                                                    markerType: 'apartment' as const
+                                                                }));
+                                                            onSearchResultsChange(markers);
+                                                        }
+                                                    } catch (error) {
+                                                        console.error('Failed to detailed search apartments:', error);
+                                                        setDetailedSearchResults([]);
+                                                    } finally {
+                                                        setIsSearchingDetailed(false);
+                                                    }
                                                 }}
-                                                className={`w-full flex items-center gap-3 p-3 rounded-xl transition-colors text-left ${
-                                                    isRoadviewMode
-                                                        ? 'bg-sky-500/10 dark:bg-sky-400/20 border-2 border-sky-500 dark:border-sky-400'
-                                                        : 'bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 border border-transparent hover:border-zinc-300 dark:hover:border-zinc-600'
+                                                disabled={isSearchingDetailed}
+                                                className={`w-full py-2.5 text-sm font-medium rounded-lg transition-all flex items-center justify-center gap-2 ${
+                                                    isSearchingDetailed
+                                                        ? isDarkMode
+                                                            ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed'
+                                                            : 'bg-zinc-300 text-zinc-500 cursor-not-allowed'
+                                                        : isDarkMode
+                                                            ? 'bg-sky-500 hover:bg-sky-600 text-white'
+                                                            : 'bg-sky-500 hover:bg-sky-600 text-white'
                                                 }`}
                                             >
-                                                <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                                                    isRoadviewMode
-                                                        ? 'bg-sky-500 dark:bg-sky-500'
-                                                        : 'bg-zinc-200 dark:bg-zinc-700'
-                                                }`}>
-                                                    <MapPin size={20} className={isRoadviewMode ? 'text-white' : 'text-zinc-600 dark:text-zinc-300'} />
-                                                </div>
-                                                <div className="flex-1">
-                                                    <div className={`text-sm font-semibold ${
-                                                        isRoadviewMode
-                                                            ? 'text-sky-600 dark:text-sky-400'
-                                                            : 'text-zinc-900 dark:text-zinc-100'
-                                                    }`}>
-                                                        거리뷰 {isRoadviewMode ? '켜짐' : '꺼짐'}
+                                                {isSearchingDetailed ? (
+                                                    <>
+                                                        <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+                                                        <span>검색 중...</span>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Search size={16} />
+                                                        <span>검색</span>
+                                                    </>
+                                                )}
+                                            </motion.button>
+                                            
+                                            {/* 검색 결과 */}
+                                            {detailedSearchResults.length > 0 && (
+                                                <div className="mt-4 pt-4 border-t border-zinc-700 dark:border-zinc-700">
+                                                    <p className={`text-xs font-medium mb-2 ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                                                        검색 결과 ({detailedSearchResults.length}개)
+                                                    </p>
+                                                    <div className="max-h-[200px] overflow-y-auto space-y-2">
+                                                        {detailedSearchResults.slice(0, 10).map((apt) => (
+                                                            <motion.button
+                                                                key={apt.apt_id}
+                                                                whileHover={{ scale: 1.01 }}
+                                                                whileTap={{ scale: 0.99 }}
+                                                                onClick={() => {
+                                                                    if (apt.location && apt.location.lat && apt.location.lng) {
+                                                                        const aptData: ApartmentSearchResult = {
+                                                                            apt_id: apt.apt_id,
+                                                                            apt_name: apt.apt_name,
+                                                                            address: apt.address || '',
+                                                                            sigungu_name: '',
+                                                                            location: apt.location,
+                                                                            price: '',
+                                                                        };
+                                                                        handleSelect(aptData);
+                                                                    }
+                                                                }}
+                                                                className={`w-full text-left p-2.5 rounded-lg transition-colors ${
+                                                                    isDarkMode
+                                                                        ? 'bg-zinc-800/50 hover:bg-zinc-800 text-white'
+                                                                        : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-900'
+                                                                }`}
+                                                            >
+                                                                <p className="text-sm font-medium truncate">{apt.apt_name}</p>
+                                                                {apt.address && (
+                                                                    <p className={`text-xs mt-0.5 truncate ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                                                                        {apt.address}
+                                                                    </p>
+                                                                )}
+                                                                {apt.average_price && apt.average_price > 0 ? (() => {
+                                                                    const price = Math.floor(apt.average_price);
+                                                                    const priceText = price >= 10000 
+                                                                        ? `${Math.floor(price / 10000)}억 ${(price % 10000).toLocaleString()}만원`
+                                                                        : `${price.toLocaleString()}만원`;
+                                                                    return (
+                                                                        <p className={`text-xs mt-1 font-medium ${isDarkMode ? 'text-sky-400' : 'text-sky-600'}`}>
+                                                                            평균 {priceText}
+                                                                        </p>
+                                                                    );
+                                                                })() : (
+                                                                    <p className="text-xs mt-1 font-medium text-red-500">
+                                                                        최근 6개월간 거래 내역이 없습니다
+                                                                    </p>
+                                                                )}
+                                                            </motion.button>
+                                                        ))}
                                                     </div>
-                                                    <div className={`text-xs ${
-                                                        isRoadviewMode
-                                                            ? 'text-sky-500 dark:text-sky-400'
-                                                            : 'text-zinc-500 dark:text-zinc-400'
-                                                    }`}>
-                                                        {isRoadviewMode ? '거리뷰 모드가 활성화되었습니다' : '거리뷰 모드를 활성화하려면 클릭하세요'}
-                                                    </div>
                                                 </div>
-                                            </button>
-                                        )}
+                                            )}
+                                        </div>
                                     </div>
+                                ) : !isAIMode && activeTab === 'trending' ? (
+                                    isLoadingTrending ? (
+                                        <motion.div
+                                            initial={{ opacity: 0 }}
+                                            animate={{ opacity: 1 }}
+                                            className="flex items-center justify-center py-4"
+                                        >
+                                            <div className="w-5 h-5 border-2 border-sky-500 border-t-transparent rounded-full animate-spin"></div>
+                                        </motion.div>
+                                    ) : trendingApartments.length > 0 ? (
+                                        <div>
+                                            <AnimatePresence mode="popLayout">
+                                                {trendingApartments.map((apt, index) => (
+                                                    <motion.div
+                                                        key={apt.apt_id}
+                                                        initial={{ opacity: 0, y: -10 }}
+                                                        animate={{ opacity: 1, y: 0 }}
+                                                        exit={{ opacity: 0, height: 0 }}
+                                                        transition={{ 
+                                                            duration: 0.2,
+                                                            delay: index * 0.03,
+                                                            ease: "easeOut"
+                                                        }}
+                                                        className={`w-full flex items-center gap-3 py-2.5 transition-colors group ${
+                                                            index !== trendingApartments.length - 1
+                                                                ? `border-b ${isDarkMode ? 'border-zinc-700/50' : 'border-zinc-200'}`
+                                                                : ''
+                                                        } ${
+                                                            isDarkMode 
+                                                                ? 'hover:bg-zinc-800/30' 
+                                                                : 'hover:bg-zinc-50'
+                                                        }`}
+                                                    >
+                                                        <motion.button
+                                                            whileHover={{ scale: 1.01 }}
+                                                            whileTap={{ scale: 0.99 }}
+                                                            onClick={() => {
+                                                                if (apt.location && apt.location.lat && apt.location.lng) {
+                                                                    const aptData: ApartmentSearchResult = {
+                                                                        apt_id: apt.apt_id,
+                                                                        apt_name: apt.apt_name,
+                                                                        address: apt.address || '',
+                                                                        sigungu_name: '',
+                                                                        location: apt.location,
+                                                                        price: '',
+                                                                    };
+                                                                    handleSelect(aptData);
+                                                                }
+                                                            }}
+                                                            className="flex-1 flex items-center gap-3 text-left"
+                                                        >
+                                                            <TrendingUp size={14} className={`shrink-0 ${
+                                                                isDarkMode ? 'text-orange-400' : 'text-orange-600'
+                                                            }`} />
+                                                            <div className="flex-1 min-w-0">
+                                                                <p className={`text-sm font-medium truncate ${
+                                                                    isDarkMode 
+                                                                        ? 'text-white group-hover:text-orange-400' 
+                                                                        : 'text-zinc-900 group-hover:text-orange-600'
+                                                                }`}>
+                                                                    {apt.apt_name}
+                                                                </p>
+                                                                <div className="flex items-center gap-2 mt-0.5">
+                                                                    {apt.address && (
+                                                                        <div className="flex items-center gap-1">
+                                                                            <MapPin size={11} className={`shrink-0 ${
+                                                                                isDarkMode ? 'text-zinc-400' : 'text-zinc-500'
+                                                                            }`} />
+                                                                            <p className={`text-xs truncate ${
+                                                                                isDarkMode ? 'text-zinc-400' : 'text-zinc-600'
+                                                                            }`}>
+                                                                                {apt.address}
+                                                                            </p>
+                                                                        </div>
+                                                                    )}
+                                                                    <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                                                        isDarkMode ? 'bg-orange-500/20 text-orange-300' : 'bg-orange-100 text-orange-700'
+                                                                    }`}>
+                                                                        {apt.transaction_count}건
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                        </motion.button>
+                                                    </motion.div>
+                                                ))}
+                                            </AnimatePresence>
+                                        </div>
+                                    ) : (
+                                        <motion.div
+                                            initial={{ opacity: 0 }}
+                                            animate={{ opacity: 1 }}
+                                            className={`text-xs text-center py-3 rounded-lg ${
+                                                isDarkMode ? 'text-zinc-400 bg-zinc-800/30' : 'text-zinc-500 bg-zinc-50'
+                                            }`}
+                                        >
+                                            급상승 검색어가 없습니다
+                                        </motion.div>
+                                    )
                                 ) : !isAIMode && (
                                     <div className={`flex flex-col items-center justify-center py-8 gap-3 ${
                                         isDarkMode ? 'text-white' : 'text-zinc-500'
@@ -1492,12 +1854,8 @@ export default function MapSearchControl({
                                         <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
                                             isDarkMode ? 'bg-zinc-800/50' : 'bg-zinc-50'
                                         }`}>
-                                            {activeTab === 'trending' && <TrendingUp size={24} className={`opacity-50 ${isDarkMode ? 'text-white' : 'text-zinc-500'}`} />}
                                         </div>
-                                        <span className={`text-sm font-medium ${isDarkMode ? 'text-white' : 'text-zinc-500'}`}>
-                                        {activeTab === 'trending' && '급상승 검색어가 없습니다'}
-                                    </span>
-                                </div>
+                                    </div>
                                 )}
                                     </motion.div>
                                 ) : (
