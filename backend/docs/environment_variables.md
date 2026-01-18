@@ -195,6 +195,21 @@ ENVIRONMENT=production
 
 ### 외부 API 키
 
+#### `KOSIS_API_KEY`
+**설명**: 통계청 KOSIS API 키 (인구 이동 데이터 수집용)
+
+**중요**: API 키에 `=` 기호가 포함된 경우 따옴표로 감싸야 합니다.
+
+**예시**:
+```bash
+# 값에 = 기호가 포함된 경우 따옴표 필수
+KOSIS_API_KEY="ZTM1NTIyMGQyZGYxM2I3NDY2NWI1YWJkMjBlMjhkNTY="
+```
+
+> ⚠️ **주의**: `.env` 파일에서 값에 `=` 기호가 포함된 경우 반드시 따옴표로 감싸야 합니다. 그렇지 않으면 첫 번째 `=` 기호만 구분자로 인식되어 값이 잘못 파싱됩니다.
+
+---
+
 #### `MOLIT_API_KEY`
 **설명**: 국토부 API 키
 
@@ -252,6 +267,23 @@ NAVER_CLIENT_ID=your_naver_client_id
 ```bash
 NAVER_CLIENT_SECRET=your_naver_client_secret
 ```
+
+---
+
+#### `KOSIS_API_KEY`
+**설명**: 통계청 KOSIS API 키 (인구 이동 데이터 수집용)
+
+**중요**: API 키에 `=` 기호가 포함된 경우 따옴표로 감싸야 합니다.
+
+**예시**:
+```bash
+# 값에 = 기호가 포함된 경우 따옴표 필수
+KOSIS_API_KEY="ZTM1NTIyMGQyZGYxM2I3NDY2NWI1YWJkMjBlMjhkNTY="
+# 또는 작은 따옴표도 가능
+KOSIS_API_KEY='ZTM1NTIyMGQyZGYxM2I3NDY2NWI1YWJkMjBlMjhkNTY='
+```
+
+> ⚠️ **주의**: `.env` 파일에서 값에 `=` 기호가 포함된 경우 반드시 따옴표로 감싸야 합니다. 그렇지 않으면 첫 번째 `=` 기호만 구분자로 인식되어 값이 잘못 파싱됩니다.
 
 ---
 

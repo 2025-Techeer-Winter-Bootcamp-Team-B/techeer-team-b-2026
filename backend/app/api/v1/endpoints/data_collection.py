@@ -784,3 +784,125 @@ async def update_house_score_change_rates(
                 "message": f"변동률 계산 중 오류가 발생했습니다: {str(e)}"
             }
         )
+
+
+@router.post(
+    "/population-movements",
+    status_code=status.HTTP_200_OK,
+    tags=["📥 Data Collection (데이터 수집)"],
+    summary="인구 이동 데이터 수집",
+    description="""
+    KOSIS 통계청 API에서 인구 이동 데이터를 가져와서 데이터베이스에 저장합니다.
+    
+    **API 정보:**
+    - 제공: KOSIS (통계청)
+    - 데이터: 지역별 인구 이동 데이터 (전입, 전출, 순이동)
+    
+    **작동 방식:**
+    1. KOSIS API를 호출하여 지정된 기간의 인구 이동 데이터를 가져옵니다.
+    2. 데이터를 파싱하여 지역별 전입/전출/순이동을 계산합니다.
+    3. POPULATION_MOVEMENTS 테이블에 저장합니다.
+    4. 이미 존재하는 데이터는 업데이트됩니다 (중복 방지).
+    
+    **파라미터:**
+    - start_prd_de: 시작 기간 (YYYYMM 형식, 예: "202401", 기본값: "202401")
+    - end_prd_de: 종료 기간 (YYYYMM 형식, 예: "202511", 기본값: "202511")
+    
+    **주의사항:**
+    - KOSIS_API_KEY 환경변수가 설정되어 있어야 합니다.
+    - API 호출 제한이 있을 수 있으므로 주의해서 사용하세요.
+    - 이미 수집된 데이터는 업데이트됩니다 (지역/년월 기준).
+    - STATES 테이블에 지역 데이터가 있어야 정상적으로 동작합니다.
+    
+    **응답:**
+    - success: 성공 여부
+    - message: 결과 메시지
+    - saved_count: 신규 저장된 레코드 수
+    - updated_count: 업데이트된 레코드 수
+    - period: 수집 기간
+    """,
+    responses={
+        200: {
+            "description": "데이터 수집 완료",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "success": True,
+                        "message": "인구 이동 데이터 저장 완료: 신규 150건, 업데이트 50건",
+                        "saved_count": 150,
+                        "updated_count": 50,
+                        "period": "202401 ~ 202511"
+                    }
+                }
+            }
+        },
+        500: {
+            "description": "서버 오류 또는 API 키 미설정"
+        }
+    }
+)
+async def collect_population_movements(
+    start_prd_de: str = Query("202401", description="시작 기간 (YYYYMM)", min_length=6, max_length=6, examples=["202401"]),
+    end_prd_de: str = Query("202511", description="종료 기간 (YYYYMM)", min_length=6, max_length=6, examples=["202511"]),
+    db: AsyncSession = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    인구 이동 데이터 수집 - KOSIS 통계청 API에서 인구 이동 데이터를 가져와서 저장
+    
+    이 API는 KOSIS 통계청 API를 호출하여:
+    - 지정된 기간의 지역별 인구 이동 데이터를 수집
+    - POPULATION_MOVEMENTS 테이블에 저장
+    - 이미 존재하는 데이터는 업데이트
+    
+    Args:
+        start_prd_de: 시작 기간 (YYYYMM)
+        end_prd_de: 종료 기간 (YYYYMM)
+        db: 데이터베이스 세션
+    
+    Returns:
+        Dict[str, Any]: 수집 결과
+    
+    Raises:
+        HTTPException: API 키가 없거나 서버 오류 발생 시
+    """
+    try:
+        logger.info("=" * 60)
+        logger.info(f"👥 인구 이동 데이터 수집 API 호출됨: {start_prd_de} ~ {end_prd_de}")
+        logger.info("=" * 60)
+        
+        # 데이터 수집 실행
+        result = await data_collection_service.collect_population_movements(
+            db,
+            start_prd_de=start_prd_de,
+            end_prd_de=end_prd_de
+        )
+        
+        logger.info("=" * 60)
+        logger.info(f"✅ 인구 이동 데이터 수집 완료")
+        logger.info(f"   - 신규 저장: {result['saved_count']}건")
+        logger.info(f"   - 업데이트: {result['updated_count']}건")
+        logger.info(f"   - 기간: {result['period']}")
+        logger.info("=" * 60)
+        
+        return result
+        
+    except ValueError as e:
+        # API 키 미설정 등 설정 오류
+        logger.error(f"❌ 설정 오류: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "CONFIGURATION_ERROR",
+                "message": str(e)
+            }
+        )
+    except Exception as e:
+        # 기타 오류
+        logger.error(f"❌ 데이터 수집 실패: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "COLLECTION_ERROR",
+                "message": f"데이터 수집 중 오류가 발생했습니다: {str(e)}"
+            }
+        )
