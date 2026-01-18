@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Search, X, TrendingUp, History, Filter, MapPin, Trash2, Navigation, Settings, Clock, ChevronRight, ChevronDown, ChevronUp, Building2, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ApartmentSearchResult, getRecentSearches, RecentSearch, searchLocations, LocationSearchResult, deleteRecentSearch, deleteAllRecentSearches, searchApartments, getTrendingApartments, TrendingApartment } from '../../lib/searchApi';
+import { ApartmentSearchResult, getRecentSearches, RecentSearch, searchLocations, LocationSearchResult, deleteRecentSearch, deleteAllRecentSearches, searchApartments } from '../../lib/searchApi';
 import { aiSearchApartments, AISearchApartmentResult, AISearchHistoryItem, saveAISearchHistory, getAISearchHistory } from '../../lib/aiApi';
 import AIChatMessages from './AIChatMessages';
 import { useApartmentSearch } from '../../hooks/useApartmentSearch';
@@ -239,9 +239,6 @@ export default function MapSearchControl({
   const [isLoadingRecentViews, setIsLoadingRecentViews] = useState(false);
   // 쿠키 기반 최근 본 아파트 상태 추가
   const [cookieRecentViews, setCookieRecentViews] = useState<CookieRecentView[]>([]);
-  // 급상승 아파트 상태 추가
-  const [trendingApartments, setTrendingApartments] = useState<TrendingApartment[]>([]);
-  const [isLoadingTrending, setIsLoadingTrending] = useState(false);
   const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
   const [showDeleteAllRecentViewsDialog, setShowDeleteAllRecentViewsDialog] = useState(false);
   const [isRecentSearchesExpanded, setIsRecentSearchesExpanded] = useState(true);
@@ -537,27 +534,6 @@ export default function MapSearchControl({
     };
 
     fetchRecentViews();
-  }, [isExpanded, activeTab, query, isSignedIn, getToken]);
-
-  // 급상승 아파트 가져오기
-  useEffect(() => {
-    const fetchTrendingApartments = async () => {
-      if (isExpanded && activeTab === 'trending' && query.length < 1) {
-        setIsLoadingTrending(true);
-        try {
-          const token = isSignedIn && getToken ? await getToken() : null;
-          const apartments = await getTrendingApartments(token);
-          setTrendingApartments(apartments);
-        } catch (error) {
-          console.error('Failed to fetch trending apartments:', error);
-          setTrendingApartments([]);
-        } finally {
-          setIsLoadingTrending(false);
-        }
-      }
-    };
-
-    fetchTrendingApartments();
   }, [isExpanded, activeTab, query, isSignedIn, getToken]);
 
   // 지역 검색 (AI 모드가 아닐 때만)
@@ -1509,104 +1485,6 @@ export default function MapSearchControl({
                                             </button>
                                         )}
                                     </div>
-                                ) : !isAIMode && activeTab === 'trending' ? (
-                                    isLoadingTrending ? (
-                                        <motion.div
-                                            initial={{ opacity: 0 }}
-                                            animate={{ opacity: 1 }}
-                                            className="flex items-center justify-center py-4"
-                                        >
-                                            <div className="w-5 h-5 border-2 border-sky-500 border-t-transparent rounded-full animate-spin"></div>
-                                        </motion.div>
-                                    ) : trendingApartments.length > 0 ? (
-                                        <div>
-                                            <AnimatePresence mode="popLayout">
-                                                {trendingApartments.map((apt, index) => (
-                                                    <motion.div
-                                                        key={apt.apt_id}
-                                                        initial={{ opacity: 0, y: -10 }}
-                                                        animate={{ opacity: 1, y: 0 }}
-                                                        exit={{ opacity: 0, height: 0 }}
-                                                        transition={{ 
-                                                            duration: 0.2,
-                                                            delay: index * 0.03,
-                                                            ease: "easeOut"
-                                                        }}
-                                                        className={`w-full flex items-center gap-3 py-2.5 transition-colors group ${
-                                                            index !== trendingApartments.length - 1
-                                                                ? `border-b ${isDarkMode ? 'border-zinc-700/50' : 'border-zinc-200'}`
-                                                                : ''
-                                                        } ${
-                                                            isDarkMode 
-                                                                ? 'hover:bg-zinc-800/30' 
-                                                                : 'hover:bg-zinc-50'
-                                                        }`}
-                                                    >
-                                                        <motion.button
-                                                            whileHover={{ scale: 1.01 }}
-                                                            whileTap={{ scale: 0.99 }}
-                                                            onClick={() => {
-                                                                if (apt.location && apt.location.lat && apt.location.lng) {
-                                                                    const aptData: ApartmentSearchResult = {
-                                                                        apt_id: apt.apt_id,
-                                                                        apt_name: apt.apt_name,
-                                                                        address: apt.address || '',
-                                                                        sigungu_name: '',
-                                                                        location: apt.location,
-                                                                        price: '',
-                                                                    };
-                                                                    handleSelect(aptData);
-                                                                }
-                                                            }}
-                                                            className="flex-1 flex items-center gap-3 text-left"
-                                                        >
-                                                            <TrendingUp size={14} className={`shrink-0 ${
-                                                                isDarkMode ? 'text-orange-400' : 'text-orange-600'
-                                                            }`} />
-                                                            <div className="flex-1 min-w-0">
-                                                                <p className={`text-sm font-medium truncate ${
-                                                                    isDarkMode 
-                                                                        ? 'text-white group-hover:text-orange-400' 
-                                                                        : 'text-zinc-900 group-hover:text-orange-600'
-                                                                }`}>
-                                                                    {apt.apt_name}
-                                                                </p>
-                                                                <div className="flex items-center gap-2 mt-0.5">
-                                                                    {apt.address && (
-                                                                        <div className="flex items-center gap-1">
-                                                                            <MapPin size={11} className={`shrink-0 ${
-                                                                                isDarkMode ? 'text-zinc-400' : 'text-zinc-500'
-                                                                            }`} />
-                                                                            <p className={`text-xs truncate ${
-                                                                                isDarkMode ? 'text-zinc-400' : 'text-zinc-600'
-                                                                            }`}>
-                                                                                {apt.address}
-                                                                            </p>
-                                                                        </div>
-                                                                    )}
-                                                                    <span className={`text-xs px-1.5 py-0.5 rounded ${
-                                                                        isDarkMode ? 'bg-orange-500/20 text-orange-300' : 'bg-orange-100 text-orange-700'
-                                                                    }`}>
-                                                                        {apt.transaction_count}건
-                                                                    </span>
-                                                                </div>
-                                                            </div>
-                                                        </motion.button>
-                                                    </motion.div>
-                                                ))}
-                                            </AnimatePresence>
-                                        </div>
-                                    ) : (
-                                        <motion.div
-                                            initial={{ opacity: 0 }}
-                                            animate={{ opacity: 1 }}
-                                            className={`text-xs text-center py-3 rounded-lg ${
-                                                isDarkMode ? 'text-zinc-400 bg-zinc-800/30' : 'text-zinc-500 bg-zinc-50'
-                                            }`}
-                                        >
-                                            급상승 검색어가 없습니다
-                                        </motion.div>
-                                    )
                                 ) : !isAIMode && (
                                     <div className={`flex flex-col items-center justify-center py-8 gap-3 ${
                                         isDarkMode ? 'text-white' : 'text-zinc-500'
@@ -1614,8 +1492,12 @@ export default function MapSearchControl({
                                         <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
                                             isDarkMode ? 'bg-zinc-800/50' : 'bg-zinc-50'
                                         }`}>
+                                            {activeTab === 'trending' && <TrendingUp size={24} className={`opacity-50 ${isDarkMode ? 'text-white' : 'text-zinc-500'}`} />}
                                         </div>
-                                    </div>
+                                        <span className={`text-sm font-medium ${isDarkMode ? 'text-white' : 'text-zinc-500'}`}>
+                                        {activeTab === 'trending' && '급상승 검색어가 없습니다'}
+                                    </span>
+                                </div>
                                 )}
                                     </motion.div>
                                 ) : (
