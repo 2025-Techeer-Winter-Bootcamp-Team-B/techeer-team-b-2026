@@ -64,9 +64,6 @@ ANALYZE apart_details;
 -- ============================================================
 -- 완료 메시지
 -- ============================================================
-DO $$
-BEGIN
-    RAISE NOTICE '✅ 지하철 거리 파싱 함수 생성 완료!';
-    RAISE NOTICE '   - parse_subway_time_max_minutes() 함수 생성';
-    RAISE NOTICE '   - 함수 인덱스 생성 완료';
-END $$;
+-- 마이그레이션 완료: 지하철 거리 파싱 함수 생성 완료!
+--   - parse_subway_time_max_minutes() 함수 생성
+--   - 함수 인덱스 생성 완료

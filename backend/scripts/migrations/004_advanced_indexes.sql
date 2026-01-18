@@ -10,33 +10,33 @@
 
 -- 복합 인덱스: apt_id + contract_date + trans_price + exclusive_area
 -- detailed_search에서 아파트별 평균 가격/면적 계산 시 사용
+-- 주의: 날짜 조건은 쿼리에서 처리 (CURRENT_DATE는 IMMUTABLE이 아니므로 인덱스 조건에 사용 불가)
 CREATE INDEX IF NOT EXISTS idx_sales_apt_date_price_area_recent 
 ON sales(apt_id, contract_date DESC, trans_price, exclusive_area) 
 WHERE is_canceled = FALSE 
   AND (is_deleted = FALSE OR is_deleted IS NULL)
   AND trans_price IS NOT NULL
-  AND exclusive_area > 0
-  AND contract_date >= CURRENT_DATE - INTERVAL '180 days';
+  AND exclusive_area > 0;
 
 -- 복합 인덱스: contract_date + trans_price + exclusive_area (전역 검색용)
 -- region_id 없이 전체 검색 시 사용
+-- 주의: 날짜 조건은 쿼리에서 처리 (CURRENT_DATE는 IMMUTABLE이 아니므로 인덱스 조건에 사용 불가)
 CREATE INDEX IF NOT EXISTS idx_sales_date_price_area_global 
 ON sales(contract_date DESC, trans_price, exclusive_area, apt_id) 
 WHERE is_canceled = FALSE 
   AND (is_deleted = FALSE OR is_deleted IS NULL)
   AND trans_price IS NOT NULL
-  AND exclusive_area > 0
-  AND contract_date >= CURRENT_DATE - INTERVAL '180 days';
+  AND exclusive_area > 0;
 
 -- ============================================================
 -- 2. RENTS 테이블: 최근 6개월 거래 최적화 인덱스
 -- ============================================================
 
 -- 복합 인덱스: apt_id + deal_date + deposit_price + monthly_rent
+-- 주의: 날짜 조건은 쿼리에서 처리 (CURRENT_DATE는 IMMUTABLE이 아니므로 인덱스 조건에 사용 불가)
 CREATE INDEX IF NOT EXISTS idx_rents_apt_date_price_recent 
 ON rents(apt_id, deal_date DESC, deposit_price, monthly_rent) 
-WHERE (is_deleted = FALSE OR is_deleted IS NULL)
-  AND deal_date >= CURRENT_DATE - INTERVAL '180 days';
+WHERE (is_deleted = FALSE OR is_deleted IS NULL);
 
 -- ============================================================
 -- 3. APART_DETAILS 테이블: 검색 조건 최적화 인덱스
@@ -79,10 +79,7 @@ ANALYZE states;
 -- ============================================================
 -- 완료 메시지
 -- ============================================================
-DO $$
-BEGIN
-    RAISE NOTICE '✅ 고급 인덱스 최적화 완료!';
-    RAISE NOTICE '   - 최근 6개월 거래 데이터에 대한 복합 인덱스 추가';
-    RAISE NOTICE '   - detailed_search 쿼리 최적화를 위한 인덱스 추가';
-    RAISE NOTICE '   - 통계 정보 업데이트 완료';
-END $$;
+-- 마이그레이션 완료: 고급 인덱스 최적화 완료!
+--   - 최근 6개월 거래 데이터에 대한 복합 인덱스 추가
+--   - detailed_search 쿼리 최적화를 위한 인덱스 추가
+--   - 통계 정보 업데이트 완료
