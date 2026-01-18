@@ -81,10 +81,12 @@ async def run_migration_file(engine, migration_file: Path) -> bool:
     with open(migration_file, 'r', encoding='utf-8') as f:
         sql_content = f.read()
     
-    # SQL 문을 세미콜론으로 분리 (함수 정의 블록 처리)
+    # SQL 문을 세미콜론으로 분리 (함수 정의 블록 및 DO 블록 처리)
     statements = []
     current_statement = []
     in_function = False
+    in_do_block = False
+    dollar_quote_tag = None
     
     for line in sql_content.split('\n'):
         # 주석만 있는 줄은 건너뜀
@@ -94,16 +96,47 @@ async def run_migration_file(engine, migration_file: Path) -> bool:
         
         current_statement.append(line)
         
+        # DO 블록 시작 감지
+        if 'DO $$' in line.upper() or 'DO $' in line.upper():
+            in_do_block = True
+            # 태그 추출 (예: DO $tag$)
+            if 'DO $' in line.upper():
+                import re
+                match = re.search(r'DO\s+(\$\w*\$)', line, re.IGNORECASE)
+                if match:
+                    dollar_quote_tag = match.group(1)
+                else:
+                    dollar_quote_tag = '$$'
+            else:
+                dollar_quote_tag = '$$'
+        
         # 함수 정의 시작 감지
-        if 'AS $$' in line.upper() or 'AS $BODY$' in line.upper():
+        if 'AS $$' in line.upper() or 'AS $BODY$' in line.upper() or ('AS $' in line.upper() and not in_do_block):
             in_function = True
+            # 태그 추출
+            import re
+            match = re.search(r'AS\s+(\$\w*\$)', line, re.IGNORECASE)
+            if match:
+                dollar_quote_tag = match.group(1)
+            elif 'AS $$' in line.upper():
+                dollar_quote_tag = '$$'
+            elif 'AS $BODY$' in line.upper():
+                dollar_quote_tag = '$BODY$'
+        
+        # DO 블록 끝 감지
+        if in_do_block and dollar_quote_tag and dollar_quote_tag in line:
+            # END $$; 또는 단순히 $$; 형식
+            if 'END' in line.upper() or stripped.endswith(';'):
+                in_do_block = False
+                dollar_quote_tag = None
         
         # 함수 정의 끝 감지
-        if in_function and ('$$ LANGUAGE' in line.upper() or '$BODY$ LANGUAGE' in line.upper()):
+        if in_function and dollar_quote_tag and ('$$ LANGUAGE' in line.upper() or '$BODY$ LANGUAGE' in line.upper() or (dollar_quote_tag in line.upper() and 'LANGUAGE' in line.upper())):
             in_function = False
+            dollar_quote_tag = None
         
-        # 세미콜론으로 문장 종료 (함수 내부가 아닐 때만)
-        if not in_function and stripped.endswith(';'):
+        # 세미콜론으로 문장 종료 (함수/DO 블록 내부가 아닐 때만)
+        if not in_function and not in_do_block and stripped.endswith(';'):
             statement = '\n'.join(current_statement).strip()
             if statement:
                 statements.append(statement)
