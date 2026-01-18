@@ -78,3 +78,45 @@ class StatisticsSummaryResponse(BaseModel):
     success: bool = Field(..., description="성공 여부")
     rvol: RVOLResponse = Field(..., description="RVOL 데이터")
     quadrant: QuadrantResponse = Field(..., description="4분면 분류 데이터")
+
+
+class PopulationMovementDataPoint(BaseModel):
+    """인구 이동 데이터 포인트"""
+    date: str = Field(..., description="날짜 (YYYY-MM 형식)")
+    region_id: int = Field(..., description="지역 ID")
+    region_name: str = Field(..., description="지역명")
+    in_migration: int = Field(..., description="전입 인구 수 (명)")
+    out_migration: int = Field(..., description="전출 인구 수 (명)")
+    net_migration: int = Field(..., description="순이동 인구 수 (명)")
+
+
+class PopulationMovementResponse(BaseModel):
+    """인구 이동 응답 스키마"""
+    success: bool = Field(..., description="성공 여부")
+    data: List[PopulationMovementDataPoint] = Field(..., description="인구 이동 데이터 리스트")
+    period: str = Field(..., description="기간 설명")
+
+
+class PopulationMovementSankeyDataPoint(BaseModel):
+    """인구 이동 Sankey 다이어그램 데이터 포인트"""
+    from_region: str = Field(..., description="출발 지역명")
+    to_region: str = Field(..., description="도착 지역명")
+    value: int = Field(..., description="이동 인구 수 (명)")
+
+
+class PopulationMovementSankeyResponse(BaseModel):
+    """인구 이동 Sankey 다이어그램 응답 스키마"""
+    success: bool = Field(..., description="성공 여부")
+    data: List[PopulationMovementSankeyDataPoint] = Field(..., description="Sankey 다이어그램 데이터")
+    period: str = Field(..., description="기간 설명")
+
+
+class CorrelationAnalysisResponse(BaseModel):
+    """상관관계 분석 응답 스키마"""
+    success: bool = Field(..., description="성공 여부")
+    correlation_coefficient: float = Field(..., description="상관계수 (-1 ~ 1)")
+    r_squared: float = Field(..., description="결정계수 (R², 0 ~ 1)")
+    regression_equation: str = Field(..., description="회귀식")
+    p_value: float = Field(..., description="유의확률 (P-value)")
+    data_points: List[Dict[str, Any]] = Field(..., description="데이터 포인트 (가격 상승률, 순이동)")
+    interpretation: str = Field(..., description="해석")

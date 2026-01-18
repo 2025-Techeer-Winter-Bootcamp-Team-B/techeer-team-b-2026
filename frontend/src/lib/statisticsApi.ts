@@ -74,6 +74,43 @@ export interface StatisticsSummaryResponse {
   quadrant: QuadrantResponse;
 }
 
+export interface PopulationMovementDataPoint {
+  date: string;
+  region_id: number;
+  region_name: string;
+  in_migration: number;
+  out_migration: number;
+  net_migration: number;
+}
+
+export interface PopulationMovementResponse {
+  success: boolean;
+  data: PopulationMovementDataPoint[];
+  period: string;
+}
+
+export interface PopulationMovementSankeyDataPoint {
+  from_region: string;
+  to_region: string;
+  value: number;
+}
+
+export interface PopulationMovementSankeyResponse {
+  success: boolean;
+  data: PopulationMovementSankeyDataPoint[];
+  period: string;
+}
+
+export interface CorrelationAnalysisResponse {
+  success: boolean;
+  correlation_coefficient: number;
+  r_squared: number;
+  regression_equation: string;
+  p_value: number;
+  data_points: Array<{ price_change_rate: number; net_migration: number }>;
+  interpretation: string;
+}
+
 /**
  * RVOL 데이터 조회
  */
@@ -167,6 +204,34 @@ export async function getStatisticsSummary(
       average_period_months: averagePeriodMonths,
       quadrant_period_months: quadrantPeriodMonths,
     },
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  return response.data;
+}
+
+
+/**
+ * 인구 이동 데이터 조회
+ */
+export async function getPopulationMovements(
+  regionId?: number | null,
+  startYm?: string | null,
+  endYm?: string | null,
+  token?: string | null
+): Promise<PopulationMovementResponse> {
+  const params: any = {};
+  if (regionId !== null && regionId !== undefined) {
+    params.region_id = regionId;
+  }
+  if (startYm) {
+    params.start_ym = startYm;
+  }
+  if (endYm) {
+    params.end_ym = endYm;
+  }
+  
+  const response = await apiClient.get<PopulationMovementResponse>('/statistics/population-movements', {
+    params,
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   return response.data;
