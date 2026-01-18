@@ -11,6 +11,7 @@
 - 긴 캐시 TTL (6시간)
 """
 import logging
+import sys
 import asyncio
 from datetime import date, datetime, timedelta
 from typing import Optional, List, Dict, Any
@@ -25,6 +26,7 @@ from app.models.rent import Rent
 from app.models.apartment import Apartment
 from app.models.state import State
 from app.models.house_score import HouseScore
+from app.models.population_movement import PopulationMovement
 from app.schemas.statistics import (
     RVOLResponse,
     RVOLDataPoint,
@@ -34,11 +36,28 @@ from app.schemas.statistics import (
     HPIResponse,
     HPIDataPoint,
     HPIHeatmapResponse,
-    HPIHeatmapDataPoint
+    HPIHeatmapDataPoint,
+    PopulationMovementResponse,
+    PopulationMovementDataPoint,
+    PopulationMovementSankeyResponse,
+    PopulationMovementSankeyDataPoint,
+    CorrelationAnalysisResponse
 )
 from app.utils.cache import get_from_cache, set_to_cache, build_cache_key
 
+# 로거 설정 (Docker 로그에 출력되도록)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.INFO)
+    formatter = logging.Formatter(
+        '%(asctime)s | %(levelname)s | %(name)s | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.propagate = True  # 루트 로거로도 전파
 
 router = APIRouter()
 
@@ -586,52 +605,71 @@ async def get_hpi(
         )
         
         # 쿼리 구성
-        query = (
-            select(
-                HouseScore.base_ym,
-                HouseScore.index_value,
-                HouseScore.index_change_rate,
-                HouseScore.index_type,
-                State.region_name
-            )
-            .join(State, HouseScore.region_id == State.region_id)
-            .where(
-                and_(
-                    HouseScore.is_deleted == False,
-                    HouseScore.index_type == index_type,
-                    HouseScore.base_ym >= start_base_ym,
-                    HouseScore.base_ym <= end_base_ym
-                )
-            )
-            .order_by(HouseScore.base_ym)
-        )
-        
-        # 지역 ID가 지정된 경우 필터 추가
+        # region_id가 지정된 경우: 특정 지역만 조회
         if region_id is not None:
-            query = query.where(HouseScore.region_id == region_id)
-        else:
-            # 전체 지역 평균을 계산하기 위해 그룹화
             query = (
                 select(
                     HouseScore.base_ym,
-                    func.avg(HouseScore.index_value).label('index_value'),
-                    func.avg(HouseScore.index_change_rate).label('index_change_rate'),
-                    func.max(HouseScore.index_type).label('index_type')
+                    HouseScore.index_value,
+                    HouseScore.index_change_rate,
+                    HouseScore.index_type,
+                    State.city_name.label('region_name')  # 시도명 사용
                 )
+                .join(State, HouseScore.region_id == State.region_id)
                 .where(
                     and_(
+                        HouseScore.region_id == region_id,
                         HouseScore.is_deleted == False,
                         HouseScore.index_type == index_type,
                         HouseScore.base_ym >= start_base_ym,
                         HouseScore.base_ym <= end_base_ym
                     )
                 )
-                .group_by(HouseScore.base_ym)
                 .order_by(HouseScore.base_ym)
+            )
+        else:
+            # region_id가 없는 경우: 시도(city_name) 레벨로 그룹화 (인구 이동 데이터와 동일한 레벨)
+            query = (
+                select(
+                    HouseScore.base_ym,
+                    func.avg(HouseScore.index_value).label('index_value'),
+                    func.avg(HouseScore.index_change_rate).label('index_change_rate'),
+                    func.max(HouseScore.index_type).label('index_type'),
+                    State.city_name.label('region_name')  # 시도명으로 그룹화
+                )
+                .join(State, HouseScore.region_id == State.region_id)
+                .where(
+                    and_(
+                        HouseScore.is_deleted == False,
+                        State.is_deleted == False,
+                        HouseScore.index_type == index_type,
+                        HouseScore.base_ym >= start_base_ym,
+                        HouseScore.base_ym <= end_base_ym
+                    )
+                )
+                .group_by(HouseScore.base_ym, State.city_name)
+                .order_by(HouseScore.base_ym, State.city_name)
             )
         
         result = await db.execute(query)
         rows = result.fetchall()
+        
+        logger.info(
+            f"📊 [Statistics HPI] 쿼리 결과 - "
+            f"총 {len(rows)}건 조회됨"
+        )
+        
+        # 시도별 데이터 개수 확인
+        if rows:
+            region_counts = {}
+            for row in rows:
+                region_name = row.region_name if hasattr(row, 'region_name') and row.region_name else "Unknown"
+                region_counts[region_name] = region_counts.get(region_name, 0) + 1
+            
+            logger.info(
+                f"📋 [Statistics HPI] 시도별 데이터 개수 - "
+                f"{', '.join([f'{k}: {v}건' for k, v in sorted(region_counts.items())])}"
+            )
         
         # 데이터 포인트 생성
         hpi_data = []
@@ -645,11 +683,8 @@ async def get_hpi(
             index_value = float(row.index_value) if row.index_value is not None else 0.0
             index_change_rate = float(row.index_change_rate) if row.index_change_rate is not None else None
             
-            # region_name 처리: 지역 ID가 지정된 경우에만 조인했으므로 확인
-            if region_id is not None:
-                region_name = row.region_name if hasattr(row, 'region_name') and row.region_name else None
-            else:
-                region_name = None  # 전체 지역 평균인 경우
+            # region_name 처리: 시도명(city_name) 사용
+            region_name = row.region_name if hasattr(row, 'region_name') and row.region_name else None
             
             hpi_data.append(
                 HPIDataPoint(
@@ -663,6 +698,36 @@ async def get_hpi(
         
         # 날짜순 정렬 (이미 정렬되어 있지만 확실히)
         hpi_data.sort(key=lambda x: x.date)
+        
+        # 지역별/날짜별 데이터 개수 확인
+        if hpi_data:
+            date_counts = {}
+            region_date_counts = {}
+            for item in hpi_data:
+                date_counts[item.date] = date_counts.get(item.date, 0) + 1
+                if item.region_name:
+                    key = f"{item.region_name}-{item.date}"
+                    region_date_counts[key] = region_date_counts.get(key, 0) + 1
+            
+            logger.info(
+                f"📈 [Statistics HPI] 데이터 포인트 상세 - "
+                f"총 {len(hpi_data)}건, "
+                f"날짜별 개수: {dict(sorted(date_counts.items())[:5])}... (최신 5개만 표시), "
+                f"시도 수: {len(set(item.region_name for item in hpi_data if item.region_name))}개"
+            )
+            
+            # 각 시도별 최신 데이터 샘플 로깅
+            latest_by_region = {}
+            for item in reversed(hpi_data):  # 최신부터
+                if item.region_name and item.region_name not in latest_by_region:
+                    latest_by_region[item.region_name] = item
+            
+            if latest_by_region:
+                sample_regions = list(latest_by_region.items())[:5]  # 최대 5개만
+                logger.info(
+                    f"📍 [Statistics HPI] 시도별 최신 데이터 샘플 - "
+                    f"{', '.join([f'{r}: {d.date} {d.index_value}' for r, d in sample_regions])}"
+                )
         
         region_desc = f"지역 ID {region_id}" if region_id else "전체 지역 평균"
         period_desc = f"{months}개월 ({hpi_data[0].date if hpi_data else 'N/A'} ~ {hpi_data[-1].date if hpi_data else 'N/A'})"
@@ -882,3 +947,116 @@ async def get_statistics_summary(
         rvol=rvol_response,
         quadrant=quadrant_response
     )
+
+
+@router.get(
+    "/population-movements",
+    response_model=PopulationMovementResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["📊 Statistics (통계)"],
+    summary="인구 이동 데이터 조회",
+    description="""
+    지역별 인구 이동 데이터를 조회합니다.
+    
+    ### Query Parameters
+    - `region_id`: 지역 ID (선택, 지정하지 않으면 전체)
+    - `start_ym`: 시작 년월 (YYYYMM, 기본값: 최근 12개월)
+    - `end_ym`: 종료 년월 (YYYYMM, 기본값: 현재)
+    """
+)
+async def get_population_movements(
+    region_id: Optional[int] = Query(None, description="지역 ID (선택)"),
+    start_ym: Optional[str] = Query(None, description="시작 년월 (YYYYMM)"),
+    end_ym: Optional[str] = Query(None, description="종료 년월 (YYYYMM)"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    인구 이동 데이터 조회
+    """
+    try:
+        # 기본 기간 설정 (최근 12개월)
+        if not end_ym:
+            end_date = datetime.now()
+            end_ym = end_date.strftime("%Y%m")
+        
+        if not start_ym:
+            start_date = datetime.now() - timedelta(days=365)
+            start_ym = start_date.strftime("%Y%m")
+        
+        # 쿼리 구성: 시도 레벨 데이터만 조회 (city_name 사용)
+        query = select(
+            PopulationMovement,
+            State.city_name  # 시도명 사용 (예: 서울특별시, 부산광역시)
+        ).join(
+            State, PopulationMovement.region_id == State.region_id
+        ).where(
+            and_(
+                PopulationMovement.base_ym >= start_ym,
+                PopulationMovement.base_ym <= end_ym,
+                PopulationMovement.is_deleted == False
+            )
+        )
+        
+        if region_id:
+            query = query.where(PopulationMovement.region_id == region_id)
+        
+        query = query.order_by(PopulationMovement.base_ym.desc())
+        
+        result = await db.execute(query)
+        rows = result.all()
+        
+        logger.info(
+            f"📊 [Statistics Population Movement] 인구 이동 데이터 조회 - "
+            f"총 {len(rows)}건 조회됨"
+        )
+        
+        # 지역별 데이터 개수 확인
+        if rows:
+            region_counts = {}
+            region_net_totals = {}  # 지역별 순이동 합계
+            for movement, city_name in rows:
+                region_name = city_name or "Unknown"
+                region_counts[region_name] = region_counts.get(region_name, 0) + 1
+                # 순이동 합계 계산
+                if region_name not in region_net_totals:
+                    region_net_totals[region_name] = 0
+                region_net_totals[region_name] += movement.net_migration or 0
+            
+            logger.info(
+                f"📋 [Statistics Population Movement] 시도별 데이터 개수 - "
+                f"{', '.join([f'{k}: {v}건' for k, v in sorted(region_counts.items())])}"
+            )
+            
+            logger.info(
+                f"📊 [Statistics Population Movement] 시도별 순이동 합계 - "
+                f"{', '.join([f'{k}: {v}명' for k, v in sorted(region_net_totals.items())])}"
+            )
+        
+        data_points = []
+        for movement, city_name in rows:
+            # YYYYMM -> YYYY-MM 변환
+            year = movement.base_ym[:4]
+            month = movement.base_ym[4:]
+            date_str = f"{year}-{month}"
+            
+            data_points.append(PopulationMovementDataPoint(
+                date=date_str,
+                region_id=movement.region_id,
+                region_name=city_name,  # 시도명 반환
+                in_migration=movement.in_migration,
+                out_migration=movement.out_migration,
+                net_migration=movement.net_migration
+            ))
+        
+        return PopulationMovementResponse(
+            success=True,
+            data=data_points,
+            period=f"{start_ym} ~ {end_ym}"
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ 인구 이동 데이터 조회 실패: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"인구 이동 데이터 조회 실패: {str(e)}"
+        )

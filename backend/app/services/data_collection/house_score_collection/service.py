@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
+from collections import namedtuple
 from urllib.parse import quote
 import httpx
 from datetime import datetime, date
@@ -145,18 +146,34 @@ class HouseScoreCollectionService(DataCollectionServiceBase):
                 reader = csv.DictReader(f)
                 rows = list(reader)
             
-            # 1. 5자리 일치 검색
-            for row in rows:
-                region_code = str(row.get('region_code', '')).strip()
-                if region_code.startswith(region_code_prefix):
-                    return int(row.get('area_code', 0))
+            # 1. 정확히 5자리 일치 검색 (최우선)
+            if len(region_code_prefix) == 5:
+                for row in rows:
+                    region_code = str(row.get('region_code', '')).strip()
+                    if region_code == region_code_prefix or region_code.startswith(region_code_prefix):
+                        area_code = int(row.get('area_code', 0))
+                        if area_code > 0:
+                            return area_code
             
-            # 2. 앞 2자리 일치 검색 (fallback)
-            prefix_2 = region_code_prefix[:2]
-            for row in rows:
-                region_code = str(row.get('region_code', '')).strip()
-                if region_code.startswith(prefix_2):
-                    return int(row.get('area_code', 0))
+            # 2. 앞 2자리 일치 검색 (시도 레벨)
+            # 시도 코드 매핑 (시도별 대표 area_code 찾기)
+            prefix_2 = region_code_prefix[:2] if len(region_code_prefix) >= 2 else region_code_prefix
+            if len(prefix_2) == 2:
+                # 시도 코드별 매핑 (앞 2자리로 시작하는 region_code 중에서 선택)
+                matched_rows = []
+                for row in rows:
+                    region_code = str(row.get('region_code', '')).strip()
+                    if region_code.startswith(prefix_2):
+                        area_code = int(row.get('area_code', 0))
+                        if area_code > 0:
+                            matched_rows.append((region_code, area_code))
+                
+                if matched_rows:
+                    # 같은 길이의 region_code 중에서 가장 짧은 것을 우선 (시도 레벨)
+                    # 예: "51" -> "51000" 같은 것을 찾음
+                    matched_rows.sort(key=lambda x: (len(x[0]), x[0]))
+                    # 2자리로 시작하는 것 중 가장 짧은 것을 반환 (시도 레벨 데이터)
+                    return matched_rows[0][1]
             
             return None
         except Exception as e:
@@ -222,13 +239,52 @@ class HouseScoreCollectionService(DataCollectionServiceBase):
             STATBL_ID = "A_2024_00045"  # 통계표 ID
             DTACYCLE_CD = "MM"  # 월별 데이터
             
-            # STATES 테이블에서 모든 region_code 조회
+            # STATES 테이블에서 시도 레벨 데이터만 조회 (각 시도별 대표 region_id 하나만)
             from app.models.state import State
-            result = await db.execute(
-                select(State.region_id, State.region_code)
+            
+            # 모든 시도 조회
+            all_states_result = await db.execute(
+                select(State.region_id, State.region_code, State.city_name)
                 .where(State.is_deleted == False)
             )
-            states = result.fetchall()
+            all_states = all_states_result.fetchall()
+            
+            # 시도별로 첫 번째 region_id만 선택 (시도 레벨 집계용)
+            # 단, region_code 앞 2자리가 시도 코드인 것을 우선 선택 (시도 레벨 데이터를 위함)
+            city_to_region: Dict[str, Tuple[int, str]] = {}  # city_name -> (region_id, region_code)
+            city_code_map = {
+                "서울특별시": "11", "부산광역시": "26", "대구광역시": "27", "인천광역시": "28",
+                "광주광역시": "29", "대전광역시": "30", "울산광역시": "31", "세종특별자치시": "36",
+                "경기도": "41", "강원특별자치도": "51", "충청북도": "43", "충청남도": "44",
+                "전북특별자치도": "52", "전라남도": "46", "경상북도": "47", "경상남도": "48", "제주특별자치도": "50"
+            }
+            
+            # 1차: 시도 코드(2자리)로 시작하는 region_code 우선 선택
+            for state in all_states:
+                city_name = state.city_name
+                if city_name in city_code_map:
+                    expected_code = city_code_map[city_name]
+                    region_code_str = str(state.region_code)
+                    # region_code 앞 2자리가 시도 코드와 일치하는 경우 우선 선택
+                    if region_code_str.startswith(expected_code):
+                        if city_name not in city_to_region:
+                            city_to_region[city_name] = (state.region_id, state.region_code)
+                        else:
+                            # 이미 있더라도 더 적합한 코드로 업데이트 (시도 코드로 시작하는 것)
+                            city_to_region[city_name] = (state.region_id, state.region_code)
+            
+            # 2차: 아직 선택되지 않은 시도들은 첫 번째 region_id 사용
+            for state in all_states:
+                city_name = state.city_name
+                if city_name not in city_to_region:
+                    city_to_region[city_name] = (state.region_id, state.region_code)
+            
+            # 시도 레벨 region_id만 선택 (namedtuple 사용)
+            StateRow = namedtuple('StateRow', ['region_id', 'region_code'])
+            states = [
+                StateRow(region_id=region_id, region_code=region_code)
+                for region_id, region_code in city_to_region.values()
+            ]
             
             if not states:
                 logger.warning("⚠️ STATES 테이블에 데이터가 없습니다.")
@@ -241,7 +297,12 @@ class HouseScoreCollectionService(DataCollectionServiceBase):
                     message="STATES 테이블에 데이터가 없습니다."
                 )
             
-            logger.info(f"📍 수집 대상: {len(states)}개 지역")
+            logger.info(f"📍 수집 대상: {len(states)}개 시도 (시도 레벨 집계)")
+            logger.info(f"   시도 목록: {sorted(city_to_region.keys())}")
+            # 각 시도별 region_code 로그 출력 (디버깅용)
+            for city_name in sorted(city_to_region.keys()):
+                region_id, region_code = city_to_region[city_name]
+                logger.info(f"      {city_name}: region_id={region_id}, region_code={region_code}")
             logger.info(f"📅 수집 기간: {START_WRTTIME} ~ 현재")
             logger.info(f"📊 총 예상 API 호출: {len(states)}회 (각 지역당 1회)")
             logger.info(f"⚡ 동시 처리 수: {CONCURRENT_LIMIT}개, 배치 크기: {BATCH_SIZE}개")
@@ -258,6 +319,15 @@ class HouseScoreCollectionService(DataCollectionServiceBase):
                 region_saved = 0
                 region_skipped = 0
                 region_errors = []
+                
+                # 시도명 찾기 (로깅용)
+                city_name = None
+                for cn, (rid, rc) in city_to_region.items():
+                    if rid == region_id:
+                        city_name = cn
+                        break
+                
+                logger.info(f"   🔍 [{state_idx + 1}/{len(states)}] 처리 시작: {city_name or '알 수 없음'} (region_id={region_id}, region_code={region_code})")
                 
                 # 각 지역마다 독립적인 DB 세션 생성 (병렬 처리 시 세션 충돌 방지)
                 async with AsyncSessionLocal() as local_db:
@@ -339,18 +409,28 @@ class HouseScoreCollectionService(DataCollectionServiceBase):
                                 }
                             
                             # region_code에서 area_code (CLS_ID) 추출
-                            region_code_prefix = str(region_code)[:5] if len(str(region_code)) >= 5 else str(region_code)
+                            region_code_str = str(region_code)
+                            # 시도 레벨이므로 앞 2자리(시도 코드) 또는 5자리 사용
+                            if len(region_code_str) >= 5:
+                                region_code_prefix = region_code_str[:5]
+                            else:
+                                # 2자리 시도 코드로 시작하는 region_code 찾기
+                                region_code_prefix = region_code_str[:2] if len(region_code_str) >= 2 else region_code_str
+                            
                             area_code = self._get_area_code_from_csv(region_code_prefix)
                             
                             if not area_code:
+                                logger.warning(f"   ⚠️ area_code 변환 실패: region_code={region_code}, prefix={region_code_prefix}")
                                 return {
                                     "success": False,
-                                    "error": f"area_code를 찾을 수 없습니다.",
+                                    "error": f"area_code를 찾을 수 없습니다. (region_code: {region_code}, prefix: {region_code_prefix})",
                                     "region_code": region_code,
                                     "fetched": 0,
                                     "saved": 0,
                                     "skipped": 0
                                 }
+                            
+                            logger.info(f"   ✅ [{state_idx + 1}/{len(states)}] area_code 변환 성공: region_code={region_code} -> area_code={area_code}")
                             
                             # REB API 호출 (START_WRTTIME 파라미터 사용)
                             # 선택된 API 키 사용
@@ -367,10 +447,20 @@ class HouseScoreCollectionService(DataCollectionServiceBase):
                                 "START_WRTTIME": START_WRTTIME  # 2020년 1월부터 데이터 조회
                             }
                             
+                            # API 호출 URL 및 파라미터 로깅
+                            safe_params = {k: (v if k != "KEY" else "***") for k, v in params.items()}
+                            from urllib.parse import urlencode
+                            actual_url = f"{REB_DATA_URL}?{urlencode(params)}"
+                            logger.info(f"   📡 [{state_idx + 1}/{len(states)}] REB API 호출: {city_name or '알 수 없음'} (area_code={area_code})")
+                            logger.info(f"      URL: {actual_url[:200]}...")
+                            logger.info(f"      파라미터: {safe_params}")
+                            
                             response = await self.fetch_with_retry(REB_DATA_URL, params)
                             
                             async with api_calls_lock:
                                 api_calls_used += 1
+                            
+                            logger.info(f"   📊 [{state_idx + 1}/{len(states)}] API 응답 수신: {city_name or '알 수 없음'}")
                             
                             # 응답 파싱
                             if not response or not isinstance(response, dict):
@@ -408,8 +498,11 @@ class HouseScoreCollectionService(DataCollectionServiceBase):
                                         total_count = int(item["totalCount"])
                             
                             response_code = result_data.get("CODE", "UNKNOWN")
+                            logger.info(f"   📋 [{state_idx + 1}/{len(states)}] API 응답 코드: {response_code} (총 {total_count}건)")
+                            
                             if response_code != "INFO-000":
                                 response_message = result_data.get("MESSAGE", "")
+                                logger.error(f"   ❌ [{state_idx + 1}/{len(states)}] API 오류 [{response_code}]: {response_message}")
                                 return {
                                     "success": False,
                                     "error": f"API 오류 [{response_code}] - {response_message}",
@@ -421,6 +514,7 @@ class HouseScoreCollectionService(DataCollectionServiceBase):
                             
                             # ROW 데이터 추출
                             row_data = stts_data[1].get("row", [])
+                            logger.info(f"   📦 [{state_idx + 1}/{len(states)}] 데이터 추출: {len(row_data) if isinstance(row_data, list) else 0}건")
                             if not isinstance(row_data, list):
                                 row_data = [row_data] if row_data else []
                             

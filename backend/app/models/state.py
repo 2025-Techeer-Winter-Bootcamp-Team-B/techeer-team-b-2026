@@ -97,5 +97,8 @@ class State(Base):
     # 이 지역을 즐겨찾기한 사용자들
     favorite_locations = relationship("FavoriteLocation", back_populates="region")
     
+    # 이 지역의 인구 이동 데이터들
+    population_movements = relationship("PopulationMovement", back_populates="region")
+    
     def __repr__(self):
         return f"<State(region_id={self.region_id}, region_name='{self.region_name}', city_name='{self.city_name}')>"
