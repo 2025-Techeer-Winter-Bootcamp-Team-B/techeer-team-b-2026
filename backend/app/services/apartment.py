@@ -491,48 +491,40 @@ class ApartmentService:
                 .limit(limit)
             )
         elif is_sigungu:
-            # 🔧 시군구 선택: 해당 시군구 코드(앞 5자리)로 시작하는 모든 동의 아파트 조회
+            # 🔧 시군구 선택: 해당 시군구 코드로 시작하는 모든 동의 아파트 조회
             # apartments 테이블에 직접 region_id가 시군구로 저장된 경우와
             # 하위 동에 region_id가 저장된 경우를 모두 포함
             sigungu_code_prefix = state.region_code[:5]
             logger.info(f"🔍 [get_apartments_by_region] 시군구 레벨 검색 - region_name={state.region_name}, prefix={sigungu_code_prefix}, region_code={state.region_code}")
             
-            # 🔧 고양시, 용인시 같은 경우: 시 내부에 구가 있는 경우 처리
-            # 1. 앞 5자리로 시작하는 모든 하위 지역 찾기 (동 포함)
-            # 2. 시군구 레벨(마지막 5자리가 "00000")인 하위 구들도 찾기
-            sub_regions_stmt = sql_select(StateModel.region_id).where(
-                and_(
-                    StateModel.region_code.like(f"{sigungu_code_prefix}%"),
-                    StateModel.is_deleted == False
-                )
-            )
-            sub_regions_result = await db.execute(sub_regions_stmt)
-            sub_region_ids = [row.region_id for row in sub_regions_result.fetchall()]
-            
-            logger.info(f"🔍 [get_apartments_by_region] 하위 지역 수 (region_code 기반) - {len(sub_region_ids)}개 (prefix: {sigungu_code_prefix})")
-            
-            # 🔧 추가: 시 내부에 구가 있는 경우, region_name으로도 검색
-            # 예: "고양시" → "고양시 덕양구", "고양시 일산동구" 등
-            # 이들은 region_code의 앞 5자리가 다를 수 있으므로 region_name으로도 검색
+            # 🔧 고양시, 안산시, 용인시 등 시 내부에 구가 있는 경우 처리
+            # 문제: "고양시"의 하위 구들("덕양구", "일산동구" 등)이 region_code의 앞 5자리가 다름
+            # 예: 고양시 "4128000000" (앞 5자리: "41280"), 덕양구 "4128100000" (앞 5자리: "41281"), 일산동구 "4128200000" (앞 5자리: "41282")
+            # 해결: 시 단위인 경우 region_code의 앞 4자리("4128")로 검색하여 모든 하위 구 포함
             if state.region_name.endswith("시") and not state.region_name.endswith("특별시") and not state.region_name.endswith("광역시"):
-                # "고양시", "용인시" 같은 경우, 하위 구 찾기
-                sub_regions_by_name_stmt = sql_select(StateModel.region_id).where(
+                # 시 내부에 구가 있는 경우: 앞 4자리로 검색
+                sigungu_prefix_4 = state.region_code[:4]  # 예: "4128"
+                sub_regions_stmt = sql_select(StateModel.region_id).where(
                     and_(
-                        StateModel.region_name.like(f"{state.region_name}%"),
-                        StateModel.city_name == state.city_name,
-                        StateModel.region_code.like("_____00000"),  # 시군구 레벨만 (10자리 중 마지막 5자리가 00000)
+                        StateModel.region_code.like(f"{sigungu_prefix_4}%"),  # "4128%" → "41280", "41281", "41282" 등 모두 매칭
+                        StateModel.city_name == state.city_name,  # 같은 시도 내
                         StateModel.is_deleted == False
                     )
                 )
-                sub_regions_by_name_result = await db.execute(sub_regions_by_name_stmt)
-                sub_region_ids_by_name = [row.region_id for row in sub_regions_by_name_result.fetchall()]
-                
-                # 중복 제거하면서 추가
-                for rid in sub_region_ids_by_name:
-                    if rid not in sub_region_ids:
-                        sub_region_ids.append(rid)
-                
-                logger.info(f"🔍 [get_apartments_by_region] 하위 구 수 (region_name 기반) - {len(sub_region_ids_by_name)}개")
+                sub_regions_result = await db.execute(sub_regions_stmt)
+                sub_region_ids = [row.region_id for row in sub_regions_result.fetchall()]
+                logger.info(f"🔍 [get_apartments_by_region] 하위 지역 수 (region_code 4자리 기반) - {len(sub_region_ids)}개 (prefix: {sigungu_prefix_4}, region_name: {state.region_name})")
+            else:
+                # 일반 시군구(구가 없는 시 또는 일반 구): 앞 5자리로 검색 (기존 로직)
+                sub_regions_stmt = sql_select(StateModel.region_id).where(
+                    and_(
+                        StateModel.region_code.like(f"{sigungu_code_prefix}%"),
+                        StateModel.is_deleted == False
+                    )
+                )
+                sub_regions_result = await db.execute(sub_regions_stmt)
+                sub_region_ids = [row.region_id for row in sub_regions_result.fetchall()]
+                logger.info(f"🔍 [get_apartments_by_region] 하위 지역 수 (region_code 5자리 기반) - {len(sub_region_ids)}개 (prefix: {sigungu_code_prefix})")
             
             # 본체 region_id가 하위 지역 목록에 없으면 추가
             if state.region_id not in sub_region_ids:
