@@ -1043,6 +1043,155 @@ async def get_apartment_transactions(
         )
 
 
+@router.get(
+    "/trending",
+    response_model=dict,
+    status_code=status.HTTP_200_OK,
+    tags=["🏠 Apartment (아파트)"],
+    summary="급상승 아파트 조회",
+    description="""
+    최근 1개월 동안 거래량이 많은 아파트 상위 5개를 조회합니다.
+    contract_date 기준으로 최근 30일 내 거래를 집계합니다.
+    """,
+    responses={
+        200: {"description": "조회 성공"},
+        500: {"description": "서버 오류"}
+    }
+)
+async def get_trending_apartments(
+    limit: int = Query(5, ge=1, le=10, description="반환할 최대 개수 (기본 5개, 최대 10개)"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    급상승 아파트 조회 API
+    
+    최근 1개월 동안 거래량이 많은 아파트를 조회합니다.
+    
+    Args:
+        limit: 반환할 최대 개수 (기본 5개)
+        db: 데이터베이스 세션
+    
+    Returns:
+        {
+            "success": true,
+            "data": {
+                "apartments": [
+                    {
+                        "apt_id": int,
+                        "apt_name": str,
+                        "address": str | null,
+                        "location": {"lat": float, "lng": float} | null,
+                        "transaction_count": int,
+                        "region_id": int | null
+                    }
+                ]
+            }
+        }
+    """
+    try:
+        # 최근 1개월 기준 날짜
+        one_month_ago = date.today() - timedelta(days=30)
+        
+        # sales 테이블에서 apt_id별 거래 건수 집계
+        stmt = (
+            select(
+                Sale.apt_id,
+                func.count(Sale.trans_id).label('transaction_count')
+            )
+            .where(
+                and_(
+                    Sale.contract_date >= one_month_ago,
+                    Sale.contract_date <= date.today(),
+                    Sale.is_canceled == False,
+                    (Sale.is_deleted == False) | (Sale.is_deleted.is_(None)),
+                    Sale.contract_date.isnot(None)
+                )
+            )
+            .group_by(Sale.apt_id)
+            .order_by(desc(func.count(Sale.trans_id)))
+            .limit(limit)
+        )
+        
+        result = await db.execute(stmt)
+        trending_data = result.all()
+        
+        if not trending_data:
+            return {
+                "success": True,
+                "data": {
+                    "apartments": []
+                }
+            }
+        
+        # 아파트 정보 조회
+        apt_ids = [row.apt_id for row in trending_data]
+        apt_count_map = {row.apt_id: row.transaction_count for row in trending_data}
+        
+        # apartments와 apart_details 조인하여 정보 가져오기
+        apt_stmt = (
+            select(
+                Apartment.apt_id,
+                Apartment.apt_name,
+                Apartment.region_id,
+                ApartDetail.road_address,
+                ApartDetail.jibun_address,
+                geo_func.ST_X(ApartDetail.geometry).label('lng'),
+                geo_func.ST_Y(ApartDetail.geometry).label('lat')
+            )
+            .outerjoin(ApartDetail, Apartment.apt_id == ApartDetail.apt_id)
+            .where(
+                and_(
+                    Apartment.apt_id.in_(apt_ids),
+                    (ApartDetail.is_deleted == False) | (ApartDetail.is_deleted.is_(None)),
+                    (Apartment.is_deleted == False) | (Apartment.is_deleted.is_(None))
+                )
+            )
+        )
+        
+        apt_result = await db.execute(apt_stmt)
+        apartments_data = apt_result.all()
+        
+        # 결과 구성
+        apartments = []
+        for apt in apartments_data:
+            # 주소 조합 (도로명 우선, 없으면 지번)
+            address = apt.road_address if apt.road_address else apt.jibun_address
+            
+            # 위치 정보
+            location = None
+            if apt.lat is not None and apt.lng is not None:
+                location = {
+                    "lat": float(apt.lat),
+                    "lng": float(apt.lng)
+                }
+            
+            apartments.append({
+                "apt_id": apt.apt_id,
+                "apt_name": apt.apt_name,
+                "address": address,
+                "location": location,
+                "transaction_count": apt_count_map.get(apt.apt_id, 0),
+                "region_id": apt.region_id
+            })
+        
+        # transaction_count 기준으로 정렬 (집계 순서 유지)
+        apartments.sort(key=lambda x: x["transaction_count"], reverse=True)
+        
+        return {
+            "success": True,
+            "data": {
+                "apartments": apartments
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ 급상승 아파트 조회 실패: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"급상승 아파트 조회 중 오류가 발생했습니다: {str(e)}"
+        )
+
+
 @router.post(
     "/search",
     response_model=DetailedSearchResponse,
