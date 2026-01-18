@@ -18,7 +18,9 @@ import { useDynamicIslandToast } from './ui/DynamicIslandToast';
 import { getDashboardSummary, getDashboardRankings, getDashboardRankingsRegion, getRegionalHeatmap, getRegionalTrends, PriceTrendData, VolumeTrendData, MonthlyTrendData, RegionalTrendData, TrendingApartment, RankingApartment, RegionalHeatmapItem, RegionalTrendItem, getPriceDistribution, getRegionalPriceCorrelation, PriceDistributionItem, RegionalCorrelationItem } from '../lib/dashboardApi';
 import HistogramChart from './charts/HistogramChart';
 import BubbleChart from './charts/BubbleChart';
+import KoreaMapChart from './charts/KoreaMapChart';
 import { getRecentViews, deleteRecentView, deleteAllRecentViews, RecentView } from '../lib/usersApi';
+import { getRegionStats, RegionStats } from '../lib/favoritesApi';
 import { Clock } from 'lucide-react';
 import {
   AlertDialog,
@@ -53,6 +55,8 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
   const [selectedLocation, setSelectedLocation] = useState<LocationSearchResult | null>(null);
   const [regionApartments, setRegionApartments] = useState<ApartmentSearchResult[]>([]);
   const [isLoadingRegionApartments, setIsLoadingRegionApartments] = useState(false);
+  const [regionStats, setRegionStats] = useState<RegionStats | null>(null);
+  const [loadingRegionStats, setLoadingRegionStats] = useState(false);
   
   // AI 검색 결과 상태
   const [aiResults, setAiResults] = useState<ApartmentSearchResult[]>([]);
@@ -115,6 +119,10 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
   const [marketTrendsLoading, setMarketTrendsLoading] = useState(false);
   const [selectedMarketRegion, setSelectedMarketRegion] = useState<string>('전국');
   const [showMarketRegionFilterDropdown, setShowMarketRegionFilterDropdown] = useState(false);
+  
+  // 지역별 가격 변동률 데이터 상태 (지도용)
+  const [priceChangeMapData, setPriceChangeMapData] = useState<Array<{ name: string; value: number }>>([]);
+  const [priceChangeMapLoading, setPriceChangeMapLoading] = useState(false);
   
   // 최근 본 아파트 상태
   const [recentViews, setRecentViews] = useState<RecentView[]>([]);
@@ -409,26 +417,34 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
     return () => clearTimeout(timer);
   }, [searchQuery, selectedLocation, isAIMode]);
 
-  // 선택된 지역의 아파트 조회
+  // 선택된 지역의 아파트 및 통계 조회
   useEffect(() => {
-    const fetchRegionApartments = async () => {
+    const fetchRegionData = async () => {
       if (selectedLocation) {
         setIsLoadingRegionApartments(true);
+        setLoadingRegionStats(true);
         try {
-          const apartments = await getApartmentsByRegion(selectedLocation.region_id, 50, 0);
+          const [apartments, stats] = await Promise.all([
+            getApartmentsByRegion(selectedLocation.region_id, 50, 0),
+            getRegionStats(selectedLocation.region_id, 'sale', 3)
+          ]);
           setRegionApartments(apartments);
+          setRegionStats(stats);
         } catch (error) {
-          console.error('Failed to fetch region apartments:', error);
+          console.error('Failed to fetch region data:', error);
           setRegionApartments([]);
+          setRegionStats(null);
         } finally {
           setIsLoadingRegionApartments(false);
+          setLoadingRegionStats(false);
         }
       } else {
         setRegionApartments([]);
+        setRegionStats(null);
       }
     };
 
-    fetchRegionApartments();
+    fetchRegionData();
   }, [selectedLocation]);
   
   // 대시보드 요약 데이터 로드
@@ -593,6 +609,69 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
     
     fetchMarketTrends();
   }, []);
+
+  // 지역별 가격 변동률 계산 (getRegionStats 엔드포인트 사용)
+  useEffect(() => {
+    const calculatePriceChanges = async () => {
+      console.log('🔄 [Dashboard Component] 지역별 가격 변동률 계산 시작 (getRegionStats 사용)');
+      setPriceChangeMapLoading(true);
+      try {
+        // 모든 시도 목록
+        const allRegions = [
+          '서울특별시', '부산광역시', '대구광역시', '인천광역시', '광주광역시',
+          '대전광역시', '울산광역시', '세종특별자치시', '경기도', '강원도',
+          '충청북도', '충청남도', '전라북도', '전라남도', '경상북도',
+          '경상남도', '제주특별자치도'
+        ];
+
+        // 각 시도별로 region_id를 찾고 getRegionStats를 호출
+        const priceChangesPromises = allRegions.map(async (regionName) => {
+          try {
+            // 1. 지역명으로 검색하여 region_id 찾기
+            const locationResults = await searchLocations(regionName);
+            const matchingRegion = locationResults.find(
+              loc => loc.city_name === regionName || 
+                     (loc.location_type === 'city' && loc.full_name.includes(regionName))
+            );
+
+            if (!matchingRegion) {
+              console.warn(`⚠️ [Dashboard Component] ${regionName}에 대한 region_id를 찾을 수 없습니다.`);
+              return { name: regionName, value: 0 };
+            }
+
+            // 2. getRegionStats 호출 (3개월 기준)
+            const stats = await getRegionStats(matchingRegion.region_id, 'sale', 3);
+            
+            if (stats && stats.change_rate !== undefined) {
+              return {
+                name: regionName,
+                value: parseFloat(stats.change_rate.toFixed(2))
+              };
+            } else {
+              console.warn(`⚠️ [Dashboard Component] ${regionName}에 대한 통계 데이터가 없습니다.`);
+              return { name: regionName, value: 0 };
+            }
+          } catch (error) {
+            console.error(`❌ [Dashboard Component] ${regionName} 데이터 조회 실패:`, error);
+            return { name: regionName, value: 0 };
+          }
+        });
+
+        // 모든 요청을 병렬로 실행
+        const finalData = await Promise.all(priceChangesPromises);
+
+        console.log('✅ [Dashboard Component] 지역별 가격 변동률 계산 완료 (getRegionStats 사용):', finalData);
+        setPriceChangeMapData(finalData);
+      } catch (error) {
+        console.error('❌ [Dashboard Component] 지역별 가격 변동률 계산 실패:', error);
+        setPriceChangeMapData([]);
+      } finally {
+        setPriceChangeMapLoading(false);
+      }
+    };
+
+    calculatePriceChanges();
+  }, []);
   
   // 화면 크기 추적
   useEffect(() => {
@@ -654,6 +733,121 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
       setSearchQuery(location.full_name);
     }
   }, [onRegionSelect]);
+
+  // 지도에서 지역 클릭 시 처리 (바로 상세 페이지로 이동)
+  const handleMapRegionClick = useCallback(async (regionName: string) => {
+    try {
+      console.log('🗺️ [Dashboard] 지도에서 지역 클릭:', regionName);
+      
+      // 지역명 매핑 정의 (지도 이름 -> DB city_name)
+      const regionNameMapping: Record<string, string[]> = {
+        '서울특별시': ['서울특별시', '서울'],
+        '부산광역시': ['부산광역시', '부산'],
+        '대구광역시': ['대구광역시', '대구'],
+        '인천광역시': ['인천광역시', '인천'],
+        '광주광역시': ['광주광역시', '광주'],
+        '대전광역시': ['대전광역시', '대전'],
+        '울산광역시': ['울산광역시', '울산'],
+        '세종특별자치시': ['세종특별자치시', '세종'],
+        '경기도': ['경기도', '경기'],
+        '강원도': ['강원특별자치도', '강원도', '강원'],
+        '충청북도': ['충청북도', '충북'],
+        '충청남도': ['충청남도', '충남'],
+        '전라북도': ['전북특별자치도', '전라북도', '전북'],
+        '전라남도': ['전라남도', '전남'],
+        '경상북도': ['경상북도', '경북'],
+        '경상남도': ['경상남도', '경남'],
+        '제주특별자치도': ['제주특별자치도', '제주도', '제주']
+      };
+      
+      // 매핑된 검색어 목록 가져오기
+      const searchTerms = regionNameMapping[regionName] || [regionName];
+      console.log('🔍 [Dashboard] 검색어 목록:', searchTerms);
+      
+      // 여러 검색어로 시도
+      let locationResults: LocationSearchResult[] = [];
+      let matchingRegion: LocationSearchResult | undefined;
+      
+      for (const searchTerm of searchTerms) {
+        console.log(`🔍 [Dashboard] "${searchTerm}"으로 검색 시도...`);
+        const results = await searchLocations(searchTerm);
+        console.log(`🔍 [Dashboard] "${searchTerm}" 검색 결과:`, results.length, '개');
+        
+        if (results.length > 0) {
+          locationResults = results;
+          
+          // 정확히 일치하는 city_name 찾기
+          matchingRegion = results.find(loc => {
+            // 검색어가 city_name과 정확히 일치하거나, 매핑된 이름 중 하나와 일치
+            return searchTerms.some(term => 
+              loc.city_name === term || 
+              loc.city_name.includes(term) || 
+              term.includes(loc.city_name)
+            );
+          });
+          
+          if (matchingRegion) {
+            console.log(`✅ [Dashboard] "${searchTerm}"으로 지역 찾음:`, matchingRegion.city_name);
+            break;
+          }
+        }
+      }
+      
+      // 여전히 매칭이 안되면, 검색 결과에서 city_name으로 필터링
+      if (!matchingRegion && locationResults.length > 0) {
+        // 모든 검색어와 비교하여 가장 비슷한 것 찾기
+        for (const searchTerm of searchTerms) {
+          matchingRegion = locationResults.find(loc => {
+            const cityName = loc.city_name || '';
+            // 정확 일치
+            if (cityName === searchTerm) return true;
+            // 포함 관계 (양방향)
+            if (cityName.includes(searchTerm) || searchTerm.includes(cityName)) return true;
+            return false;
+          });
+          
+          if (matchingRegion) break;
+        }
+        
+        // 그래도 안되면 첫 번째 결과 사용 (city_name이 있는 것 우선)
+        if (!matchingRegion) {
+          matchingRegion = locationResults.find(loc => loc.city_name) || locationResults[0];
+        }
+      }
+      
+      if (matchingRegion) {
+        console.log('✅ [Dashboard] 지역 찾음, 상세 페이지로 이동:', matchingRegion);
+        console.log('📍 [Dashboard] 매칭된 지역 정보:', {
+          region_id: matchingRegion.region_id,
+          city_name: matchingRegion.city_name,
+          region_name: matchingRegion.region_name,
+          full_name: matchingRegion.full_name
+        });
+        
+        // 검색 쿼리 및 검색 결과 초기화 (드롭다운 숨기기)
+        setSearchQuery('');
+        setLocationResults([]);
+        
+        // onRegionSelect가 있으면 바로 상세 페이지로 이동 (검색 드롭다운 표시 안 함)
+        if (onRegionSelect) {
+          onRegionSelect(matchingRegion);
+        } else {
+          // onRegionSelect가 없으면 내부 상태로 설정 (기존 동작 유지)
+          handleLocationSelect(matchingRegion);
+        }
+      } else {
+        console.warn('⚠️ [Dashboard] 지역을 찾을 수 없음:', regionName);
+        console.warn('⚠️ [Dashboard] 검색된 결과 목록:', locationResults.slice(0, 10).map(loc => ({
+          region_id: loc.region_id,
+          city_name: loc.city_name,
+          region_name: loc.region_name,
+          full_name: loc.full_name
+        })));
+      }
+    } catch (error) {
+      console.error('❌ [Dashboard] 지역 검색 실패:', error);
+    }
+  }, [onRegionSelect, handleLocationSelect]);
 
   const handleClearLocation = useCallback(() => {
     setSelectedLocation(null);
@@ -750,6 +944,74 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
               </button>
             </div>
           </div>
+        </motion.div>
+      )}
+
+      {/* Selected Location Stats */}
+      {selectedLocation && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className={`mb-4 rounded-2xl border p-4 md:p-6 ${
+            isDarkMode
+              ? 'bg-zinc-900 border-zinc-800'
+              : 'bg-white border-zinc-200'
+          }`}
+        >
+          {loadingRegionStats ? (
+            <div className={`text-center py-4 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+              통계 로딩 중...
+            </div>
+          ) : regionStats ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+              <div>
+                <div className={`text-sm mb-1 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                  평균 집값
+                </div>
+                <div className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-zinc-900'}`}>
+                  {regionStats.avg_price_per_pyeong > 0 
+                    ? `${Math.round(regionStats.avg_price_per_pyeong).toLocaleString()}만원/평`
+                    : '데이터 없음'}
+                </div>
+              </div>
+              <div>
+                <div className={`text-sm mb-1 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                  가격 변화
+                </div>
+                <div className="flex items-center gap-1">
+                  {regionStats.change_rate > 0 ? (
+                    <>
+                      <TrendingUp className="w-4 h-4 text-red-500" />
+                      <span className="text-xl font-bold text-red-500">+{regionStats.change_rate.toFixed(1)}%</span>
+                    </>
+                  ) : regionStats.change_rate < 0 ? (
+                    <>
+                      <TrendingDown className="w-4 h-4 text-blue-500" />
+                      <span className="text-xl font-bold text-blue-500">{regionStats.change_rate.toFixed(1)}%</span>
+                    </>
+                  ) : (
+                    <span className={`text-xl font-bold ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>변동 없음</span>
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className={`text-sm mb-1 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                  최근 거래량
+                </div>
+                <div className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-zinc-900'}`}>
+                  {regionStats.transaction_count}건
+                </div>
+              </div>
+              <div>
+                <div className={`text-sm mb-1 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                  아파트 수
+                </div>
+                <div className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-zinc-900'}`}>
+                  {regionStats.apartment_count}개
+                </div>
+              </div>
+            </div>
+          ) : null}
         </motion.div>
       )}
 
@@ -2148,6 +2410,51 @@ export default function Dashboard({ onApartmentClick, onRegionSelect, onShowMore
               </div>
             );
           })()}
+        </motion.div>
+
+        {/* 카드 3 - 지역별 가격 변동률 지도 */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className={`rounded-2xl border p-6 ${
+            isDarkMode
+              ? 'bg-zinc-900 border-zinc-800'
+              : 'bg-white border-zinc-200'
+          }`}
+        >
+          <div className="flex items-center gap-3 mb-4">
+            <div className={`p-2.5 rounded-xl ${
+              isDarkMode ? 'bg-green-500/20' : 'bg-green-50'
+            }`}>
+              <TrendingUp className={`w-5 h-5 ${
+                isDarkMode ? 'text-green-400' : 'text-green-600'
+              }`} />
+            </div>
+            <h3 className={`font-bold text-lg ${
+              isDarkMode ? 'text-white' : 'text-zinc-900'
+            }`}>
+              지역별 가격 변동률
+            </h3>
+          </div>
+          
+          {priceChangeMapLoading ? (
+            <div className={`py-8 text-center ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+              <div className="inline-block w-4 h-4 border-2 border-green-500 border-t-transparent rounded-full animate-spin"></div>
+              <p className="mt-2 text-xs">데이터를 불러오는 중...</p>
+            </div>
+          ) : priceChangeMapData.length > 0 ? (
+            <KoreaMapChart 
+              data={priceChangeMapData} 
+              isDarkMode={isDarkMode}
+              height={350}
+              onRegionClick={handleMapRegionClick}
+            />
+          ) : (
+            <div className={`text-sm py-8 text-center ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+              데이터가 없습니다.
+            </div>
+          )}
         </motion.div>
       </div>
 

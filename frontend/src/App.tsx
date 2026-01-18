@@ -100,6 +100,18 @@ export default function App() {
     return () => window.removeEventListener('resize', checkDesktop);
   }, []);
 
+  // 화면 전환 시 스크롤 초기화
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }, [currentView]);
+
+  // 상세 페이지나 검색 결과 페이지 열릴 때 스크롤 초기화
+  useEffect(() => {
+    if (showSearchResults || showRegionDetail || showApartmentDetail) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [showSearchResults, showRegionDetail, showApartmentDetail]);
+
   useEffect(() => {
     let ticking = false;
     const handleScroll = () => {
@@ -136,6 +148,7 @@ export default function App() {
       setShowRegionDetail(false);
       setSelectedRegion(null);
     }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [showRegionDetail]);
 
   const handleBackFromDetail = React.useCallback(() => {
@@ -176,6 +189,7 @@ export default function App() {
   const handleShowMoreSearch = React.useCallback((query: string) => {
     setSearchQuery(query);
     setShowSearchResults(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
   const handleViewChange = React.useCallback((view: ViewType) => {
