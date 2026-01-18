@@ -119,8 +119,8 @@ export default function KakaoMap({
 
       // 현재 위치 중심 마커 (파란색 원) - 커스텀 오버레이 사용
       const markerContent = document.createElement('div');
-      markerContent.style.width = '24px';
-      markerContent.style.height = '24px';
+      markerContent.style.width = '20px';
+      markerContent.style.height = '20px';
       markerContent.style.borderRadius = '50%';
       markerContent.style.backgroundColor = '#4285F4';
       markerContent.style.border = '3px solid #FFFFFF';

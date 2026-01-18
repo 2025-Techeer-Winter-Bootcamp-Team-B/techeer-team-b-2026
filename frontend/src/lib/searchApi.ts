@@ -418,3 +418,129 @@ export const deleteAllRecentSearches = async (token: string): Promise<boolean> =
     return false;
   }
 };
+
+export interface TrendingApartment {
+  apt_id: number;
+  apt_name: string;
+  address: string | null;
+  location: { lat: number; lng: number } | null;
+  transaction_count: number;
+  region_id: number | null;
+}
+
+export interface TrendingApartmentsResponse {
+  success: boolean;
+  data: {
+    apartments: TrendingApartment[];
+  };
+}
+
+/**
+ * 최근 1개월 동안 거래량이 많은 아파트를 조회합니다.
+ * @param token 인증 토큰 (선택적)
+ * @returns 급상승 아파트 목록
+ */
+export const getTrendingApartments = async (
+  token?: string | null
+): Promise<TrendingApartment[]> => {
+  try {
+    const response = await apiClient.get<TrendingApartmentsResponse>(
+      '/apartments/trending',
+      {
+        params: { limit: 5 },
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      }
+    );
+    
+    return response.data.data.apartments;
+  } catch (error) {
+    console.error('Failed to fetch trending apartments:', error);
+    return [];
+  }
+};
+
+export interface DetailedSearchRequest {
+  region_id?: number | null;
+  location?: string | null;
+  min_area?: number | null;
+  max_area?: number | null;
+  min_price?: number | null;
+  max_price?: number | null;
+  subway_max_distance_minutes?: number | null;
+  has_education_facility?: boolean | null;
+  limit?: number;
+  skip?: number;
+}
+
+export interface DetailedSearchResult {
+  apt_id: number;
+  apt_name: string;
+  kapt_code?: string | null;
+  region_id?: number | null;
+  address?: string | null;
+  location?: { lat: number; lng: number } | null;
+  exclusive_area?: number | null;
+  average_price?: number | null;
+  subway_station?: string | null;
+  subway_line?: string | null;
+  subway_time?: string | null;
+  education_facility?: string | null;
+}
+
+export interface DetailedSearchResponse {
+  success: boolean;
+  data: {
+    results: DetailedSearchResult[];
+    count: number;
+    total: number;
+    limit: number;
+    skip: number;
+  };
+}
+
+/**
+ * 상세 검색을 실행합니다.
+ * @param request 검색 조건
+ * @param token 인증 토큰 (선택적)
+ * @returns 상세 검색 결과
+ */
+export const detailedSearchApartments = async (
+  request: DetailedSearchRequest,
+  token?: string | null
+): Promise<DetailedSearchResponse['data']> => {
+  try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    
+    const response = await apiClient.post<DetailedSearchResponse>(
+      '/apartments/search',
+      request,
+      { headers }
+    );
+    
+    if (response.data && response.data.success) {
+      return response.data.data;
+    }
+    
+    return {
+      results: [],
+      count: 0,
+      total: 0,
+      limit: request.limit || 50,
+      skip: request.skip || 0
+    };
+  } catch (error) {
+    console.error('Failed to detailed search apartments:', error);
+    return {
+      results: [],
+      count: 0,
+      total: 0,
+      limit: request.limit || 50,
+      skip: request.skip || 0
+    };
+  }
+};
