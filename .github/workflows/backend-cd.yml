@@ -59,35 +59,66 @@ jobs:
             docker compose -f docker-compose.prod.yml pull || true
             docker compose -f docker-compose.prod.yml up -d --build
             
-            # 헬스 체크 (최대 60초 대기, 5초마다 재시도)
-            echo "🏥 헬스 체크..."
-            MAX_RETRIES=12
-            RETRY_INTERVAL=5
+            # 컨테이너가 시작될 때까지 대기
+            echo "⏳ 컨테이너 시작 대기 중 (20초)..."
+            sleep 20
+            
+            # 컨테이너 상태 확인
+            echo "🔍 컨테이너 상태 확인..."
+            CONTAINER_STATUS=$(docker compose -f docker-compose.prod.yml ps backend --format json | grep -o '"State":"[^"]*"' | cut -d'"' -f4 || echo "")
+            if [ -z "$CONTAINER_STATUS" ] || [ "$CONTAINER_STATUS" != "running" ]; then
+              echo "❌ 백엔드 컨테이너가 실행되지 않았습니다. 상태: $CONTAINER_STATUS"
+              docker compose -f docker-compose.prod.yml ps backend
+              echo ""
+              echo "📋 백엔드 로그:"
+              docker compose -f docker-compose.prod.yml logs --tail=50 backend
+              exit 1
+            fi
+            
+            echo "✅ 컨테이너가 실행 중입니다."
+            
+            # 헬스 체크 (간단하고 확실한 방법)
+            echo "🏥 헬스 체크 시작..."
+            MAX_RETRIES=15
+            RETRY_INTERVAL=4
             RETRY_COUNT=0
             HEALTH_CHECK_SUCCESS=false
             
             while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-              sleep $RETRY_INTERVAL
               RETRY_COUNT=$((RETRY_COUNT + 1))
               echo "헬스 체크 시도 $RETRY_COUNT/$MAX_RETRIES..."
               
-              if curl -f http://localhost:8000/health > /dev/null 2>&1; then
-                echo "✅ 헬스 체크 성공!"
+              # 포트가 열려있는지 먼저 확인
+              if ! nc -z localhost 8000 2>/dev/null; then
+                echo "  ⏳ 포트 8000이 아직 열리지 않았습니다..."
+                sleep $RETRY_INTERVAL
+                continue
+              fi
+              
+              # 실제 HTTP 헬스 체크
+              HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:8000/health 2>/dev/null || echo "000")
+              
+              if [ "$HTTP_CODE" = "200" ]; then
+                echo "✅ 헬스 체크 성공! (HTTP $HTTP_CODE)"
                 HEALTH_CHECK_SUCCESS=true
                 break
+              else
+                echo "  ⏳ 헬스 체크 대기 중... (HTTP $HTTP_CODE)"
+                sleep $RETRY_INTERVAL
               fi
             done
             
             if [ "$HEALTH_CHECK_SUCCESS" = false ]; then
               echo "❌ 헬스 체크 실패 (최대 재시도 횟수 초과)"
+              echo ""
               echo "📋 백엔드 컨테이너 상태:"
               docker compose -f docker-compose.prod.yml ps backend
               echo ""
               echo "📋 백엔드 로그 (최근 100줄):"
               docker compose -f docker-compose.prod.yml logs --tail=100 backend
               echo ""
-              echo "📋 백엔드 컨테이너 내부에서 헬스 체크:"
-              docker compose -f docker-compose.prod.yml exec -T backend curl -f http://localhost:8000/health || echo "컨테이너 내부 헬스 체크 실패"
+              echo "📋 포트 확인:"
+              netstat -tlnp | grep 8000 || ss -tlnp | grep 8000 || echo "포트 8000이 열려있지 않습니다."
               exit 1
             fi
             
@@ -120,91 +151,99 @@ jobs:
 
       - name: Slack Notification
         if: always() && env.SLACK_WEBHOOK_URL != ''
-        uses: slackapi/slack-github-action@v1
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        with:
-          webhook-url: ${{ env.SLACK_WEBHOOK_URL }}
-          payload: |
-            {
-              "text": "🚀 백엔드 배포 ${{ job.status == 'success' && '성공' || '실패' }}",
-              "blocks": [
-                {
-                  "type": "header",
-                  "text": {
-                    "type": "plain_text",
-                    "text": "${{ job.status == 'success' && '✅ 백엔드 배포 성공' || '❌ 백엔드 배포 실패' }}"
-                  }
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "${{ job.status == 'success' && '🎉 *끼 얏 호 우 !*' || '💥 *성공적으로 실패하였습니다.*' }}"
-                  }
-                },
-                {
-                  "type": "divider"
-                },
-                {
-                  "type": "section",
-                  "fields": [
-                    {
-                      "type": "mrkdwn",
-                      "text": "*📋 워크플로우:*\nBackend CD - Deploy to EC2"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*🌿 브랜치:*\n`${{ github.ref_name }}`"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*📦 커밋:*\n<${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}|`${GITHUB_SHA:0:7}`>"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*👤 작성자:*\n${{ github.actor }}"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*🕐 배포 시간:*\n${{ steps.deployment_details.outputs.deployment_time }}"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*🏃 실행 ID:*\n<${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}|#${GITHUB_RUN_NUMBER}>"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*🖥️ 서버:*\nEC2 (${{ env.EC2_HOST }})"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*📁 프로젝트 경로:*\n`${{ env.PROJECT_DIR }}`"
-                    }
-                  ]
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*💬 커밋 메시지:*\n```${{ steps.deployment_details.outputs.commit_message }}```"
-                  }
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*🔗 상세 정보:*\n<${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}|GitHub Actions에서 확인하기>"
-                  }
-                },
-                {
-                  "type": "context",
-                  "elements": [
-                    {
-                      "type": "mrkdwn",
-                      "text": "📊 저장소: <${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}|${GITHUB_REPOSITORY}>"
-                    }
-                  ]
+        run: |
+          STATUS_EMOJI="${{ job.status == 'success' && '✅' || '❌' }}"
+          STATUS_TEXT="${{ job.status == 'success' && '성공' || '실패' }}"
+          FUN_MESSAGE="${{ job.status == 'success' && '🎉 *끼 얏 호 우 !*' || '💥 *성공적으로 실패하였습니다.*' }}"
+          
+          PAYLOAD=$(cat <<EOF
+          {
+            "text": "🚀 백엔드 배포 ${STATUS_TEXT}",
+            "blocks": [
+              {
+                "type": "header",
+                "text": {
+                  "type": "plain_text",
+                  "text": "${STATUS_EMOJI} 백엔드 배포 ${STATUS_TEXT}"
                 }
-              ]
-            }
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "${FUN_MESSAGE}"
+                }
+              },
+              {
+                "type": "divider"
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*📋 워크플로우:*\nBackend CD - Deploy to EC2"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*🌿 브랜치:*\n\`${{ github.ref_name }}\`"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*📦 커밋:*\n<${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|\`${{ github.sha }}\`>"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*👤 작성자:*\n${{ github.actor }}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*🕐 배포 시간:*\n${{ steps.deployment_details.outputs.deployment_time }}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*🏃 실행 ID:*\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|#${{ github.run_number }}>"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*🖥️ 서버:*\nEC2 (${{ env.EC2_HOST }})"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*📁 프로젝트 경로:*\n\`${{ env.PROJECT_DIR }}\`"
+                  }
+                ]
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*💬 커밋 메시지:*\n\`\`\`${{ steps.deployment_details.outputs.commit_message }}\`\`\`"
+                }
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*🔗 상세 정보:*\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|GitHub Actions에서 확인하기>"
+                }
+              },
+              {
+                "type": "context",
+                "elements": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "📊 저장소: <${{ github.server_url }}/${{ github.repository }}|${{ github.repository }}>"
+                  }
+                ]
+              }
+            ]
+          }
+          EOF
+          )
+          
+          curl -X POST -H 'Content-type: application/json' \
+            --data "$PAYLOAD" \
+            "$SLACK_WEBHOOK_URL" || echo "⚠️ Slack 알림 전송 실패 (계속 진행)"
