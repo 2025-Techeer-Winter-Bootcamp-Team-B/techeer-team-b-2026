@@ -1983,3 +1983,113 @@ async def get_dashboard_rankings_region(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"데이터 조회 중 오류가 발생했습니다: {str(e)}"
         )
+
+
+# ============================================================
+# 서버 시작 시 홈 화면 캐싱 함수
+# ============================================================
+async def preload_home_cache():
+    """
+    서버 시작 시 홈 화면 지표들을 미리 캐싱합니다.
+    
+    TTL: 12시간 (43200초)
+    백그라운드에서 실행되므로 에러가 발생해도 서버 시작에는 영향을 주지 않습니다.
+    """
+    import logging
+    from app.db.session import AsyncSessionLocal
+    
+    logger = logging.getLogger(__name__)
+    logger.info("🚀 [Preload Cache] 홈 화면 캐싱 시작")
+    
+    # TTL: 12시간 (43200초)
+    PRELOAD_TTL = 43200
+    
+    # 캐싱할 API 목록
+    cache_tasks = [
+        ("dashboard/summary", {"transaction_type": "sale", "months": 6}),
+        ("dashboard/summary", {"transaction_type": "jeonse", "months": 6}),
+        ("dashboard/rankings", {"transaction_type": "sale", "trending_days": 7, "trend_months": 3}),
+        ("dashboard/rankings", {"transaction_type": "jeonse", "trending_days": 7, "trend_months": 3}),
+    ]
+    
+    success_count = 0
+    fail_count = 0
+    
+    try:
+        async with AsyncSessionLocal() as db:
+            for api_name, params in cache_tasks:
+                try:
+                    if api_name == "dashboard/summary":
+                        # 대시보드 요약 데이터 캐싱
+                        transaction_type = params.get("transaction_type", "sale")
+                        months = params.get("months", 6)
+                        
+                        # 캐시 키 생성
+                        cache_key = build_cache_key("dashboard", "summary", transaction_type, str(months))
+                        
+                        # 이미 캐시가 있는지 확인
+                        existing_cache = await get_from_cache(cache_key)
+                        if existing_cache is not None:
+                            logger.info(f"✅ [Preload Cache] {api_name} ({transaction_type}, {months}개월) - 이미 캐시되어 있음")
+                            success_count += 1
+                            continue
+                        
+                        # 데이터 조회 및 캐싱
+                        result = await get_dashboard_summary(
+                            transaction_type=transaction_type,
+                            months=months,
+                            db=db
+                        )
+                        
+                        # 캐시에 저장 (TTL: 12시간)
+                        if result and result.get("success"):
+                            cache_key = build_cache_key("dashboard", "summary", transaction_type, str(months))
+                            await set_to_cache(cache_key, result, ttl=PRELOAD_TTL)
+                            logger.info(f"✅ [Preload Cache] {api_name} ({transaction_type}, {months}개월) - 캐싱 완료 (TTL: {PRELOAD_TTL}초)")
+                            success_count += 1
+                        else:
+                            logger.warning(f"⚠️ [Preload Cache] {api_name} ({transaction_type}, {months}개월) - 데이터가 없어 캐싱하지 않음")
+                            fail_count += 1
+                    
+                    elif api_name == "dashboard/rankings":
+                        # 랭킹 데이터 캐싱
+                        transaction_type = params.get("transaction_type", "sale")
+                        trending_days = params.get("trending_days", 7)
+                        trend_months = params.get("trend_months", 3)
+                        
+                        # 캐시 키 생성
+                        cache_key = build_cache_key("dashboard", "rankings", transaction_type, str(trending_days), str(trend_months))
+                        
+                        # 이미 캐시가 있는지 확인
+                        existing_cache = await get_from_cache(cache_key)
+                        if existing_cache is not None:
+                            logger.info(f"✅ [Preload Cache] {api_name} ({transaction_type}) - 이미 캐시되어 있음")
+                            success_count += 1
+                            continue
+                        
+                        # 데이터 조회 및 캐싱
+                        result = await get_dashboard_rankings(
+                            transaction_type=transaction_type,
+                            trending_days=trending_days,
+                            trend_months=trend_months,
+                            db=db
+                        )
+                        
+                        # 캐시에 저장 (TTL: 12시간)
+                        if result and result.get("success"):
+                            cache_key = build_cache_key("dashboard", "rankings", transaction_type, str(trending_days), str(trend_months))
+                            await set_to_cache(cache_key, result, ttl=PRELOAD_TTL)
+                            logger.info(f"✅ [Preload Cache] {api_name} ({transaction_type}) - 캐싱 완료 (TTL: {PRELOAD_TTL}초)")
+                            success_count += 1
+                        else:
+                            logger.warning(f"⚠️ [Preload Cache] {api_name} ({transaction_type}) - 데이터가 없어 캐싱하지 않음")
+                            fail_count += 1
+                
+                except Exception as e:
+                    logger.error(f"❌ [Preload Cache] {api_name} 캐싱 실패: {e}", exc_info=True)
+                    fail_count += 1
+            
+            logger.info(f"✅ [Preload Cache] 홈 화면 캐싱 완료 - 성공: {success_count}개, 실패: {fail_count}개")
+    
+    except Exception as e:
+        logger.error(f"❌ [Preload Cache] 홈 화면 캐싱 중 오류 발생: {e}", exc_info=True)

@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.core.config import settings
 from app.core.redis import get_redis_client, close_redis_client
@@ -151,6 +152,24 @@ class CORSHeaderMiddleware(BaseHTTPMiddleware):
 # CORS 헤더 미들웨어 추가 (CORSMiddleware 다음에 추가)
 app.add_middleware(CORSHeaderMiddleware)
 
+# ============================================================
+# 📊 Prometheus 메트릭 수집 설정
+# ============================================================
+# FastAPI 애플리케이션의 메트릭을 자동으로 수집합니다
+# ============================================================
+instrumentator = Instrumentator(
+    # 기본적으로 모든 엔드포인트를 수집
+    excluded_handlers=[
+        "/metrics",  # Prometheus 메트릭 엔드포인트 자체는 제외
+        "/health",   # 헬스 체크는 제외 (선택적)
+        "/docs",     # Swagger 문서는 제외 (선택적)
+        "/redoc",    # ReDoc 문서는 제외 (선택적)
+    ],
+)
+
+# 메트릭 수집기 활성화
+instrumentator.instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+
 
 # 전역 예외 핸들러: 모든 에러 응답에 CORS 헤더 추가
 @app.exception_handler(Exception)
@@ -263,6 +282,16 @@ async def startup_event():
         logger.info("✅ Redis 연결 초기화 완료")
     except Exception as e:
         logger.warning(f"⚠️ Redis 연결 초기화 실패 (캐싱 기능 비활성화): {e}")
+    
+    # 서버 시작 시 홈 화면 캐싱 (백그라운드 태스크로 실행)
+    try:
+        from app.api.v1.endpoints.dashboard import preload_home_cache
+        import asyncio
+        # 백그라운드 태스크로 실행 (서버 시작을 블로킹하지 않음)
+        asyncio.create_task(preload_home_cache())
+        logger.info("✅ 홈 화면 캐싱 작업 시작 (백그라운드)")
+    except Exception as e:
+        logger.warning(f"⚠️ 홈 화면 캐싱 작업 시작 실패 (무시하고 계속 진행): {e}")
 
 
 @app.on_event("shutdown")
