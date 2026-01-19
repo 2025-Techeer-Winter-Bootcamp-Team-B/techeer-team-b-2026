@@ -34,7 +34,8 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
   const [newsData, setNewsData] = useState<NewsResponse[]>([]);
   const [selectedNews, setSelectedNews] = useState<NewsResponse | null>(null);
   const [loadingNewsDetail, setLoadingNewsDetail] = useState(false);
-  const [isLoadingProperties, setIsLoadingProperties] = useState(false);
+  // 초기값을 true로 설정하여 목록 로드 완료 전까지 상세 정보 API 호출 방지
+  const [isLoadingProperties, setIsLoadingProperties] = useState(true);
   const [isLoadingPropertyDetail, setIsLoadingPropertyDetail] = useState(false);
   const [isLoadingCompliment, setIsLoadingCompliment] = useState(false);
   const [isLoadingPriceTrend, setIsLoadingPriceTrend] = useState(false);
@@ -81,6 +82,7 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
       if (!isSignedIn || !getToken) {
         setMyProperties([]);
         setSelectedPropertyId(null);
+        setIsLoadingProperties(false);
         return;
       }
       
@@ -90,13 +92,18 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
         if (!token) {
           setMyProperties([]);
           setSelectedPropertyId(null);
+          setIsLoadingProperties(false);
           return;
         }
         
         // 초기 로드 시에만 캐시를 무시하고 최신 데이터를 가져오기
         const properties = await getMyProperties(token, true);
         // 오름차순 정렬 (오래된 순서)
-        setMyProperties([...properties].reverse());
+        const reversedProperties = [...properties].reverse();
+        
+        // ref를 먼저 업데이트 (useEffect에서 최신 상태 참조용)
+        myPropertiesRef.current = reversedProperties;
+        setMyProperties(reversedProperties);
         
         // 현재 선택된 내 집 ID (ref를 통해 최신 값 참조)
         const currentSelectedId = selectedPropertyIdRef.current;
@@ -104,16 +111,19 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
         // 선택된 내 집 처리
         if (properties.length === 0) {
           // 목록이 비어있으면 선택 해제
+          selectedPropertyIdRef.current = null;
           setSelectedPropertyId(null);
         } else if (currentSelectedId === null) {
           // 선택된 내 집이 없으면 첫 번째로 선택
-          setSelectedPropertyId(properties[0].property_id);
+          selectedPropertyIdRef.current = reversedProperties[0].property_id;
+          setSelectedPropertyId(reversedProperties[0].property_id);
         } else {
           // 선택된 내 집이 목록에 있는지 확인
-          const selectedStillExists = properties.some(p => p.property_id === currentSelectedId);
+          const selectedStillExists = reversedProperties.some(p => p.property_id === currentSelectedId);
           if (!selectedStillExists) {
             // 선택된 내 집이 목록에서 사라졌으면 첫 번째로 선택
-            setSelectedPropertyId(properties[0].property_id);
+            selectedPropertyIdRef.current = reversedProperties[0].property_id;
+            setSelectedPropertyId(reversedProperties[0].property_id);
           }
           // 선택된 내 집이 목록에 있으면 유지 (변경하지 않음)
         }
@@ -156,8 +166,22 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
   // 선택된 내 집 상세 정보 조회
   useEffect(() => {
     const fetchPropertyDetail = async () => {
+      console.log('🔍 [MyHome] fetchPropertyDetail 시작:', {
+        selectedPropertyId,
+        isLoadingProperties,
+        myPropertiesLength: myPropertiesRef.current.length,
+        myPropertiesIds: myPropertiesRef.current.map(p => p.property_id)
+      });
+      
       if (!selectedPropertyId || !isSignedIn || !getToken) {
+        console.log('🔍 [MyHome] fetchPropertyDetail - 조건 불충족으로 종료');
         setSelectedPropertyDetail(null);
+        return;
+      }
+      
+      // 초기 로딩 중이면 대기 (탭 전환 후 목록이 로드되기 전에 API 호출 방지)
+      if (isLoadingProperties) {
+        console.log('⏳ [MyHome] 목록 로딩 중, 상세 정보 조회 대기...');
         return;
       }
       
@@ -176,6 +200,7 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
         return;
       }
       
+      console.log('✅ [MyHome] fetchPropertyDetail - API 호출 진행:', selectedPropertyId);
       setIsLoadingPropertyDetail(true);
       try {
         const token = await getToken();
@@ -187,22 +212,40 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
         const detail = await getMyProperty(selectedPropertyId, token);
         setSelectedPropertyDetail(detail);
         setMemoText(detail.memo || '');
-      } catch (error) {
+      } catch (error: any) {
         console.error('Failed to fetch property detail:', error);
         setSelectedPropertyDetail(null);
+        // 404 에러 (내 집을 찾을 수 없음)인 경우 목록에서 제거하고 다음 항목 선택
+        if (error.response?.status === 404 || error.message?.includes('NOT_FOUND')) {
+          console.log('🗑️ [MyHome] 삭제된 내 집 감지, 목록에서 제거:', selectedPropertyId);
+          const filteredProperties = currentProperties.filter(p => p.property_id !== selectedPropertyId);
+          myPropertiesRef.current = filteredProperties;
+          setMyProperties(filteredProperties);
+          if (filteredProperties.length > 0) {
+            setSelectedPropertyId(filteredProperties[0].property_id);
+          } else {
+            setSelectedPropertyId(null);
+          }
+        }
       } finally {
         setIsLoadingPropertyDetail(false);
       }
     };
     
     fetchPropertyDetail();
-  }, [selectedPropertyId, isSignedIn, getToken, myProperties]);
+  }, [selectedPropertyId, isSignedIn, getToken, myProperties, isLoadingProperties]);
 
   // 선택된 내 집 칭찬글 조회
   useEffect(() => {
     const fetchPropertyCompliment = async () => {
       if (!selectedPropertyId || !isSignedIn || !getToken) {
         setPropertyCompliment(null);
+        return;
+      }
+      
+      // 초기 로딩 중이면 대기 (탭 전환 후 목록이 로드되기 전에 API 호출 방지)
+      if (isLoadingProperties) {
+        console.log('⏳ [MyHome] 목록 로딩 중, 칭찬글 조회 대기...');
         return;
       }
       
@@ -234,7 +277,7 @@ export default function MyHome({ isDarkMode, onOpenProfileMenu, isDesktop = fals
     };
     
     fetchPropertyCompliment();
-  }, [selectedPropertyId, isSignedIn, getToken, myProperties]);
+  }, [selectedPropertyId, isSignedIn, getToken, myProperties, isLoadingProperties]);
 
   // 선택된 내 집 가격 추이 및 거래 데이터 조회
   useEffect(() => {
