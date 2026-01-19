@@ -90,7 +90,7 @@ lxml>=5.0.0  # BeautifulSoup 파서 (선택)
 # openai>=1.6.0
 
 # ------------------------------------------------------------
-# 📈 Monitoring (선택)
+# 📈 Monitoring
 # ------------------------------------------------------------
 # sentry-sdk[fastapi]>=1.39.0
-# prometheus-fastapi-instrumentator>=6.1.0
+prometheus-fastapi-instrumentator>=6.1.0

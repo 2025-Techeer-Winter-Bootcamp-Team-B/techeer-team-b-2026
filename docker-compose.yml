@@ -73,34 +73,33 @@ services:
       REDIS_URL: redis://redis:6379/0
       
       # JWT 인증 설정
-      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
-      ALGORITHM: ${ALGORITHM:-HS256}
-      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
-      REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      SECRET_KEY: ${SECRET_KEY}
+      ALGORITHM: ${ALGORITHM}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
+      REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS}
       
       # CORS 설정
-      # Android 에뮬레이터(10.0.2.2)와 실제 기기에서의 접근을 허용
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173,http://localhost:8081,http://realestate-frontend:3000,http://10.0.2.2:3000}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
       
       # Clerk 인증 설정
-      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
-      CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY:-}
-      CLERK_WEBHOOK_SECRET: ${CLERK_WEBHOOK_SECRET:-}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+      CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY}
+      CLERK_WEBHOOK_SECRET: ${CLERK_WEBHOOK_SECRET}
       
       # 외부 API 키
-      MOLIT_API_KEY: ${MOLIT_API_KEY:-}
-      REB_API_KEY: ${REB_API_KEY:-}
-      KAKAO_REST_API_KEY: ${KAKAO_REST_API_KEY:-}
-      KAKAO_JAVASCRIPT_KEY: ${KAKAO_JAVASCRIPT_KEY:-}
-      NAVER_CLIENT_ID: ${NAVER_CLIENT_ID:-}
-      NAVER_CLIENT_SECRET: ${NAVER_CLIENT_SECRET:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      MOLIT_API_KEY: ${MOLIT_API_KEY}
+      REB_API_KEY: ${REB_API_KEY}
+      KAKAO_REST_API_KEY: ${KAKAO_REST_API_KEY}
+      KAKAO_JAVASCRIPT_KEY: ${KAKAO_JAVASCRIPT_KEY}
+      NAVER_CLIENT_ID: ${NAVER_CLIENT_ID}
+      NAVER_CLIENT_SECRET: ${NAVER_CLIENT_SECRET}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
       
       # 이메일 설정
-      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
       
       # API 버전 고정값
       API_V1_STR: /api/v1
@@ -158,16 +157,132 @@ services:
     image: dpage/pgadmin4
     container_name: pgadmin
     restart: always
+    env_file:
+      - .env
     ports:
-     - 8001:81
+     - "${PGADMIN_LISTEN_PORT}:81"
     volumes:
      - pgadmin_data_dev:/var/lib/pgadmin
     environment:
-      - PGADMIN_DEFAULT_EMAIL=admin@gmail.com
-      - PGADMIN_DEFAULT_PASSWORD=secret
+      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_DEFAULT_EMAIL}
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_DEFAULT_PASSWORD}
       - PGADMIN_LISTEN_PORT=81
     networks:
-      - realestate-network  
+      - realestate-network
+
+  # --------------------------------------------------------
+  # 📊 Redis Exporter (Redis 메트릭 수집)
+  # --------------------------------------------------------
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: realestate-redis-exporter
+    restart: always
+    env_file:
+      - .env
+    command:
+      - '--redis.addr=redis://redis:6379'
+    ports:
+      - "9121:9121"
+    networks:
+      - realestate-network
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # --------------------------------------------------------
+  # 📊 PostgreSQL Exporter (PostgreSQL 메트릭 수집)
+  # --------------------------------------------------------
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:latest
+    container_name: realestate-postgres-exporter
+    restart: always
+    env_file:
+      - .env
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable"
+    ports:
+      - "9187:9187"
+    networks:
+      - realestate-network
+    depends_on:
+      db:
+        condition: service_started
+
+  # --------------------------------------------------------
+  # 📊 Prometheus (메트릭 수집)
+  # --------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: realestate-prometheus
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "${PROMETHEUS_PORT}:9090"
+    volumes:
+      - ./backend/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - realestate-network
+    depends_on:
+      - backend
+      - redis-exporter
+      - postgres-exporter
+
+  # --------------------------------------------------------
+  # 📈 Grafana (메트릭 시각화)
+  # --------------------------------------------------------
+  grafana:
+    image: grafana/grafana:latest
+    container_name: realestate-grafana
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "${GRAFANA_PORT}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./backend/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./backend/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_INSTALL_PLUGINS=
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:${GRAFANA_PORT}
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      # 로그 레벨 설정
+      - GF_LOG_LEVEL=warn
+      # 프로비저닝 설정
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+      # 프로비저닝 오류 허용
+      - GF_PROVISIONING_DATASOURCES_ALLOW_DELETE=true
+      # Public dashboard 활성화
+      - GF_PUBLIC_DASHBOARDS_ENABLED=true
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - realestate-network
+    depends_on:
+      prometheus:
+        condition: service_healthy
 
 
 # --------------------------------------------------------
@@ -178,6 +293,10 @@ volumes:
     driver: local
   pgadmin_data_dev:
   redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
     driver: local
 
 # --------------------------------------------------------

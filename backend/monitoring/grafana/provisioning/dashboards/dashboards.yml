@@ -1,0 +1,21 @@
+# ============================================================
+# Grafana 대시보드 프로비저닝
+# ============================================================
+# 대시보드 자동 로드 설정
+# Grafana 시작 시 자동으로 대시보드를 로드합니다
+# ============================================================
+
+apiVersion: 1
+
+providers:
+  - name: 'Default'
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: true
+      recurse: true

@@ -1,0 +1,4 @@
+# 빈 파일 - Grafana가 alerting 디렉토리를 찾을 때 오류 방지
+apiVersion: 1
+
+notifiers: []
