@@ -1,0 +1,85 @@
+name: Backend CD - Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/**'
+      - 'docker-compose.prod.yml'
+      - '.github/workflows/backend-cd.yml'
+  workflow_dispatch:  # 수동 실행 가능
+
+env:
+  AWS_REGION: ap-northeast-2
+  EC2_HOST: ${{ secrets.EC2_HOST }}
+  EC2_USER: ${{ secrets.EC2_USER }}
+  PROJECT_DIR: ${{ secrets.EC2_PROJECT_DIR }}
+
+jobs:
+  deploy:
+    name: Deploy Backend to EC2
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/ec2_key
+          chmod 600 ~/.ssh/ec2_key
+          ssh-keyscan -H ${{ env.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to EC2
+        run: |
+          ssh -i ~/.ssh/ec2_key -o StrictHostKeyChecking=no ${{ env.EC2_USER }}@${{ env.EC2_HOST }} << 'ENDSSH'
+            set -e
+            
+            echo "🚀 배포 시작..."
+            
+            # 프로젝트 디렉토리로 이동
+            cd ${{ env.PROJECT_DIR }} || {
+              echo "❌ 프로젝트 디렉토리를 찾을 수 없습니다."
+              echo "프로젝트를 먼저 클론하세요:"
+              echo "git clone https://github.com/techeer-11-team-k/techeer-team-b-2026.git"
+              exit 1
+            }
+            
+            # 최신 코드 가져오기
+            echo "📥 최신 코드 가져오기..."
+            git fetch origin
+            git reset --hard origin/main
+            git clean -fd
+            
+            # Docker Compose로 재배포
+            echo "🐳 Docker Compose 재배포..."
+            docker compose -f docker-compose.prod.yml pull || true
+            docker compose -f docker-compose.prod.yml up -d --build
+            
+            # 헬스 체크
+            echo "🏥 헬스 체크..."
+            sleep 10
+            if curl -f http://localhost:8000/health > /dev/null 2>&1; then
+              echo "✅ 배포 성공!"
+            else
+              echo "⚠️ 헬스 체크 실패. 로그 확인:"
+              docker compose -f docker-compose.prod.yml logs --tail=50 backend
+              exit 1
+            fi
+            
+            # 사용하지 않는 이미지 정리
+            docker image prune -f
+            
+            echo "✨ 배포 완료!"
+          ENDSSH
+
+      - name: Notify deployment status
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ 백엔드 배포 성공!"
+          else
+            echo "❌ 백엔드 배포 실패!"
+          fi

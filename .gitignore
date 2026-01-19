@@ -5,6 +5,7 @@
 .db_backup
 /db_backup
 db_backup
+/docs
 
 
 # Byte-compiled / optimized / DLL files

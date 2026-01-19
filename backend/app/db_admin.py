@@ -361,7 +361,10 @@ class DatabaseAdmin:
             
             print(f"      📥 데이터 로드 및 변환 중 ({total_rows:,}개 행)...")
             
-            def convert_value(value: str, col_name: str, col_type: str):
+            # 변환 실패 추적용
+            conversion_errors = []
+            
+            def convert_value(value: str, col_name: str, col_type: str, row_idx: int = None):
                 """CSV 값을 적절한 데이터 타입으로 변환"""
                 if value == '' or value is None:
                     return None
@@ -408,9 +411,39 @@ class DatabaseAdmin:
                 if col_type in ('integer', 'int', 'int4', 'bigint', 'int8', 'smallint', 'int2'):
                     if value == '':
                         return None
+                    
+                    # 지번 주소 관련 컬럼명 체크
+                    # apt_seq, building_num 등도 하이픈 포함 지번 형식일 수 있음
+                    # 하지만 DB 스키마가 integer로 되어 있다면 None 반환 (타입 불일치 방지)
+                    jibun_related_keywords = ['jibun', 'bonbun', 'bubun', 'apt_seq', 'building_num', 'seq']
+                    if any(keyword in col_name.lower() for keyword in jibun_related_keywords):
+                        # 지번 관련 컬럼인데 integer 타입이면 스키마 오류 가능성
+                        # 경고만 출력하고 None 반환 (실제로는 VARCHAR여야 함)
+                        if len(conversion_errors) < 5:
+                            error_msg = f"행 {row_idx}, 컬럼 '{col_name}': '{value}' → 지번/일련번호 값이지만 컬럼 타입이 integer입니다. 스키마 확인 필요."
+                            conversion_errors.append(error_msg)
+                        return None  # integer 컬럼에는 문자열을 넣을 수 없으므로 None 반환
+                    
+                    # 하이픈이 포함된 값은 지번일 가능성이 높음
+                    # integer 컬럼에는 넣을 수 없으므로 None 반환
+                    if '-' in value:
+                        # 경고 출력
+                        if len(conversion_errors) < 10:
+                            error_msg = f"행 {row_idx}, 컬럼 '{col_name}': '{value}' → 지번 형식(하이픈 포함)이지만 컬럼 타입이 integer입니다. None으로 처리합니다."
+                            conversion_errors.append(error_msg)
+                        return None  # integer 컬럼에는 문자열을 넣을 수 없으므로 None 반환
+                    
                     try:
-                        return int(value)
-                    except:
+                        # 순수 숫자만 있는 경우에만 integer 변환 시도
+                        cleaned_value = value.strip().replace(' ', '')
+                        if cleaned_value and cleaned_value.isdigit():
+                            return int(cleaned_value)
+                        return None
+                    except (ValueError, AttributeError) as e:
+                        # 변환 실패 시 경고 기록 (너무 많으면 출력 제한)
+                        if len(conversion_errors) < 10:
+                            error_msg = f"행 {row_idx}, 컬럼 '{col_name}': '{value}' → integer 변환 실패 (타입: {col_type})"
+                            conversion_errors.append(error_msg)
                         return None
                 
                 # Numeric/Double 타입
@@ -419,7 +452,11 @@ class DatabaseAdmin:
                         return None
                     try:
                         return float(value)
-                    except:
+                    except (ValueError, AttributeError) as e:
+                        # 변환 실패 시 경고 기록
+                        if len(conversion_errors) < 10:
+                            error_msg = f"행 {row_idx}, 컬럼 '{col_name}': '{value}' → float 변환 실패 (타입: {col_type})"
+                            conversion_errors.append(error_msg)
                         return None
                 
                 return value
@@ -434,14 +471,22 @@ class DatabaseAdmin:
                     ncols=80,
                     unit='행'
                 ) as pbar:
-                    for row in reader:
+                    for row_idx, row in enumerate(reader, start=2):  # 헤더가 1행이므로 2부터 시작
                         converted_row = {}
                         for col_name in column_names:
                             value = row.get(col_name, '')
                             col_type = column_types.get(col_name, 'varchar')
-                            converted_row[col_name] = convert_value(value, col_name, col_type)
+                            converted_row[col_name] = convert_value(value, col_name, col_type, row_idx)
                         rows_to_insert.append(converted_row)
                         pbar.update(1)
+            
+            # 변환 오류가 있으면 출력
+            if conversion_errors:
+                print(f"\n      ⚠️  변환 경고 ({len(conversion_errors)}개):")
+                for error in conversion_errors[:10]:  # 최대 10개만 출력
+                    print(f"         - {error}")
+                if len(conversion_errors) > 10:
+                    print(f"         ... 외 {len(conversion_errors) - 10}개 경고")
             
             # 배치로 INSERT 실행 (프로그래스바 포함)
             if rows_to_insert:
