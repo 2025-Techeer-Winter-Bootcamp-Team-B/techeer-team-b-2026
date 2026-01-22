@@ -1204,24 +1204,27 @@ export const Comparison: React.FC = () => {
                                               <div>
                                                   <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wide px-3 mb-2">차트 표시</p>
                                                   <div className="space-y-1">
-                                                  {numericFilters.map((filter) => (
-                                                      <label
-                                                          key={filter}
-                                                          className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 rounded-lg cursor-pointer transition-colors"
-                                                          onClick={() => handleChartFilterChange(filter)}
-                                                      >
-                                                          <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-colors ${
-                                                              chartDisplayFilter === filter
-                                                                  ? 'border-indigo-500'
-                                                                  : 'border-slate-300'
-                                                          }`}>
-                                                              {chartDisplayFilter === filter && (
-                                                                  <div className="w-2 h-2 rounded-full bg-indigo-500" />
-                                                              )}
-                                                          </div>
-                                                          <span className="text-[13px] font-bold text-slate-700">{filter}</span>
-                                                      </label>
-                                                  ))}
+                                                  {numericFilters.map((filter) => {
+                                                      const displayText = filter === '매매가' ? '매매가/전세가' : filter;
+                                                      return (
+                                                          <label
+                                                              key={filter}
+                                                              className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 rounded-lg cursor-pointer transition-colors"
+                                                              onClick={() => handleChartFilterChange(filter)}
+                                                          >
+                                                              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-colors ${
+                                                                  chartDisplayFilter === filter
+                                                                      ? 'border-indigo-500'
+                                                                      : 'border-slate-300'
+                                                              }`}>
+                                                                  {chartDisplayFilter === filter && (
+                                                                      <div className="w-2 h-2 rounded-full bg-indigo-500" />
+                                                                  )}
+                                                              </div>
+                                                              <span className="text-[13px] font-bold text-slate-700">{displayText}</span>
+                                                          </label>
+                                                      );
+                                                  })}
                                               </div>
                                           </div>
                                           </div>
