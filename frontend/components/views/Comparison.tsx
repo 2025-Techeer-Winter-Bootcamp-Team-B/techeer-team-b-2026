@@ -666,7 +666,9 @@ const SearchAndSelectApart: React.FC<SearchAndSelectApartProps> = ({
 };
 
 export const Comparison: React.FC = () => {
-  const [assets, setAssets] = useState<AssetData[]>([]);
+  // 1:1 비교와 다수 비교를 위한 별도 상태 관리
+  const [oneToOneAssets, setOneToOneAssets] = useState<AssetData[]>([]); // 최대 2개
+  const [multiAssets, setMultiAssets] = useState<AssetData[]>([]); // 최대 5개
   const [selectedAssetId, setSelectedAssetId] = useState<number | null>(null);
   const [comparisonMode, setComparisonMode] = useState<'1:1' | 'multi'>('multi');
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
@@ -681,6 +683,8 @@ export const Comparison: React.FC = () => {
   
   const filterDropdownRef = useRef<HTMLDivElement>(null);
   
+  // 현재 모드에 따라 적절한 assets 사용
+  const assets = comparisonMode === '1:1' ? oneToOneAssets : multiAssets;
   const chartData = generateChartData(assets, chartDisplayFilter);
   
   const availableFilters = [
@@ -735,14 +739,19 @@ export const Comparison: React.FC = () => {
       const trending = await fetchTrendingApartments(MAX_COMPARE);
       const aptIds = trending.data.apartments.map((apt) => apt.apt_id);
       if (!aptIds.length) {
-        setAssets([]);
+        setMultiAssets([]);
+        setOneToOneAssets([]);
         return;
       }
       const compare = await fetchCompareApartments(aptIds.slice(0, MAX_COMPARE));
       const mapped = mapCompareToAssets(compare.apartments);
-      setAssets(mapped);
+      // 다수 비교용 초기 데이터
+      setMultiAssets(mapped);
+      // 1:1 비교용 초기 데이터 (최대 2개)
+      setOneToOneAssets(mapped.slice(0, 2));
     } catch (error) {
-      setAssets([]);
+      setMultiAssets([]);
+      setOneToOneAssets([]);
     }
   };
 
@@ -769,7 +778,11 @@ export const Comparison: React.FC = () => {
 
   const handleRemoveAsset = (id: number, e: React.MouseEvent) => {
       e.stopPropagation();
-      setAssets(prev => prev.filter(a => a.id !== id));
+      if (comparisonMode === '1:1') {
+        setOneToOneAssets(prev => prev.filter(a => a.id !== id));
+      } else {
+        setMultiAssets(prev => prev.filter(a => a.id !== id));
+      }
       if (selectedAssetId === id) setSelectedAssetId(null);
   };
 
@@ -794,7 +807,7 @@ export const Comparison: React.FC = () => {
     if (comparisonMode === '1:1' && editingCardSide) {
       // 1:1 모드에서 특정 카드 변경
       if (editingCardSide === 'left') {
-        setAssets(prev => {
+        setOneToOneAssets(prev => {
           const newAssets = [...prev];
           if (newAssets.length > 0) {
             newAssets[0] = newAsset;
@@ -804,7 +817,7 @@ export const Comparison: React.FC = () => {
           return newAssets;
         });
       } else if (editingCardSide === 'right') {
-        setAssets(prev => {
+        setOneToOneAssets(prev => {
           const newAssets = [...prev];
           if (newAssets.length > 1) {
             newAssets[1] = newAsset;
@@ -819,9 +832,9 @@ export const Comparison: React.FC = () => {
       }
       setEditingCardSide(null);
     } else {
-      // 다수 아파트 분석 모드 또는 일반 추가
-      if (assets.length < MAX_COMPARE) {
-        setAssets(prev => [...prev, newAsset]);
+      // 다수 아파트 분석 모드: 다수 비교 목록에만 추가
+      if (multiAssets.length < MAX_COMPARE) {
+        setMultiAssets(prev => [...prev, newAsset]);
       }
     }
     
@@ -944,7 +957,10 @@ export const Comparison: React.FC = () => {
           <ToggleButtonGroup
               options={['1:1 정밀 비교', '다수 아파트 분석']}
               value={comparisonMode === '1:1' ? '1:1 정밀 비교' : '다수 아파트 분석'}
-              onChange={(value) => setComparisonMode(value === '1:1 정밀 비교' ? '1:1' : 'multi')}
+              onChange={(value) => {
+                setComparisonMode(value === '1:1 정밀 비교' ? '1:1' : 'multi');
+                setEditingCardSide(null); // 모드 전환 시 편집 상태 초기화
+              }}
           />
       </div>
 
