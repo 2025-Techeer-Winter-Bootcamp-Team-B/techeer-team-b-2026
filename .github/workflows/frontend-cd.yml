@@ -1,0 +1,209 @@
+name: Frontend CD - Vercel Deployment Notification
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'frontend/**'
+      - 'vercel.json'
+      - '.github/workflows/frontend-cd.yml'
+  workflow_dispatch:  # 수동 실행 가능
+
+jobs:
+  notify:
+    name: Notify Vercel Deployment Status
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get deployment details
+        id: deployment_details
+        run: |
+          # 커밋 메시지를 JSON-safe하게 이스케이프
+          COMMIT_MSG=$(git log -1 --pretty=%B | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g' | head -c 500)
+          echo "commit_message=$COMMIT_MSG" >> $GITHUB_OUTPUT
+          echo "commit_author=$(git log -1 --pretty=%an)" >> $GITHUB_OUTPUT
+          echo "deployment_time=$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
+          echo "commit_sha=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+
+      - name: Check Vercel Deployment Status
+        id: vercel_status
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          # Vercel API를 사용하여 최신 배포 상태 확인
+          if [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "⚠️ Vercel 토큰이 설정되지 않았습니다. 배포 상태 확인을 건너뜁니다."
+            echo "status=unknown" >> $GITHUB_OUTPUT
+            echo "deployment_url=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # 최신 배포 정보 가져오기
+          DEPLOYMENT_RESPONSE=$(curl -s -X GET \
+            "https://api.vercel.com/v6/deployments?projectId=${VERCEL_PROJECT_ID}&limit=1" \
+            -H "Authorization: Bearer ${VERCEL_TOKEN}" \
+            -H "Content-Type: application/json" || echo "{}")
+          
+          # 배포 상태 파싱
+          DEPLOYMENT_STATE=$(echo "$DEPLOYMENT_RESPONSE" | grep -o '"state":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "unknown")
+          DEPLOYMENT_URL=$(echo "$DEPLOYMENT_RESPONSE" | grep -o '"url":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "")
+          
+          echo "status=$DEPLOYMENT_STATE" >> $GITHUB_OUTPUT
+          echo "deployment_url=$DEPLOYMENT_URL" >> $GITHUB_OUTPUT
+          
+          if [ "$DEPLOYMENT_STATE" = "READY" ]; then
+            echo "✅ Vercel 배포 성공 감지"
+          elif [ "$DEPLOYMENT_STATE" = "ERROR" ] || [ "$DEPLOYMENT_STATE" = "CANCELED" ]; then
+            echo "❌ Vercel 배포 실패 감지: $DEPLOYMENT_STATE"
+          else
+            echo "ℹ️ Vercel 배포 상태: $DEPLOYMENT_STATE"
+          fi
+
+      - name: Slack Notification
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          # Slack Webhook URL이 없으면 스킵
+          if [ -z "$SLACK_WEBHOOK_URL" ] || [ "$SLACK_WEBHOOK_URL" = "" ]; then
+            echo "⚠️ SLACK_WEBHOOK_URL이 설정되지 않았습니다. Slack 알림을 건너뜁니다."
+            exit 0
+          fi
+          
+          # 배포 상태에 따른 메시지 설정
+          DEPLOYMENT_STATE="${{ steps.vercel_status.outputs.status }}"
+          
+          if [ "$DEPLOYMENT_STATE" = "READY" ]; then
+            STATUS_EMOJI="✅"
+            STATUS_TEXT="성공"
+            FUN_MESSAGE="🎉 *프론트엔드 배포 완료!*"
+            COLOR="good"
+          elif [ "$DEPLOYMENT_STATE" = "ERROR" ] || [ "$DEPLOYMENT_STATE" = "CANCELED" ]; then
+            STATUS_EMOJI="❌"
+            STATUS_TEXT="실패"
+            FUN_MESSAGE="💥 *프론트엔드 배포 실패*"
+            COLOR="danger"
+          else
+            STATUS_EMOJI="⏳"
+            STATUS_TEXT="진행 중"
+            FUN_MESSAGE="🔄 *프론트엔드 배포 중...*"
+            COLOR="warning"
+          fi
+          
+          # 커밋 메시지를 JSON-safe하게 처리
+          COMMIT_MSG="${{ steps.deployment_details.outputs.commit_message }}"
+          COMMIT_MSG_ESCAPED=$(echo "$COMMIT_MSG" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed 's/`/\\`/g' | sed 's/\$/\\$/g')
+          
+          DEPLOYMENT_URL="${{ steps.vercel_status.outputs.deployment_url }}"
+          if [ -n "$DEPLOYMENT_URL" ] && [ "$DEPLOYMENT_URL" != "" ]; then
+            DEPLOYMENT_LINK="<$DEPLOYMENT_URL|$DEPLOYMENT_URL>"
+          else
+            DEPLOYMENT_LINK="N/A"
+          fi
+          
+          # JSON payload 생성
+          PAYLOAD=$(cat <<JSON
+          {
+            "text": "🚀 프론트엔드 배포 ${STATUS_TEXT}",
+            "blocks": [
+              {
+                "type": "header",
+                "text": {
+                  "type": "plain_text",
+                  "text": "${STATUS_EMOJI} 프론트엔드 배포 ${STATUS_TEXT}"
+                }
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "${FUN_MESSAGE}"
+                }
+              },
+              {
+                "type": "divider"
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*📋 워크플로우:*\nFrontend CD - Vercel Deployment"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*🌿 브랜치:*\n\`${{ github.ref_name }}\`"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*📦 커밋:*\n<${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|\`${{ steps.deployment_details.outputs.commit_sha }}\`>"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*👤 작성자:*\n${{ github.actor }}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*🕐 배포 시간:*\n${{ steps.deployment_details.outputs.deployment_time }}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*🏃 실행 ID:*\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|#${{ github.run_number }}>"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*🌐 배포 URL:*\n${DEPLOYMENT_LINK}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*📊 배포 상태:*\n\`${DEPLOYMENT_STATE}\`"
+                  }
+                ]
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*💬 커밋 메시지:*\n\`\`\`${COMMIT_MSG_ESCAPED}\`\`\`"
+                }
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*🔗 상세 정보:*\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|GitHub Actions에서 확인하기>"
+                }
+              },
+              {
+                "type": "context",
+                "elements": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "📊 저장소: <${{ github.server_url }}/${{ github.repository }}|${{ github.repository }}>"
+                  }
+                ]
+              }
+            ]
+          }
+          JSON
+          )
+          
+          # JSON 유효성 검사 및 전송
+          echo "$PAYLOAD" | python3 -m json.tool > /dev/null 2>&1
+          if [ $? -eq 0 ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data "$PAYLOAD" \
+              "$SLACK_WEBHOOK_URL" && echo "✅ Slack 알림 전송 성공" || echo "⚠️ Slack 알림 전송 실패"
+          else
+            echo "❌ JSON payload가 유효하지 않습니다. 간단한 메시지로 전송합니다."
+            SIMPLE_PAYLOAD="{\"text\": \"🚀 프론트엔드 배포 ${STATUS_TEXT} - ${{ github.ref_name }} - ${{ github.actor }}\"}"
+            curl -X POST -H 'Content-type: application/json' \
+              --data "$SIMPLE_PAYLOAD" \
+              "$SLACK_WEBHOOK_URL" || echo "⚠️ Slack 알림 전송 실패"
+          fi

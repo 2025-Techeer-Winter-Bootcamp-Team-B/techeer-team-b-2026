@@ -1,0 +1,338 @@
+name: Monitoring - Usage Report & Alerts
+
+on:
+  schedule:
+    # 6시간마다 실행 (UTC 기준)
+    - cron: '0 */6 * * *'
+  workflow_dispatch:  # 수동 실행 가능
+
+env:
+  AWS_REGION: ap-northeast-2
+  EC2_HOST: ${{ secrets.EC2_HOST }}
+  EC2_USER: ${{ secrets.EC2_USER }}
+  PROJECT_DIR: ${{ secrets.EC2_PROJECT_DIR }}
+  PROMETHEUS_URL: http://localhost:9090
+
+jobs:
+  monitor:
+    name: Monitor System Usage
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/ec2_key
+          chmod 600 ~/.ssh/ec2_key
+          ssh-keyscan -H ${{ env.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Restore Previous Metrics
+        uses: actions/cache@v3
+        id: metrics_cache
+        with:
+          path: metrics_cache
+          key: monitoring-metrics-${{ github.repository }}
+
+      - name: Get Previous Metrics
+        id: previous_metrics
+        run: |
+          # 이전 메트릭 값을 가져오기
+          PREVIOUS_CPU=$(cat metrics_cache/cpu.txt 2>/dev/null || echo "0")
+          PREVIOUS_MEMORY=$(cat metrics_cache/memory.txt 2>/dev/null || echo "0")
+          PREVIOUS_REDIS=$(cat metrics_cache/redis.txt 2>/dev/null || echo "0")
+          PREVIOUS_POSTGRES=$(cat metrics_cache/postgres.txt 2>/dev/null || echo "0")
+          
+          echo "previous_cpu=$PREVIOUS_CPU" >> $GITHUB_OUTPUT
+          echo "previous_memory=$PREVIOUS_MEMORY" >> $GITHUB_OUTPUT
+          echo "previous_redis=$PREVIOUS_REDIS" >> $GITHUB_OUTPUT
+          echo "previous_postgres=$PREVIOUS_POSTGRES" >> $GITHUB_OUTPUT
+
+      - name: Fetch Current Metrics from Prometheus
+        id: current_metrics
+        run: |
+          ssh -i ~/.ssh/ec2_key -o StrictHostKeyChecking=no ${{ env.EC2_USER }}@${{ env.EC2_HOST }} << 'ENDSSH'
+            set -e
+            
+            echo "📊 Prometheus에서 메트릭 수집 중..."
+            
+            # Prometheus API를 사용하여 메트릭 조회
+            PROMETHEUS_URL="http://localhost:9090"
+            
+            # CPU 사용률 (백엔드 프로세스)
+            CPU_QUERY='irate(process_cpu_seconds_total{job="fastapi-backend"}[5m])*100'
+            CPU_RESPONSE=$(curl -s "${PROMETHEUS_URL}/api/v1/query?query=${CPU_QUERY}" || echo '{"status":"error"}')
+            CPU_VALUE=$(echo "$CPU_RESPONSE" | grep -o '"value":\[[0-9]*\.[0-9]*,"[0-9.]*"\]' | head -1 | grep -o '"[0-9.]*"' | tail -1 | tr -d '"' || echo "0")
+            
+            # 메모리 사용률 (백엔드 프로세스)
+            MEMORY_QUERY='process_resident_memory_bytes{job="fastapi-backend"}/1024/1024/1024'
+            MEMORY_RESPONSE=$(curl -s "${PROMETHEUS_URL}/api/v1/query?query=${MEMORY_QUERY}" || echo '{"status":"error"}')
+            MEMORY_VALUE=$(echo "$MEMORY_RESPONSE" | grep -o '"value":\[[0-9]*\.[0-9]*,"[0-9.]*"\]' | head -1 | grep -o '"[0-9.]*"' | tail -1 | tr -d '"' || echo "0")
+            
+            # Redis 메모리 사용률
+            REDIS_QUERY='100 * (redis_memory_used_bytes / redis_memory_max_bytes)'
+            REDIS_RESPONSE=$(curl -s "${PROMETHEUS_URL}/api/v1/query?query=${REDIS_QUERY}" || echo '{"status":"error"}')
+            REDIS_VALUE=$(echo "$REDIS_RESPONSE" | grep -o '"value":\[[0-9]*\.[0-9]*,"[0-9.]*"\]' | head -1 | grep -o '"[0-9.]*"' | tail -1 | tr -d '"' || echo "0")
+            
+            # PostgreSQL 연결 수
+            POSTGRES_QUERY='pg_stat_database_numbackends{datname="realestate"}'
+            POSTGRES_RESPONSE=$(curl -s "${PROMETHEUS_URL}/api/v1/query?query=${POSTGRES_QUERY}" || echo '{"status":"error"}')
+            POSTGRES_VALUE=$(echo "$POSTGRES_RESPONSE" | grep -o '"value":\[[0-9]*\.[0-9]*,"[0-9.]*"\]' | head -1 | grep -o '"[0-9.]*"' | tail -1 | tr -d '"' || echo "0")
+            
+            # HTTP 요청 수 (1분당)
+            HTTP_QUERY='rate(http_requests_total{job="fastapi-backend"}[1m])'
+            HTTP_RESPONSE=$(curl -s "${PROMETHEUS_URL}/api/v1/query?query=${HTTP_QUERY}" || echo '{"status":"error"}')
+            HTTP_VALUE=$(echo "$HTTP_RESPONSE" | grep -o '"value":\[[0-9]*\.[0-9]*,"[0-9.]*"\]' | head -1 | grep -o '"[0-9.]*"' | tail -1 | tr -d '"' || echo "0")
+            
+            # 에러율
+            ERROR_QUERY='rate(http_requests_total{job="fastapi-backend",status=~"5.."}[1m])'
+            ERROR_RESPONSE=$(curl -s "${PROMETHEUS_URL}/api/v1/query?query=${ERROR_QUERY}" || echo '{"status":"error"}')
+            ERROR_VALUE=$(echo "$ERROR_RESPONSE" | grep -o '"value":\[[0-9]*\.[0-9]*,"[0-9.]*"\]' | head -1 | grep -o '"[0-9.]*"' | tail -1 | tr -d '"' || echo "0")
+            
+            # 결과 출력
+            echo "CPU_USAGE=$CPU_VALUE"
+            echo "MEMORY_USAGE=$MEMORY_VALUE"
+            echo "REDIS_USAGE=$REDIS_VALUE"
+            echo "POSTGRES_CONNECTIONS=$POSTGRES_VALUE"
+            echo "HTTP_RATE=$HTTP_VALUE"
+            echo "ERROR_RATE=$ERROR_VALUE"
+          ENDSSH > metrics_output.txt || echo "CPU_USAGE=0
+MEMORY_USAGE=0
+REDIS_USAGE=0
+POSTGRES_CONNECTIONS=0
+HTTP_RATE=0
+ERROR_RATE=0" > metrics_output.txt
+          
+          # 메트릭 값 파싱
+          CPU_USAGE=$(grep "CPU_USAGE=" metrics_output.txt | cut -d'=' -f2 || echo "0")
+          MEMORY_USAGE=$(grep "MEMORY_USAGE=" metrics_output.txt | cut -d'=' -f2 || echo "0")
+          REDIS_USAGE=$(grep "REDIS_USAGE=" metrics_output.txt | cut -d'=' -f2 || echo "0")
+          POSTGRES_CONNECTIONS=$(grep "POSTGRES_CONNECTIONS=" metrics_output.txt | cut -d'=' -f2 || echo "0")
+          HTTP_RATE=$(grep "HTTP_RATE=" metrics_output.txt | cut -d'=' -f2 || echo "0")
+          ERROR_RATE=$(grep "ERROR_RATE=" metrics_output.txt | cut -d'=' -f2 || echo "0")
+          
+          echo "current_cpu=$CPU_USAGE" >> $GITHUB_OUTPUT
+          echo "current_memory=$MEMORY_USAGE" >> $GITHUB_OUTPUT
+          echo "current_redis=$REDIS_USAGE" >> $GITHUB_OUTPUT
+          echo "current_postgres=$POSTGRES_CONNECTIONS" >> $GITHUB_OUTPUT
+          echo "current_http_rate=$HTTP_RATE" >> $GITHUB_OUTPUT
+          echo "current_error_rate=$ERROR_RATE" >> $GITHUB_OUTPUT
+          
+          # 캐시 디렉토리 생성 및 값 저장
+          mkdir -p metrics_cache
+          echo "$CPU_USAGE" > metrics_cache/cpu.txt
+          echo "$MEMORY_USAGE" > metrics_cache/memory.txt
+          echo "$REDIS_USAGE" > metrics_cache/redis.txt
+          echo "$POSTGRES_CONNECTIONS" > metrics_cache/postgres.txt
+
+      - name: Save Metrics to Cache
+        uses: actions/cache@v3
+        with:
+          path: metrics_cache
+          key: monitoring-metrics-${{ github.repository }}
+
+      - name: Check for Usage Increase
+        id: usage_check
+        run: |
+          python3 << 'PYTHON_SCRIPT'
+          import os
+          
+          prev_cpu = float("${{ steps.previous_metrics.outputs.previous_cpu }}" or "0")
+          curr_cpu = float("${{ steps.current_metrics.outputs.current_cpu }}" or "0")
+          prev_mem = float("${{ steps.previous_metrics.outputs.previous_memory }}" or "0")
+          curr_mem = float("${{ steps.current_metrics.outputs.current_memory }}" or "0")
+          prev_redis = float("${{ steps.previous_metrics.outputs.previous_redis }}" or "0")
+          curr_redis = float("${{ steps.current_metrics.outputs.current_redis }}" or "0")
+          
+          # 증가율 계산
+          cpu_increase = ((curr_cpu - prev_cpu) / prev_cpu * 100) if prev_cpu > 0 else 0
+          mem_increase = ((curr_mem - prev_mem) / prev_mem * 100) if prev_mem > 0 else 0
+          redis_increase = ((curr_redis - prev_redis) / prev_redis * 100) if prev_redis > 0 else 0
+          
+          # 10% 이상 증가한 경우 알림
+          alert_needed = cpu_increase > 10 or mem_increase > 10 or redis_increase > 10
+          alert_messages = []
+          
+          if cpu_increase > 10:
+              alert_messages.append(f"⚠️ CPU 사용률이 {cpu_increase:.2f}% 증가했습니다 ({prev_cpu:.2f}% → {curr_cpu:.2f}%)")
+          if mem_increase > 10:
+              alert_messages.append(f"⚠️ 메모리 사용률이 {mem_increase:.2f}% 증가했습니다 ({prev_mem:.2f}GB → {curr_mem:.2f}GB)")
+          if redis_increase > 10:
+              alert_messages.append(f"⚠️ Redis 사용률이 {redis_increase:.2f}% 증가했습니다 ({prev_redis:.2f}% → {curr_redis:.2f}%)")
+          
+          # GitHub Actions output에 쓰기
+          output_file = os.environ.get('GITHUB_OUTPUT', '/dev/stdout')
+          with open(output_file, 'a') as f:
+              f.write(f"alert_needed={str(alert_needed).lower()}\n")
+              f.write(f"cpu_increase={cpu_increase:.2f}\n")
+              f.write(f"mem_increase={mem_increase:.2f}\n")
+              f.write(f"redis_increase={redis_increase:.2f}\n")
+              if alert_messages:
+                  f.write("alert_messages<<EOF\n")
+                  f.write("\n".join(alert_messages) + "\n")
+                  f.write("EOF\n")
+          PYTHON_SCRIPT
+
+      - name: Send Usage Increase Alert
+        if: steps.usage_check.outputs.alert_needed == 'true'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ] || [ "$SLACK_WEBHOOK_URL" = "" ]; then
+            echo "⚠️ SLACK_WEBHOOK_URL이 설정되지 않았습니다."
+            exit 0
+          fi
+          
+          ALERT_MSGS="${{ steps.usage_check.outputs.alert_messages }}"
+          ALERT_MSGS_ESCAPED=$(echo "$ALERT_MSGS" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed 's/`/\\`/g')
+          
+          PAYLOAD=$(cat <<JSON
+          {
+            "text": "⚠️ 시스템 사용률 증가 알림",
+            "blocks": [
+              {
+                "type": "header",
+                "text": {
+                  "type": "plain_text",
+                  "text": "⚠️ 시스템 사용률 증가 알림"
+                }
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "${ALERT_MSGS_ESCAPED}"
+                }
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*📊 현재 CPU:*\n${{ steps.current_metrics.outputs.current_cpu }}%"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*💾 현재 메모리:*\n${{ steps.current_metrics.outputs.current_memory }}GB"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*🔴 Redis 사용률:*\n${{ steps.current_metrics.outputs.current_redis }}%"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*🕐 확인 시간:*\n$(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+                  }
+                ]
+              }
+            ]
+          }
+          JSON
+          )
+          
+          curl -X POST -H 'Content-type: application/json' \
+            --data "$PAYLOAD" \
+            "$SLACK_WEBHOOK_URL" && echo "✅ 사용률 증가 알림 전송 성공" || echo "⚠️ 알림 전송 실패"
+
+      - name: Send Monitoring Report
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ] || [ "$SLACK_WEBHOOK_URL" = "" ]; then
+            echo "⚠️ SLACK_WEBHOOK_URL이 설정되지 않았습니다."
+            exit 0
+          fi
+          
+          REPORT_TIME=$(date -u +'%Y-%m-%d %H:%M:%S UTC')
+          
+          PAYLOAD=$(cat <<JSON
+          {
+            "text": "📊 시스템 모니터링 리포트",
+            "blocks": [
+              {
+                "type": "header",
+                "text": {
+                  "type": "plain_text",
+                  "text": "📊 시스템 모니터링 리포트"
+                }
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*6시간마다 자동으로 수집되는 시스템 메트릭 리포트입니다.*"
+                }
+              },
+              {
+                "type": "divider"
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*🖥️ CPU 사용률*\n\`${{ steps.current_metrics.outputs.current_cpu }}%\`"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*💾 메모리 사용량*\n\`${{ steps.current_metrics.outputs.current_memory }}GB\`"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*🔴 Redis 사용률*\n\`${{ steps.current_metrics.outputs.current_redis }}%\`"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*🐘 PostgreSQL 연결 수*\n\`${{ steps.current_metrics.outputs.current_postgres }}\`"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*📡 HTTP 요청률 (1분당)*\n\`${{ steps.current_metrics.outputs.current_http_rate }}\`"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*❌ 에러율 (1분당)*\n\`${{ steps.current_metrics.outputs.current_error_rate }}\`"
+                  }
+                ]
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*📈 CPU 증가율*\n\`${{ steps.usage_check.outputs.cpu_increase }}%\`"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*📈 메모리 증가율*\n\`${{ steps.usage_check.outputs.mem_increase }}%\`"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*📈 Redis 증가율*\n\`${{ steps.usage_check.outputs.redis_increase }}%\`"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*🕐 리포트 시간*\n\`${REPORT_TIME}\`"
+                  }
+                ]
+              },
+              {
+                "type": "context",
+                "elements": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "📊 서버: ${{ env.EC2_HOST }} | 🏃 실행 ID: <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|#${{ github.run_number }}>"
+                  }
+                ]
+              }
+            ]
+          }
+          JSON
+          )
+          
+          curl -X POST -H 'Content-type: application/json' \
+            --data "$PAYLOAD" \
+            "$SLACK_WEBHOOK_URL" && echo "✅ 모니터링 리포트 전송 성공" || echo "⚠️ 리포트 전송 실패"

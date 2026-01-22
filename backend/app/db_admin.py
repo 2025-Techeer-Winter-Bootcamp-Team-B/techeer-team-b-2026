@@ -963,6 +963,9 @@ class DatabaseAdmin:
                 'apt_id': 'integer',
                 'exclusive_area': 'decimal',
                 'current_market_price': 'integer',
+                'purchase_price': 'integer',
+                'loan_amount': 'integer',
+                'purchase_date': 'timestamp',
                 'risk_checked_at': 'timestamp',
             },
             'recent_searches': {
