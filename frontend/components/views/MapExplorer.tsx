@@ -36,7 +36,7 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
   const topBarRef = useRef<HTMLDivElement>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
-  const overlaysRef = useRef<any[]>([]);
+  const markersRef = useRef<any[]>([]);
   const { isLoaded: kakaoLoaded } = useKakaoLoader();
 
   useEffect(() => {
@@ -52,49 +52,28 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
   useEffect(() => {
     if (!mapRef.current) return;
     
-    overlaysRef.current.forEach((overlay) => overlay.setMap(null));
-    overlaysRef.current = [];
+    // 기존 마커 제거
+    markersRef.current.forEach((marker) => {
+      marker.setMap(null);
+    });
+    markersRef.current = [];
     
     mapApartments.forEach((apt) => {
       const position = new window.kakao.maps.LatLng(apt.lat, apt.lng);
-      const container = document.createElement('div');
-      container.className = `relative group cursor-pointer transition-all duration-300 ${
-        selectedMarkerId === apt.id ? 'z-30 scale-110' : 'z-10 hover:z-20 hover:scale-105'
-      }`;
       
-      const badge = document.createElement('div');
-      badge.className = `px-4 py-2 rounded-full flex items-center justify-center border transition-all ${
-        selectedMarkerId === apt.id
-          ? 'bg-deep-900 text-white border-white ring-4 ring-indigo-500/20 shadow-pop'
-          : 'bg-white text-slate-900 border-white/80 hover:bg-deep-900 hover:text-white shadow-pop'
-      }`;
+      // 마커 생성
+      const marker = new window.kakao.maps.Marker({
+        position: position
+      });
       
-      const label = document.createElement('span');
-      label.className = 'text-[13px] font-black tabular-nums';
-      label.textContent = apt.priceLabel;
+      // 마커를 지도에 표시
+      marker.setMap(mapRef.current);
+      markersRef.current.push(marker);
       
-      badge.appendChild(label);
-      container.appendChild(badge);
-      
-      if (selectedMarkerId === apt.id) {
-        const ping = document.createElement('div');
-        ping.className = 'absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-14 h-14 bg-indigo-500/30 rounded-full animate-ping pointer-events-none';
-        container.appendChild(ping);
-      }
-      
-      container.addEventListener('click', (e) => {
-        e.stopPropagation();
+      // 마커 클릭 이벤트
+      window.kakao.maps.event.addListener(marker, 'click', () => {
         handleMarkerClick(apt.id);
       });
-      
-      const overlay = new window.kakao.maps.CustomOverlay({
-        position,
-        content: container,
-        yAnchor: 1
-      });
-      
-      overlay.setMap(mapRef.current);
-      overlaysRef.current.push(overlay);
     });
   }, [mapApartments, selectedMarkerId]);
 
