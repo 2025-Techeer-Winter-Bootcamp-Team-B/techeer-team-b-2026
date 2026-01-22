@@ -16,64 +16,12 @@ import {
   PopulationMovementRegionTypeDataPoint
 } from '../../services/api';
 
-// 연도별 거래량 더미 데이터
-const yearlyData = [
-    { period: '2020', value: 1250 },
-    { period: '2021', value: 1380 },
-    { period: '2022', value: 1520 },
-    { period: '2023', value: 1680 },
-    { period: '2024', value: 1750 },
-    { period: '2025', value: 1820 },
-];
-
-// 여러 년도의 월별 거래량 더미 데이터
-const generateMonthlyDataForYear = (year: number, baseValue: number) => {
-    const months = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'];
-    const variations: { [key: number]: number[] } = {
-        2021: [-5, -8, 5, 10, 12, 18, 15, 8, 3, 0, -3, -6],
-        2022: [-3, -6, 6, 11, 14, 19, 17, 9, 4, 1, -2, -5],
-        2023: [0, -5, 8, 12, 15, 20, 18, 10, 5, 2, -2, -5],
-        2024: [2, -3, 10, 15, 18, 22, 20, 12, 7, 4, 0, -3],
-        2025: [5, 0, 12, 18, 20, 25, 22, 15, 10, 8, 5, 0],
-    };
-    const variation = variations[year] || variations[2023];
-    
-    return months.map((month, index) => ({
-        period: month,
-        value: Math.max(100, Math.round(baseValue + variation[index] + (Math.random() * 10 - 5))),
-        year: year,
-    }));
-};
-
-const monthlyData2021 = generateMonthlyDataForYear(2021, 120);
-const monthlyData2022 = generateMonthlyDataForYear(2022, 130);
-const monthlyData2023 = generateMonthlyDataForYear(2023, 140);
-const monthlyData2024 = generateMonthlyDataForYear(2024, 150);
-const monthlyData2025 = generateMonthlyDataForYear(2025, 160);
-
 const getYearColor = (year: number, totalYears: number) => {
     const currentYear = 2025;
     const yearIndex = currentYear - year;
     const opacity = 0.3 + ((totalYears - 1 - yearIndex) / (totalYears - 1)) * 0.7;
     return `rgba(49, 130, 246, ${opacity})`;
 };
-
-const marketPhases = [
-    { region: '서울 강남', phase: '상승기', trend: 'up', change: '+1.5%', color: 'text-brand-red', bg: 'bg-red-50' },
-    { region: '서울 마포', phase: '회복기', trend: 'up', change: '+0.8%', color: 'text-orange-500', bg: 'bg-orange-50' },
-    { region: '경기 과천', phase: '상승기', trend: 'up', change: '+1.2%', color: 'text-brand-red', bg: 'bg-red-50' },
-    { region: '대구 수성', phase: '침체기', trend: 'down', change: '-0.5%', color: 'text-brand-blue', bg: 'bg-blue-50' },
-    { region: '부산 해운대', phase: '후퇴기', trend: 'down', change: '-0.2%', color: 'text-slate-500', bg: 'bg-slate-100' },
-    { region: '인천 송도', phase: '회복기', trend: 'up', change: '+0.4%', color: 'text-orange-500', bg: 'bg-orange-50' },
-];
-
-const migrationData = [
-    { name: '경기', value: 4500, label: '순유입' },
-    { name: '인천', value: 1200, label: '순유입' },
-    { name: '충남', value: 800, label: '순유입' },
-    { name: '서울', value: -3500, label: '순유출' },
-    { name: '부산', value: -1500, label: '순유출' },
-];
 
 export const HousingDemand: React.FC = () => {
   const [viewMode, setViewMode] = useState<'yearly' | 'monthly'>('monthly');
@@ -152,6 +100,9 @@ export const HousingDemand: React.FC = () => {
     const loadData = async () => {
       setIsLoading(true);
       setError(null);
+      // 데이터 초기화
+      setTransactionData([]);
+      setMonthlyYears([]);
       
       try {
         // 지역 타입 변환 (프론트엔드: "지방 5대광역시" -> 백엔드: "지방5대광역시")
@@ -178,19 +129,30 @@ export const HousingDemand: React.FC = () => {
 
         // 거래량 데이터 설정
         if (transactionRes.success) {
-          setTransactionData(transactionRes.data);
-          if (transactionRes.years) {
-            setMonthlyYears(transactionRes.years);
-          } else {
-            // 년도별인 경우 years 배열 생성
-            const years: number[] = [];
-            if (transactionRes.start_year && transactionRes.end_year) {
-              for (let y = transactionRes.start_year; y <= transactionRes.end_year; y++) {
-                years.push(y);
+          if (transactionRes.data && transactionRes.data.length > 0) {
+            setTransactionData(transactionRes.data);
+            if (transactionRes.years) {
+              setMonthlyYears(transactionRes.years);
+            } else {
+              // 년도별인 경우 years 배열 생성
+              const years: number[] = [];
+              if (transactionRes.start_year && transactionRes.end_year) {
+                for (let y = transactionRes.start_year; y <= transactionRes.end_year; y++) {
+                  years.push(y);
+                }
               }
+              setMonthlyYears(years);
             }
-            setMonthlyYears(years);
+          } else {
+            console.warn('거래량 데이터가 비어있습니다:', transactionRes);
+            setTransactionData([]);
+            setMonthlyYears([]);
           }
+        } else {
+          console.error('거래량 API 호출 실패:', transactionRes);
+          setError('거래량 데이터를 불러오는데 실패했습니다.');
+          setTransactionData([]);
+          setMonthlyYears([]);
         }
 
         // 시장 국면 분석 데이터 설정
@@ -211,6 +173,9 @@ export const HousingDemand: React.FC = () => {
       } catch (err) {
         console.error('데이터 로딩 실패:', err);
         setError('데이터를 불러오는 중 오류가 발생했습니다.');
+        // 에러 발생 시 데이터 초기화
+        setTransactionData([]);
+        setMonthlyYears([]);
       } finally {
         setIsLoading(false);
       }
@@ -219,56 +184,9 @@ export const HousingDemand: React.FC = () => {
     loadData();
   }, [selectedRegion, viewMode, yearRange, hpiSelectedYear, hpiSelectedMonth]);
   
-  const getMonthlyDataByRange = () => {
-    const currentYear = 2025;
-    const years: number[] = [];
-    
-    if (yearRange === 2) {
-      years.push(currentYear - 1, currentYear);
-    } else if (yearRange === 3) {
-      years.push(currentYear - 2, currentYear - 1, currentYear);
-    } else if (yearRange === 5) {
-      years.push(currentYear - 4, currentYear - 3, currentYear - 2, currentYear - 1, currentYear);
-    }
-    
-    const dataMap: { [key: string]: { [key: string]: number } } = {};
-    const months = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'];
-    
-    months.forEach(month => {
-      dataMap[month] = {};
-    });
-    
-    years.forEach(year => {
-      let yearData;
-      if (year === 2021) yearData = monthlyData2021;
-      else if (year === 2022) yearData = monthlyData2022;
-      else if (year === 2023) yearData = monthlyData2023;
-      else if (year === 2024) yearData = monthlyData2024;
-      else if (year === 2025) yearData = monthlyData2025;
-      else {
-        const baseValue = 110 + (year - 2020) * 5;
-        yearData = generateMonthlyDataForYear(year, baseValue);
-      }
-      
-      yearData.forEach(item => {
-        dataMap[item.period][year] = Math.round(item.value);
-      });
-    });
-    
-    return months.map(month => {
-      const dataPoint: { period: string; [key: number]: number } = { period: month };
-      years.forEach(year => {
-        dataPoint[year] = dataMap[month][year];
-      });
-      return dataPoint;
-    });
-  };
-  
-  // 실제 API 데이터 사용
-  const currentData = transactionData.length > 0 ? transactionData : (viewMode === 'yearly' ? yearlyData : getMonthlyDataByRange());
-  const displayMonthlyYears = monthlyYears.length > 0 ? monthlyYears : (viewMode === 'monthly' 
-    ? (yearRange === 2 ? [2024, 2025] : yearRange === 3 ? [2023, 2024, 2025] : [2021, 2022, 2023, 2024, 2025])
-    : []);
+  // 실제 API 데이터만 사용
+  const currentData = transactionData;
+  const displayMonthlyYears = monthlyYears;
 
   return (
     <div className="space-y-8 pb-32 animate-fade-in px-4 md:px-0 pt-6">
@@ -357,24 +275,33 @@ export const HousingDemand: React.FC = () => {
               </div>
               <div className="p-6 bg-gradient-to-b from-white to-slate-50/20 flex-1 flex flex-col min-h-0">
                   <div className="flex-1 w-full min-h-0">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={currentData}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                        <XAxis 
+                    {isLoading ? (
+                      <div className="flex items-center justify-center h-full">
+                        <p className="text-slate-400 text-[14px] font-bold">데이터를 불러오는 중...</p>
+                      </div>
+                    ) : currentData.length === 0 ? (
+                      <div className="flex items-center justify-center h-full">
+                        <p className="text-slate-400 text-[14px] font-bold">표시할 데이터가 없습니다.</p>
+                      </div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={currentData}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                          <XAxis 
                             dataKey="period" 
                             axisLine={false} 
                             tickLine={false} 
                             tick={{ fontSize: 12, fill: '#94a3b8', fontWeight: 'bold' }} 
                             dy={10} 
-                        />
-                        <YAxis 
+                          />
+                          <YAxis 
                             axisLine={false}
                             tickLine={false}
                             tick={{ fontSize: 12, fill: '#94a3b8', fontWeight: 'bold' }}
                             domain={['auto', 'auto']}
                             tickFormatter={(value) => `${value.toLocaleString()}`}
-                        />
-                        <Tooltip 
+                          />
+                          <Tooltip 
                             contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
                             itemStyle={{ fontSize: '13px', fontWeight: 'bold', color: '#334155' }}
                             labelStyle={{ fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}
@@ -384,35 +311,37 @@ export const HousingDemand: React.FC = () => {
                               }
                               return [`${value.toLocaleString()}건`, '거래량'];
                             }}
-                        />
-                        {viewMode === 'yearly' ? (
-                          <Line 
+                          />
+                          {viewMode === 'yearly' ? (
+                            <Line 
                               type="monotone" 
                               dataKey="value" 
                               stroke="#3182F6" 
                               strokeWidth={2} 
                               dot={{r: 3, strokeWidth: 2, fill: '#fff', stroke: '#3182F6'}} 
                               activeDot={{r: 5, fill: '#3182F6', stroke: '#fff', strokeWidth: 2}} 
-                          />
-                        ) : (
-                          displayMonthlyYears.map((year) => {
-                            const color = getYearColor(year, displayMonthlyYears.length);
-                            return (
-                              <Line 
+                            />
+                          ) : (
+                            displayMonthlyYears.map((year) => {
+                              const color = getYearColor(year, displayMonthlyYears.length);
+                              // 데이터 키는 문자열이므로 문자열로 변환
+                              return (
+                                <Line 
                                   key={year}
                                   type="monotone" 
-                                  dataKey={year} 
+                                  dataKey={String(year)} 
                                   stroke={color}
                                   strokeWidth={2}
                                   dot={{r: 3, strokeWidth: 2, fill: '#fff', stroke: color}} 
                                   activeDot={{r: 5, fill: color, stroke: '#fff', strokeWidth: 2}}
                                   name={`${year}`}
-                              />
-                            );
-                          })
-                        )}
-                      </LineChart>
-                    </ResponsiveContainer>
+                                />
+                              );
+                            })
+                          )}
+                        </LineChart>
+                      </ResponsiveContainer>
+                    )}
                   </div>
                   {viewMode === 'monthly' && displayMonthlyYears.length > 0 && (
                     <div className="flex items-center justify-center gap-4 mt-4">

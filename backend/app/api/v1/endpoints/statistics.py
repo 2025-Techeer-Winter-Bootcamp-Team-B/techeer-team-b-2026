@@ -1561,7 +1561,8 @@ async def get_transaction_volume(
                 if month_key not in monthly_data_map:
                     monthly_data_map[month_key] = {"period": month_key}
                 
-                monthly_data_map[month_key][year] = count
+                # JSON 키는 문자열이어야 하므로 년도를 문자열로 변환
+                monthly_data_map[month_key][str(year)] = count
             
             data = list(monthly_data_map.values())
             years = sorted(years_set)

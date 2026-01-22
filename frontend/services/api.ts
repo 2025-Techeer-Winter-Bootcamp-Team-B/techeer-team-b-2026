@@ -713,7 +713,7 @@ export const fetchInterestRates = () =>
 export interface TransactionVolumeDataPoint {
   period: string;
   value?: number;
-  [key: number]: number | string | undefined; // 동적 년도 키 (예: 2023, 2024)
+  [key: string]: number | string | undefined; // 동적 년도 키 (예: "2023", "2024") - JSON에서는 키가 문자열
 }
 
 export interface TransactionVolumeResponse {
