@@ -63,7 +63,37 @@ interface PyeongOption {
 }
 
 const MAX_COMPARE = 5;
-const COLOR_PALETTE = ['#1E88E5', '#FFC107', '#43A047', '#E53935', '#8E24AA'];
+const COLOR_PALETTE = ['#1E88E5', '#FFC107', '#43A047', '#E53935', '#8E24AA', '#00BCD4', '#9C27B0', '#FF5722', '#4CAF50', '#FF9800'];
+
+// 자산에 고유한 색상을 할당하는 함수
+// 같은 아파트라도 다른 평수면 다른 색으로 할당
+const getAssetColor = (aptId: number | undefined, pyeongType: string | undefined, index: number, existingAssets: AssetData[]): string => {
+  // aptId와 pyeongType을 조합하여 고유 키 생성
+  const uniqueKey = `${aptId || 'unknown'}-${pyeongType || 'default'}`;
+  
+  // 기존 자산 중 같은 키를 가진 자산이 있는지 확인
+  const existingAsset = existingAssets.find(a => {
+    const aKey = `${a.aptId || 'unknown'}-${a.pyeongType || 'default'}`;
+    return aKey === uniqueKey;
+  });
+  
+  // 같은 키를 가진 자산이 있으면 그 색상 사용
+  if (existingAsset?.color) {
+    return existingAsset.color;
+  }
+  
+  // 없으면 기존 자산들의 색상을 제외하고 새로운 색상 할당
+  const usedColors = existingAssets.map(a => a.color).filter(Boolean);
+  const availableColors = COLOR_PALETTE.filter(color => !usedColors.includes(color));
+  
+  // 사용 가능한 색상이 있으면 사용, 없으면 인덱스 기반으로 할당
+  if (availableColors.length > 0) {
+    return availableColors[0];
+  }
+  
+  // 모든 색상이 사용 중이면 인덱스 기반으로 할당
+  return COLOR_PALETTE[index % COLOR_PALETTE.length];
+};
 
 // 색상을 어둡게 만드는 함수
 const darkenColor = (color: string, amount: number = 0.3): string => {
@@ -719,7 +749,7 @@ export const Comparison: React.FC = () => {
     setChartDisplayFilter(filter);
   };
 
-  const mapCompareToAssets = (items: any[]) => {
+  const mapCompareToAssets = (items: any[], existingAssets: AssetData[] = []) => {
     return items.map((item, index) => {
       const price = item.price ?? 0;
       const jeonse = item.jeonse ?? 0;
@@ -733,7 +763,7 @@ export const Comparison: React.FC = () => {
         price,
         jeonse,
         gap: price - jeonse,
-        color: COLOR_PALETTE[index % COLOR_PALETTE.length],
+        color: getAssetColor(item.id, undefined, index, existingAssets),
         pricePerPyeong: item.price_per_pyeong ?? undefined,
         jeonseRate: item.jeonse_rate ?? undefined,
         households: item.households ?? undefined,
@@ -758,7 +788,7 @@ export const Comparison: React.FC = () => {
         return;
       }
       const compare = await fetchCompareApartments(aptIds.slice(0, MAX_COMPARE));
-      const mapped = mapCompareToAssets(compare.apartments);
+      const mapped = mapCompareToAssets(compare.apartments, []);
       // 다수 비교용 초기 데이터
       setMultiAssets(mapped);
       // 1:1 비교용 초기 데이터 (최대 2개)
@@ -808,6 +838,9 @@ export const Comparison: React.FC = () => {
   };
   
   const handleAddAssetWithPyeong = (asset: AssetData, pyeongOption: PyeongOption) => {
+    // 현재 assets 배열 가져오기
+    const currentAssets = comparisonMode === '1:1' ? oneToOneAssets : multiAssets;
+    
     const newAsset: AssetData = {
       ...asset,
       id: Date.now(), // 고유 ID 생성
@@ -819,6 +852,7 @@ export const Comparison: React.FC = () => {
       pyeongType: pyeongOption.pyeongType,
       area: pyeongOption.area,
       jeonseRate: pyeongOption.jeonseRate ?? asset.jeonseRate,
+      color: getAssetColor(asset.aptId ?? asset.id, pyeongOption.pyeongType, currentAssets.length, currentAssets),
     };
     
     if (comparisonMode === '1:1' && editingCardSide) {
