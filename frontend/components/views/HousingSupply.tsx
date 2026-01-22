@@ -153,15 +153,11 @@ export const HousingSupply: React.FC = () => {
 
       {/* 필터 섹션 */}
       <div className="rounded-[24px] transition-all duration-300 relative bg-white border border-slate-200 shadow-[0_2px_8px_rgba(0,0,0,0.04)] p-6 overflow-visible">
-        <div className="space-y-4">
+        <div className="flex flex-row justify-between">
           {/* 첫 번째 행: 입주예정월, 조회기간 */}
           <div className="flex flex-col md:flex-row gap-4">
             <div className="flex items-center gap-4">
-              <label className="text-[14px] font-bold text-slate-700">입주예정월</label>
-            </div>
-            
-            <div className="flex items-center gap-4">
-              <label className="text-[14px] font-bold text-slate-700">조회 기간</label>
+              <label className="text-[14px] font-bold text-slate-700">입주예정월 조회</label>
               <div className="flex items-center gap-2">
                 <input
                   type="text"

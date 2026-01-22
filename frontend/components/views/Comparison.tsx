@@ -143,6 +143,7 @@ const parseWalkingTimeMinutes = (text?: string): number | undefined => {
     return Math.max(...matches.map((val) => parseInt(val, 10)));
 };
 
+
 // SearchAndSelectApart 컴포넌트
 interface SearchAndSelectApartProps {
     isOpen: boolean;
@@ -579,6 +580,7 @@ export const Comparison: React.FC = () => {
   ]);
   const [chartDisplayFilter, setChartDisplayFilter] = useState<string>('매매가');
   const [hoveredBarType, setHoveredBarType] = useState<'value' | 'jeonse' | null>(null);
+  const [hoveredBarIndex, setHoveredBarIndex] = useState<number | null>(null);
   const [showAddAssetModal, setShowAddAssetModal] = useState(false);
   const [schoolTab, setSchoolTab] = useState<'elementary' | 'middle' | 'high'>('elementary');
   
@@ -1094,6 +1096,8 @@ export const Comparison: React.FC = () => {
                                       left: chartDisplayFilter === '건축연도' ? 50 : 20, 
                                       bottom: 60 
                                   }}
+                                  style={{ outline: 'none' }}
+                                  onMouseDown={(e) => e.preventDefault()}
                               >
                                   {/* SVG 패턴 정의 - 전세가 줄무늬용 */}
                                   {chartDisplayFilter === '매매가' && (
@@ -1149,7 +1153,7 @@ export const Comparison: React.FC = () => {
                                       width={chartDisplayFilter === '건축연도' ? 50 : undefined}
                                   />
                                   <Tooltip 
-                                      cursor={{ fill: 'rgba(0,0,0,0.05)' }}
+                                      cursor={false}
                                       content={({ active, payload }) => {
                                           if (active && payload && payload.length) {
                                               const data = payload[0].payload;
@@ -1195,21 +1199,35 @@ export const Comparison: React.FC = () => {
                                     animationDuration={150}
                                     name="매매가"
                                     onMouseEnter={() => setHoveredBarType('value')}
-                                    onMouseLeave={() => setHoveredBarType(null)}
+                                    onMouseLeave={() => {
+                                      setHoveredBarType(null);
+                                      setHoveredBarIndex(null);
+                                    }}
                                     fill="#94a3b8"
                                   >
-                                    {chartData.map((entry, index) => (
-                                      <Cell 
-                                        key={`cell-${index}`} 
-                                        fill={entry.color}
-                                        opacity={hoveredBarType === null || hoveredBarType === 'value' ? 1 : 0.3}
-                                        style={{ 
-                                            transition: 'all 0.2s ease',
-                                            stroke: hoveredBarType === 'value' ? '#fff' : 'rgba(255,255,255,0.1)',
-                                            strokeWidth: hoveredBarType === 'value' ? 2.5 : 1
-                                        }}
-                                      />
-                                    ))}
+                                    {chartData.map((entry, index) => {
+                                      const isHovered = hoveredBarType === 'value' && hoveredBarIndex === index;
+                                      return (
+                                        <Cell 
+                                          key={`cell-${index}`} 
+                                          fill={entry.color}
+                                          opacity={hoveredBarType === null || hoveredBarType === 'value' ? 1 : 0.3}
+                                          onMouseEnter={() => {
+                                            setHoveredBarType('value');
+                                            setHoveredBarIndex(index);
+                                          }}
+                                          onMouseLeave={() => {
+                                            setHoveredBarType(null);
+                                            setHoveredBarIndex(null);
+                                          }}
+                                          style={{ 
+                                              transition: 'all 0.2s ease',
+                                              stroke: isHovered ? '#fff' : 'rgba(255,255,255,0.1)',
+                                              strokeWidth: isHovered ? 2.5 : 1
+                                          }}
+                                        />
+                                      );
+                                    })}
                                     <LabelList
                                       dataKey="value"
                                       position="top"
@@ -1273,20 +1291,32 @@ export const Comparison: React.FC = () => {
                                         animationDuration={150}
                                         name="전세가"
                                         onMouseEnter={() => setHoveredBarType('jeonse')}
-                                        onMouseLeave={() => setHoveredBarType(null)}
+                                        onMouseLeave={() => {
+                                          setHoveredBarType(null);
+                                          setHoveredBarIndex(null);
+                                        }}
                                       >
                                         {chartData.map((entry, index) => {
                                             // 전세 막대는 줄무늬 패턴 적용
                                             const baseColor = entry.darkerColor || '#475569';
+                                            const isHovered = hoveredBarType === 'jeonse' && hoveredBarIndex === index;
                                             return (
                                                 <Cell 
                                                     key={`cell-jeonse-${index}`} 
                                                     fill={`url(#jeonse-pattern-${index})`}
                                                     opacity={hoveredBarType === null || hoveredBarType === 'jeonse' ? 1 : 0.3}
+                                                    onMouseEnter={() => {
+                                                      setHoveredBarType('jeonse');
+                                                      setHoveredBarIndex(index);
+                                                    }}
+                                                    onMouseLeave={() => {
+                                                      setHoveredBarType(null);
+                                                      setHoveredBarIndex(null);
+                                                    }}
                                                     style={{ 
                                                         transition: 'all 0.2s ease',
-                                                        stroke: hoveredBarType === 'jeonse' ? '#fff' : 'rgba(255,255,255,0.3)',
-                                                        strokeWidth: hoveredBarType === 'jeonse' ? 2.5 : 1.5
+                                                        stroke: isHovered ? '#fff' : 'rgba(255,255,255,0.3)',
+                                                        strokeWidth: isHovered ? 2.5 : 1.5
                                                     }}
                                                 />
                                             );

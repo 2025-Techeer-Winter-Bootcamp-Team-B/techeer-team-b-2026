@@ -184,121 +184,122 @@ export const HousingDemand: React.FC = () => {
           </div>
       </div>
 
-      {/* 거래량 Chart */}
-      <Card className="p-0 overflow-hidden border border-slate-200 shadow-soft bg-white">
-          <div className="p-6 border-b border-slate-100">
-              <div className="flex items-center justify-between mb-4">
-                  <div>
-                      <h3 className="font-black text-slate-900 text-[17px]">거래량</h3>
-                      <p className="text-[13px] text-slate-500 font-medium mt-1">
-                          {viewMode === 'yearly' ? '연도별 거래량 추이' : '월별 거래량 추이'}
-                      </p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                      <ToggleButtonGroup
-                          options={['연도별', '월별']}
-                          value={viewMode === 'yearly' ? '연도별' : '월별'}
-                          onChange={(value) => setViewMode(value === '연도별' ? 'yearly' : 'monthly')}
-                      />
-                      
-                      {viewMode === 'monthly' && (
+      {/* 거래량 Chart & 시장 국면 분석 - 나란히 배치 (8:2 비율) */}
+      <div className="grid grid-cols-1 lg:grid-cols-10 gap-8">
+          {/* 거래량 Chart */}
+          <Card className="p-0 overflow-hidden border border-slate-200 shadow-soft bg-white lg:col-span-8 flex flex-col">
+              <div className="p-6 border-b border-slate-100">
+                  <div className="flex items-center justify-between mb-4">
+                      <div>
+                          <h3 className="font-black text-slate-900 text-[17px]">거래량</h3>
+                          <p className="text-[13px] text-slate-500 font-medium mt-1">
+                              {viewMode === 'yearly' ? '연도별 거래량 추이' : '월별 거래량 추이'}
+                          </p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                          
+                          {viewMode === 'monthly' && (
+                            <ToggleButtonGroup
+                            options={['2년', '3년', '5년']}
+                            value={`${yearRange}년`}
+                            onChange={(value) => setYearRange(parseInt(value.replace('년', '')) as 2 | 3 | 5)}
+                            />
+                          )}
                           <ToggleButtonGroup
-                              options={['2년', '3년', '5년']}
-                              value={`${yearRange}년`}
-                              onChange={(value) => setYearRange(parseInt(value.replace('년', '')) as 2 | 3 | 5)}
+                              options={['연도별', '월별']}
+                              value={viewMode === 'yearly' ? '연도별' : '월별'}
+                              onChange={(value) => setViewMode(value === '연도별' ? 'yearly' : 'monthly')}
                           />
-                      )}
+                      </div>
                   </div>
               </div>
-          </div>
-          <div className="p-6 bg-gradient-to-b from-white to-slate-50/20">
-              <div className="h-[280px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={currentData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis 
-                        dataKey="period" 
-                        axisLine={false} 
-                        tickLine={false} 
-                        tick={{ fontSize: 12, fill: '#94a3b8', fontWeight: 'bold' }} 
-                        dy={10} 
-                    />
-                    <YAxis 
-                        axisLine={false} 
-                        tickLine={false} 
-                        tick={{ fontSize: 12, fill: '#94a3b8', fontWeight: 'bold' }} 
-                        domain={['auto', 'auto']}
-                        tickFormatter={(value) => `${value.toLocaleString()}`}
-                    />
-                    <Tooltip 
-                        contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
-                        itemStyle={{ fontSize: '13px', fontWeight: 'bold', color: '#334155' }}
-                        labelStyle={{ fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}
-                        formatter={(value: number, name: string) => {
-                          if (viewMode === 'monthly') {
-                            return [`${value.toLocaleString()}건`, `${name}년`];
-                          }
-                          return [`${value.toLocaleString()}건`, '거래량'];
-                        }}
-                    />
-                    {viewMode === 'yearly' ? (
-                      <Line 
-                          type="monotone" 
-                          dataKey="value" 
-                          stroke="#3182F6" 
-                          strokeWidth={2} 
-                          dot={{r: 3, strokeWidth: 2, fill: '#fff', stroke: '#3182F6'}} 
-                          activeDot={{r: 5, fill: '#3182F6', stroke: '#fff', strokeWidth: 2}} 
-                      />
-                    ) : (
-                      monthlyYears.map((year) => {
+              <div className="p-6 bg-gradient-to-b from-white to-slate-50/20 flex-1 flex flex-col min-h-0">
+                  <div className="flex-1 w-full min-h-0">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={currentData}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis 
+                            dataKey="period" 
+                            axisLine={false} 
+                            tickLine={false} 
+                            tick={{ fontSize: 12, fill: '#94a3b8', fontWeight: 'bold' }} 
+                            dy={10} 
+                        />
+                        <YAxis 
+                            axisLine={false}
+                            tickLine={false}
+                            tick={{ fontSize: 12, fill: '#94a3b8', fontWeight: 'bold' }}
+                            domain={['auto', 'auto']}
+                            tickFormatter={(value) => `${value.toLocaleString()}`}
+                        />
+                        <Tooltip 
+                            contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
+                            itemStyle={{ fontSize: '13px', fontWeight: 'bold', color: '#334155' }}
+                            labelStyle={{ fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}
+                            formatter={(value: number, name: string) => {
+                              if (viewMode === 'monthly') {
+                                return [`${value.toLocaleString()}건`, `${name}년`];
+                              }
+                              return [`${value.toLocaleString()}건`, '거래량'];
+                            }}
+                        />
+                        {viewMode === 'yearly' ? (
+                          <Line 
+                              type="monotone" 
+                              dataKey="value" 
+                              stroke="#3182F6" 
+                              strokeWidth={2} 
+                              dot={{r: 3, strokeWidth: 2, fill: '#fff', stroke: '#3182F6'}} 
+                              activeDot={{r: 5, fill: '#3182F6', stroke: '#fff', strokeWidth: 2}} 
+                          />
+                        ) : (
+                          monthlyYears.map((year) => {
+                            const color = getYearColor(year, monthlyYears.length);
+                            return (
+                              <Line 
+                                  key={year}
+                                  type="monotone" 
+                                  dataKey={year} 
+                                  stroke={color}
+                                  strokeWidth={2}
+                                  dot={{r: 3, strokeWidth: 2, fill: '#fff', stroke: color}} 
+                                  activeDot={{r: 5, fill: color, stroke: '#fff', strokeWidth: 2}}
+                                  name={`${year}`}
+                              />
+                            );
+                          })
+                        )}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                  {viewMode === 'monthly' && monthlyYears.length > 0 && (
+                    <div className="flex items-center justify-center gap-4 mt-4">
+                      {monthlyYears.map((year) => {
                         const color = getYearColor(year, monthlyYears.length);
                         return (
-                          <Line 
-                              key={year}
-                              type="monotone" 
-                              dataKey={year} 
-                              stroke={color}
-                              strokeWidth={2}
-                              dot={{r: 3, strokeWidth: 2, fill: '#fff', stroke: color}} 
-                              activeDot={{r: 5, fill: color, stroke: '#fff', strokeWidth: 2}}
-                              name={`${year}`}
-                          />
+                          <div key={year} className="flex items-center gap-2">
+                            <div 
+                              className="w-6 h-0.5 rounded"
+                              style={{ backgroundColor: color }}
+                            />
+                            <span className="text-[12px] font-bold text-slate-600">{year}년</span>
+                          </div>
                         );
-                      })
-                    )}
-                  </LineChart>
-                </ResponsiveContainer>
+                      })}
+                    </div>
+                  )}
               </div>
-              {viewMode === 'monthly' && monthlyYears.length > 0 && (
-                <div className="flex items-center justify-center gap-4 mt-4">
-                  {monthlyYears.map((year) => {
-                    const color = getYearColor(year, monthlyYears.length);
-                    return (
-                      <div key={year} className="flex items-center gap-2">
-                        <div 
-                          className="w-6 h-0.5 rounded"
-                          style={{ backgroundColor: color }}
-                        />
-                        <span className="text-[12px] font-bold text-slate-600">{year}년</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-          </div>
-      </Card>
+          </Card>
 
-
-      {/* 시장 국면 분석 */}
-      <Card className="p-0 overflow-hidden border border-slate-200 shadow-soft bg-white">
-           <div className="p-6 border-b border-slate-100">
-              <h3 className="font-black text-slate-900 text-[17px]">시장 국면 분석</h3>
-              <p className="text-[13px] text-slate-500 font-medium mt-1">가격/거래량 데이터를 기반으로 한 지역별 시장 단계</p>
-          </div>
-          <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* 시장 국면 분석 */}
+          <Card className="p-0 overflow-hidden border border-slate-200 shadow-soft bg-white lg:col-span-2 flex flex-col">
+               <div className="p-6 border-b border-slate-100">
+                  <h3 className="font-black text-slate-900 text-[17px]">시장 국면 분석</h3>
+                  <p className="text-[13px] text-slate-500 font-medium mt-1">가격/거래량 데이터를 기반으로 한 지역별 시장 단계</p>
+              </div>
+              <div className="p-6 grid grid-cols-1 gap-4 flex-1">
               {marketPhases.map((item, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-4 rounded-xl border border-slate-100 hover:border-slate-300 hover:shadow-sm transition-all bg-white">
+                  <div key={idx} className="flex items-center justify-between p-4 rounded-xl hover:shadow-sm transition-all bg-white">
                       <div className="flex items-center gap-3">
                           <div className={`w-9 h-9 rounded-lg flex items-center justify-center font-black text-[12px] ${item.bg} ${item.color}`}>
                               {item.phase.slice(0, 2)}
@@ -317,6 +318,7 @@ export const HousingDemand: React.FC = () => {
               ))}
           </div>
       </Card>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* 지역별 주택 가격 지수 벌집 지도 */}
