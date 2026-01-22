@@ -410,7 +410,7 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
   const [chartData, setChartData] = useState(generateChartData('매매'));
   const [priceTrendData, setPriceTrendData] = useState<{ sale?: { time: string; value: number }[]; jeonse?: { time: string; value: number }[]; monthly?: { time: string; value: number }[] }>({});
   const [chartPeriod, setChartPeriod] = useState('1년');
-  const [chartStyle, setChartStyle] = useState<'line' | 'area' | 'candlestick'>('area');
+  const [chartStyle] = useState<'line' | 'area' | 'candlestick'>('area');
   const [isFavorite, setIsFavorite] = useState(false);
   const [isMyProperty, setIsMyProperty] = useState(false);
   const [myPropertyId, setMyPropertyId] = useState<number | null>(null);
@@ -1465,14 +1465,6 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
                                     onChange={(value) => setChartType(value as ChartType)}
                                     className="bg-slate-100/80"
                                 />
-
-                                {/* Chart Style Toggle */}
-                                <ToggleButtonGroup
-                                    options={['라인', '영역', '캔들']}
-                                    value={chartStyle === 'line' ? '라인' : chartStyle === 'area' ? '영역' : '캔들'}
-                                    onChange={(value) => setChartStyle(value === '라인' ? 'line' : value === '영역' ? 'area' : 'candlestick')}
-                                    className="bg-slate-100/80"
-                                />
                                 
                                 {/* Segmented Control for Period - Moved to right */}
                                 <div className="ml-auto">
@@ -1632,15 +1624,6 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
                                                 showHighLow={true}
                                             />
                                         )}
-                                    </div>
-                                    
-                                    {/* Chart Style Toggle - Below Chart */}
-                                    <div className="flex justify-center mt-3">
-                                        <ToggleButtonGroup
-                                            options={['라인', '영역', '캔들']}
-                                            value={chartStyle === 'line' ? '라인' : chartStyle === 'area' ? '영역' : '캔들'}
-                                            onChange={(value) => setChartStyle(value === '라인' ? 'line' : value === '영역' ? 'area' : 'candlestick')}
-                                        />
                                     </div>
                                 </div>
                             </Card>
