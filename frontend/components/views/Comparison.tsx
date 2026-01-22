@@ -943,14 +943,17 @@ export const Comparison: React.FC = () => {
       </div>
   );
 
-  const StatRow = ({ label, left, right, unit }: { label: string, left: string, right: string, unit: string }) => {
+  const StatRow = ({ label, left, right, unit, leftNumValue, rightNumValue }: { label: string, left: string, right: string, unit: string, leftNumValue?: number, rightNumValue?: number }) => {
       // 숫자로 변환하여 비교 (쉼표 제거)
-      const leftNumRaw = parseFloat(left.replace(/,/g, ''));
-      const rightNumRaw = parseFloat(right.replace(/,/g, ''));
+      const leftNumRaw = leftNumValue !== undefined ? leftNumValue : parseFloat(left.replace(/,/g, ''));
+      const rightNumRaw = rightNumValue !== undefined ? rightNumValue : parseFloat(right.replace(/,/g, ''));
       const leftNum = Number.isNaN(leftNumRaw) ? 0 : leftNumRaw;
       const rightNum = Number.isNaN(rightNumRaw) ? 0 : rightNumRaw;
-      const isLeftHigher = leftNum > rightNum;
-      const isRightHigher = rightNum > leftNum;
+      
+      // 역 도보시간의 경우 더 작은 값(더 가까운 쪽)이 더 좋은 것이므로 반대로 처리
+      const isReverseComparison = label === '역 도보시간';
+      const isLeftHigher = isReverseComparison ? leftNum < rightNum : leftNum > rightNum;
+      const isRightHigher = isReverseComparison ? rightNum < leftNum : rightNum > leftNum;
       
       // 막대 그래프를 위한 비율 계산
       let maxValue = Math.max(leftNum, rightNum);
@@ -1025,6 +1028,60 @@ export const Comparison: React.FC = () => {
   const getSchoolList = (asset: AssetData | undefined, tab: 'elementary' | 'middle' | 'high') => {
       if (!asset?.schools) return [];
       return asset.schools[tab] || [];
+  };
+
+  // 1:1 비교용: 모든 학교를 초등학교-중학교-고등학교 순으로 정렬하여 반환
+  const getAllSchoolsSorted = (asset: AssetData | undefined) => {
+      if (!asset?.schools) return [];
+      
+      const allSchools: Array<{ name: string; type: 'elementary' | 'middle' | 'high'; typeLabel: string }> = [];
+      
+      // 초등학교
+      if (asset.schools.elementary) {
+          asset.schools.elementary.forEach(school => {
+              // 쉼표로 구분된 여러 학교 처리
+              if (school.name.includes(',')) {
+                  const schoolNames = school.name.split(',').map(s => s.trim());
+                  schoolNames.forEach(schoolName => {
+                      allSchools.push({ name: schoolName, type: 'elementary', typeLabel: '초등학교' });
+                  });
+              } else {
+                  allSchools.push({ name: school.name, type: 'elementary', typeLabel: '초등학교' });
+              }
+          });
+      }
+      
+      // 중학교
+      if (asset.schools.middle) {
+          asset.schools.middle.forEach(school => {
+              // 쉼표로 구분된 여러 학교 처리
+              if (school.name.includes(',')) {
+                  const schoolNames = school.name.split(',').map(s => s.trim());
+                  schoolNames.forEach(schoolName => {
+                      allSchools.push({ name: schoolName, type: 'middle', typeLabel: '중학교' });
+                  });
+              } else {
+                  allSchools.push({ name: school.name, type: 'middle', typeLabel: '중학교' });
+              }
+          });
+      }
+      
+      // 고등학교
+      if (asset.schools.high) {
+          asset.schools.high.forEach(school => {
+              // 쉼표로 구분된 여러 학교 처리
+              if (school.name.includes(',')) {
+                  const schoolNames = school.name.split(',').map(s => s.trim());
+                  schoolNames.forEach(schoolName => {
+                      allSchools.push({ name: schoolName, type: 'high', typeLabel: '고등학교' });
+                  });
+              } else {
+                  allSchools.push({ name: school.name, type: 'high', typeLabel: '고등학교' });
+              }
+          });
+      }
+      
+      return allSchools;
   };
 
   return (
@@ -1154,48 +1211,21 @@ export const Comparison: React.FC = () => {
                       <StatRow label="세대수" left={formatValue(leftAsset?.households)} right={formatValue(rightAsset?.households)} unit="세대" />
                       <StatRow label="입주년도" left={formatValue(leftAsset?.buildYear)} right={formatValue(rightAsset?.buildYear)} unit="년" />
                       <StatRow label="주차대수" left={formatNumberValue(leftAsset?.parkingSpaces, 2)} right={formatNumberValue(rightAsset?.parkingSpaces, 2)} unit="대" />
-                      <StatRow label="역 도보시간" left={leftAsset?.walkingTimeText || getWalkingTimeRange(leftAsset?.walkingTime)} right={rightAsset?.walkingTimeText || getWalkingTimeRange(rightAsset?.walkingTime)} unit="" />
+                      <StatRow 
+                          label="역 도보시간" 
+                          left={leftAsset?.walkingTimeText || getWalkingTimeRange(leftAsset?.walkingTime)} 
+                          right={rightAsset?.walkingTimeText || getWalkingTimeRange(rightAsset?.walkingTime)} 
+                          unit=""
+                          leftNumValue={leftAsset?.walkingTime}
+                          rightNumValue={rightAsset?.walkingTime}
+                      />
                   </div>
               </div>
               
               {/* School Information Section */}
               <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
                   <div className="p-6 border-b border-slate-100 bg-slate-50/50">
-                      <h3 className="font-black text-slate-900 text-lg mb-4">주변 학교 정보</h3>
-                      
-                      {/* School Tabs */}
-                      <div className="flex gap-2">
-                          <button
-                              onClick={() => setSchoolTab('elementary')}
-                              className={`px-4 py-2 rounded-lg text-[14px] font-bold transition-all ${
-                                  schoolTab === 'elementary'
-                                      ? 'bg-indigo-500 text-white'
-                                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                              }`}
-                          >
-                              초등학교
-                          </button>
-                          <button
-                              onClick={() => setSchoolTab('middle')}
-                              className={`px-4 py-2 rounded-lg text-[14px] font-bold transition-all ${
-                                  schoolTab === 'middle'
-                                      ? 'bg-indigo-500 text-white'
-                                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                              }`}
-                          >
-                              중학교
-                          </button>
-                          <button
-                              onClick={() => setSchoolTab('high')}
-                              className={`px-4 py-2 rounded-lg text-[14px] font-bold transition-all ${
-                                  schoolTab === 'high'
-                                      ? 'bg-indigo-500 text-white'
-                                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                              }`}
-                          >
-                              고등학교
-                          </button>
-                      </div>
+                      <h3 className="font-black text-slate-900 text-lg">주변 학교 정보</h3>
                   </div>
                   
                   {/* School List */}
@@ -1205,8 +1235,8 @@ export const Comparison: React.FC = () => {
                           <div>
                               <h4 className="text-[15px] font-black text-slate-900 mb-4">{leftAsset?.name || '왼쪽 아파트'}</h4>
                               <div className="space-y-3">
-                                  {getSchoolList(leftAsset, schoolTab).length ? (
-                                      getSchoolList(leftAsset, schoolTab).map((school, index) => (
+                                  {getAllSchoolsSorted(leftAsset).length ? (
+                                      getAllSchoolsSorted(leftAsset).map((school, index) => (
                                           <div key={index} className="p-3 bg-slate-50 rounded-lg">
                                               <span className="text-[14px] font-bold text-slate-700">{school.name}</span>
                                           </div>
@@ -1223,8 +1253,8 @@ export const Comparison: React.FC = () => {
                           <div>
                               <h4 className="text-[15px] font-black text-slate-900 mb-4">{rightAsset?.name || '오른쪽 아파트'}</h4>
                               <div className="space-y-3">
-                                  {getSchoolList(rightAsset, schoolTab).length ? (
-                                      getSchoolList(rightAsset, schoolTab).map((school, index) => (
+                                  {getAllSchoolsSorted(rightAsset).length ? (
+                                      getAllSchoolsSorted(rightAsset).map((school, index) => (
                                           <div key={index} className="p-3 bg-slate-50 rounded-lg">
                                               <span className="text-[14px] font-bold text-slate-700">{school.name}</span>
                                           </div>

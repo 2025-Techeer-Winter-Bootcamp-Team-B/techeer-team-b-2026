@@ -75,46 +75,13 @@ else:
     )
 
 
-# CORS 헤더를 명시적으로 추가하는 미들웨어 (에러 응답에도 적용)
-class CORSHeaderMiddleware(BaseHTTPMiddleware):
-    """모든 응답에 CORS 헤더를 명시적으로 추가하는 미들웨어"""
+# 캐싱 헤더를 추가하는 미들웨어
+class CacheHeaderMiddleware(BaseHTTPMiddleware):
+    """응답에 캐싱 헤더를 추가하는 미들웨어 (CORS는 CORSMiddleware에서 처리)"""
     
     async def dispatch(self, request: Request, call_next):
-        # Origin 헤더 확인
-        origin = request.headers.get("origin")
-        
-        # 허용된 출처인지 확인
-        allowed_origins = []
-        if settings.ALLOWED_ORIGINS:
-            allowed_origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",")]
-        
-        try:
-            # 응답 처리
-            response = await call_next(request)
-        except Exception as e:
-            # 에러 발생 시에도 CORS 헤더가 포함된 응답 반환
-            from fastapi.responses import JSONResponse
-            response = JSONResponse(
-                status_code=500,
-                content={"detail": {"code": "INTERNAL_SERVER_ERROR", "message": str(e)}}
-            )
-        
-        # CORS 헤더 추가 (에러 응답에도 적용)
-        if origin and origin in allowed_origins:
-            response.headers["Access-Control-Allow-Origin"] = origin
-            response.headers["Access-Control-Allow-Credentials"] = "true"
-        elif not settings.ALLOWED_ORIGINS:
-            # 개발 환경: 모든 출처 허용
-            response.headers["Access-Control-Allow-Origin"] = "*"
-        else:
-            # 기본적으로 첫 번째 허용된 출처 사용
-            if allowed_origins:
-                response.headers["Access-Control-Allow-Origin"] = allowed_origins[0]
-        
-        # 추가 CORS 헤더
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
-        response.headers["Access-Control-Expose-Headers"] = "*"
+        # 응답 처리
+        response = await call_next(request)
         
         # 캐싱 헤더 추가 (성능 최적화)
         # GET 요청에만 캐싱 적용
@@ -149,8 +116,8 @@ class CORSHeaderMiddleware(BaseHTTPMiddleware):
         
         return response
 
-# CORS 헤더 미들웨어 추가 (CORSMiddleware 다음에 추가)
-app.add_middleware(CORSHeaderMiddleware)
+# 캐싱 헤더 미들웨어 추가 (CORSMiddleware 다음에 추가)
+app.add_middleware(CacheHeaderMiddleware)
 
 # ============================================================
 # 📊 Prometheus 메트릭 수집 설정
@@ -171,10 +138,10 @@ instrumentator = Instrumentator(
 instrumentator.instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 
-# 전역 예외 핸들러: 모든 에러 응답에 CORS 헤더 추가
+# 전역 예외 핸들러 (CORS는 CORSMiddleware에서 자동 처리됨)
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """전역 예외 핸들러 - 모든 에러에 CORS 헤더 추가"""
+    """전역 예외 핸들러 - CORSMiddleware가 CORS 헤더를 자동으로 추가함"""
     from fastapi.responses import JSONResponse
     import logging
     import traceback
@@ -187,15 +154,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     else:
         logger.error(f"예외 발생: {str(exc)}")
     
-    # Origin 헤더 확인
-    origin = request.headers.get("origin")
-    
-    # 허용된 출처인지 확인
-    allowed_origins = []
-    if settings.ALLOWED_ORIGINS:
-        allowed_origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",")]
-    
-    # 에러 응답 생성
+    # 에러 응답 생성 (CORSMiddleware가 CORS 헤더를 자동으로 추가함)
     response = JSONResponse(
         status_code=500,
         content={
@@ -205,18 +164,6 @@ async def global_exception_handler(request: Request, exc: Exception):
             }
         }
     )
-    
-    # CORS 헤더 추가
-    if origin and origin in allowed_origins:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-    elif not settings.ALLOWED_ORIGINS:
-        response.headers["Access-Control-Allow-Origin"] = "*"
-    elif allowed_origins:
-        response.headers["Access-Control-Allow-Origin"] = allowed_origins[0]
-    
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
     
     return response
 
