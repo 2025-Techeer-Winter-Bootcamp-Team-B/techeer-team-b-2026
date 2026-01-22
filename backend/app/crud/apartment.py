@@ -166,6 +166,7 @@ class CRUDApartment(CRUDBase[Apartment, ApartmentCreate, ApartmentUpdate]):
         """
         # LEFT JOIN으로 apart_details가 없는(NULL) 아파트만 선택
         # is_deleted가 False인 상세 정보만 고려해야 함
+        # ORDER BY apt_id 필수: 순서 비결정 시 배치 간 APT↔상세 매칭 꼬임(apt_id -2 등) 방지
         stmt = (
             select(Apartment)
             .outerjoin(
@@ -179,6 +180,7 @@ class CRUDApartment(CRUDBase[Apartment, ApartmentCreate, ApartmentUpdate]):
                 Apartment.is_deleted == False,
                 ApartDetail.apt_id.is_(None)  # 상세 정보가 없는 경우 (is_deleted=False인 것만 고려)
             )
+            .order_by(Apartment.apt_id)
             .limit(limit)
         )
         result = await db.execute(stmt)

@@ -20,6 +20,8 @@ import {
   searchApartments,
   fetchCompareApartments,
   fetchApartmentTransactions,
+  fetchApartmentExclusiveAreas,
+  fetchApartmentDetail,
   setAuthToken,
   type MyProperty,
   type FavoriteApartment
@@ -210,43 +212,57 @@ const CHART_COLORS = [
 const AssetRow: React.FC<{ 
     item: DashboardAsset; 
     onClick: () => void;
-    onToggleVisibility: (e: React.MouseEvent) => void; 
-}> = ({ item, onClick, onToggleVisibility }) => {
+    onToggleVisibility: (e: React.MouseEvent) => void;
+    isEditMode?: boolean;
+    onDelete?: (e: React.MouseEvent) => void;
+    isDeleting?: boolean;
+}> = ({ item, onClick, onToggleVisibility, isEditMode, onDelete, isDeleting }) => {
     const isProfit = item.changeRate >= 0;
     const imageUrl = getApartmentImageUrl(item.id);
     //
     return (
-        <ApartmentRow
-            name={item.name}
-            location={item.location}
-            area={item.area}
-            price={item.currentPrice}
-            imageUrl={imageUrl}
-            color={item.color}
-            showImage={true}
-            isVisible={item.isVisible}
-            onClick={onClick}
-            onToggleVisibility={onToggleVisibility}
-            variant="compact"
-            className="px-2"
-            rightContent={
-                <>
-                    <div className="text-right min-w-[120px]">
-                        <p className={`font-bold text-[17px] md:text-lg tabular-nums tracking-tight text-right ${item.isVisible ? 'text-slate-900' : 'text-slate-400'}`}>
-                            <FormatPriceWithUnit value={item.currentPrice} />
-                        </p>
-                        {item.purchasePrice > 0 && (
-                            <p className={`text-[13px] mt-0.5 font-bold tabular-nums text-right ${isProfit ? 'text-red-500' : 'text-blue-500'}`}>
-                                {isProfit ? '+' : '-'}<FormatPriceWithUnit value={Math.abs(item.currentPrice - item.purchasePrice)} isDiff /> ({Math.abs(item.changeRate)}%)
+        <div className={`transition-all duration-300 ${isDeleting ? 'opacity-0 scale-95 -translate-x-4' : 'opacity-100 scale-100 translate-x-0'}`}>
+            <ApartmentRow
+                name={item.name}
+                location={item.location}
+                area={item.area}
+                price={item.currentPrice}
+                imageUrl={imageUrl}
+                color={item.color}
+                showImage={true}
+                isVisible={item.isVisible}
+                onClick={onClick}
+                onToggleVisibility={onToggleVisibility}
+                variant="compact"
+                className="px-2"
+                rightContent={
+                    <>
+                        <div className="text-right min-w-[120px]">
+                            <p className={`font-bold text-[17px] md:text-lg tabular-nums tracking-tight text-right ${item.isVisible ? 'text-slate-900' : 'text-slate-400'}`}>
+                                <FormatPriceWithUnit value={item.currentPrice} />
                             </p>
+                            {item.purchasePrice > 0 && (
+                                <p className={`text-[13px] mt-0.5 font-bold tabular-nums text-right ${isProfit ? 'text-red-500' : 'text-blue-500'}`}>
+                                    {isProfit ? '+' : '-'}<FormatPriceWithUnit value={Math.abs(item.currentPrice - item.purchasePrice)} isDiff /> ({Math.abs(item.changeRate)}%)
+                                </p>
+                            )}
+                        </div>
+                        {isEditMode && onDelete ? (
+                            <button
+                                onClick={onDelete}
+                                className="w-8 h-8 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow-sm ml-2"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        ) : (
+                            <div className="hidden md:block transform transition-transform duration-300 group-hover:translate-x-1 text-slate-300 group-hover:text-blue-500">
+                                <ChevronRight className="w-5 h-5" />
+                            </div>
                         )}
-                    </div>
-                    <div className="hidden md:block transform transition-transform duration-300 group-hover:translate-x-1 text-slate-300 group-hover:text-blue-500">
-                        <ChevronRight className="w-5 h-5" />
-                    </div>
-                </>
-            }
-        />
+                    </>
+                }
+            />
+        </div>
     );
 }
 
@@ -276,6 +292,7 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [editingGroupName, setEditingGroupName] = useState('');
   const [draggedGroupId, setDraggedGroupId] = useState<string | null>(null);
+  const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null); // 삭제 중인 아이템 ID
   
   // Add group modal
   const [isAddGroupModalOpen, setIsAddGroupModalOpen] = useState(false);
@@ -286,6 +303,22 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
   const [apartmentSearchQuery, setApartmentSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Array<{ apt_id: number; apt_name: string; address?: string; price?: number }>>([]);
   const [isSearching, setIsSearching] = useState(false);
+  
+  // 내 자산 추가 상세 모달 (PropertyDetail과 동일)
+  const [isMyPropertyModalOpen, setIsMyPropertyModalOpen] = useState(false);
+  const [selectedApartmentForAdd, setSelectedApartmentForAdd] = useState<{ apt_id: number; apt_name: string } | null>(null);
+  const [myPropertyForm, setMyPropertyForm] = useState({
+    nickname: '',
+    exclusive_area: 84,
+    purchase_price: '',
+    loan_amount: '',
+    purchase_date: '',
+    memo: ''
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [exclusiveAreaOptions, setExclusiveAreaOptions] = useState<number[]>([]);
+  const [isLoadingExclusiveAreas, setIsLoadingExclusiveAreas] = useState(false);
+  const [apartmentDetail, setApartmentDetail] = useState<{ apt_name: string } | null>(null);
   
   // Mobile settings panel (관심 리스트 설정)
   const [isMobileSettingsOpen, setIsMobileSettingsOpen] = useState(false);
@@ -313,11 +346,27 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
           purchase_price: mp.purchase_price
       });
       
+      // 주소 포맷: "시흥시 배곧동" 형태로 변환
+      const formatLocation = (cityName?: string | null, regionName?: string | null): string => {
+          if (!regionName) return '위치 정보 없음';
+          // city_name에서 간단한 시 이름 추출 (예: "서울특별시" → "서울", "인천광역시" → "인천", "경기도" → "경기")
+          let shortCity = '';
+          if (cityName) {
+              shortCity = cityName
+                  .replace('특별시', '')
+                  .replace('광역시', '')
+                  .replace('특별자치시', '')
+                  .replace('특별자치도', '')
+                  .replace('도', '');
+          }
+          return `${shortCity} ${regionName}`.trim();
+      };
+      
       return {
           id: String(mp.property_id),
           aptId: mp.apt_id,
           name: mp.apt_name || mp.nickname || '이름 없음',
-          location: mp.region_name ? `${mp.city_name || ''} ${mp.region_name}` : '위치 정보 없음',
+          location: formatLocation(mp.city_name, mp.region_name),
           area: mp.exclusive_area || 84,
           currentPrice: mp.current_market_price || 0,
           purchasePrice: mp.purchase_price || mp.current_market_price || 0,
@@ -334,19 +383,35 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
       console.log('🔍 관심 아파트 데이터:', {
           apt_id: fav.apt_id,
           apt_name: fav.apt_name,
-          current_market_price: fav.current_market_price
+          current_market_price: fav.current_market_price,
+          exclusive_area: fav.exclusive_area
       });
+      
+      // 주소 포맷: "시흥시 배곧동" 형태로 변환
+      const formatLocation = (cityName?: string | null, regionName?: string | null): string => {
+          if (!regionName) return '위치 정보 없음';
+          let shortCity = '';
+          if (cityName) {
+              shortCity = cityName
+                  .replace('특별시', '')
+                  .replace('광역시', '')
+                  .replace('특별자치시', '')
+                  .replace('특별자치도', '')
+                  .replace('도', '');
+          }
+          return `${shortCity} ${regionName}`.trim();
+      };
       
       return {
           id: String(fav.favorite_id),
           aptId: fav.apt_id,
           name: fav.apt_name || fav.nickname || '이름 없음',
-          location: fav.region_name ? `${fav.city_name || ''} ${fav.region_name}` : '위치 정보 없음',
-          area: 84,
+          location: formatLocation(fav.city_name, fav.region_name),
+          area: fav.exclusive_area || 84,  // API에서 받은 전용면적 사용, 없으면 84 기본값
           currentPrice: fav.current_market_price || 0,
           purchasePrice: fav.current_market_price || 0,
           purchaseDate: '-',
-          changeRate: 0,
+          changeRate: fav.index_change_rate || 0,  // 6개월 기준 변동률 사용
           jeonsePrice: 0,
           gapPrice: 0,
           jeonseRatio: 0,
@@ -406,10 +471,15 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
               chartData: generateAssetHistory(asset.currentPrice > 0 ? asset.currentPrice : 50000, 500, asset.name)
           }));
           
-          setAssetGroups([
-              { id: 'my', name: '내 자산', assets: initialMyAssets },
-              { id: 'favorites', name: '관심 단지', assets: initialFavAssets },
-          ]);
+          // 기존 사용자 추가 그룹 유지하면서 내 자산과 관심 단지만 업데이트
+          setAssetGroups(prev => {
+              const userGroups = prev.filter(g => g.id !== 'my' && g.id !== 'favorites');
+              return [
+                  { id: 'my', name: '내 자산', assets: initialMyAssets },
+                  { id: 'favorites', name: '관심 단지', assets: initialFavAssets },
+                  ...userGroups
+              ];
+          });
           setIsLoading(false);
 
           // 2단계: 차트 데이터를 백그라운드에서 점진적으로 로드 (최대 3개씩 병렬 처리)
@@ -453,11 +523,15 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                       updatedAssets[result.index] = { ...updatedAssets[result.index], chartData: result.chartData };
                   });
                   
-                  // 상태 업데이트 (UI 반영)
-                  setAssetGroups([
-                      { id: 'my', name: '내 자산', assets: updatedAssets.slice(0, myAssets.length) },
-                      { id: 'favorites', name: '관심 단지', assets: updatedAssets.slice(myAssets.length) },
-                  ]);
+                  // 상태 업데이트 (UI 반영) - 사용자 추가 그룹 유지
+                  setAssetGroups(prev => {
+                      const userGroups = prev.filter(g => g.id !== 'my' && g.id !== 'favorites');
+                      return [
+                          { id: 'my', name: '내 자산', assets: updatedAssets.slice(0, myAssets.length) },
+                          { id: 'favorites', name: '관심 단지', assets: updatedAssets.slice(myAssets.length) },
+                          ...userGroups
+                      ];
+                  });
               }
           };
           
@@ -469,13 +543,17 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
               // 지역별로 그룹화하고 평균 계산
               const regionMap = new Map<string, { rates: number[], aptNames: string[] }>();
               rawMyProperties.forEach((prop) => {
-                  if (prop.region_name && prop.index_change_rate !== null && prop.index_change_rate !== undefined) {
+                  if (prop.region_name) {
                       const regionKey = prop.region_name;
                       if (!regionMap.has(regionKey)) {
                           regionMap.set(regionKey, { rates: [], aptNames: [] });
                       }
                       const entry = regionMap.get(regionKey)!;
-                      entry.rates.push(prop.index_change_rate);
+                      // index_change_rate가 있으면 사용, 없으면 0으로 기본값 설정
+                      const rate = prop.index_change_rate !== null && prop.index_change_rate !== undefined 
+                          ? prop.index_change_rate 
+                          : 0;
+                      entry.rates.push(rate);
                       entry.aptNames.push(prop.apt_name || prop.nickname || '');
                   }
               });
@@ -483,16 +561,20 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
               // ComparisonData 형식으로 변환
               const comparisonData: ComparisonData[] = [];
               regionMap.forEach((value, regionName) => {
-                  const avgRate = value.rates.reduce((sum, r) => sum + r, 0) / value.rates.length;
-                  // 지역 평균은 실제 API가 없으므로 내 자산의 평균을 약간 조정하여 사용
-                  // (실제로는 백엔드에서 지역 평균을 제공하는 것이 좋음)
-                  const regionAvg = avgRate * 0.7; // 시뮬레이션 값
-                  comparisonData.push({
-                      region: regionName,
-                      myProperty: Math.round(avgRate * 100) / 100,
-                      regionAverage: Math.round(regionAvg * 100) / 100,
-                      aptName: value.aptNames.join(', ')
-                  });
+                  // rates가 모두 0이 아닌 경우만 처리
+                  const validRates = value.rates.filter(r => r !== 0);
+                  if (validRates.length > 0) {
+                      const avgRate = validRates.reduce((sum, r) => sum + r, 0) / validRates.length;
+                      // 지역 평균은 실제 API가 없으므로 내 자산의 평균을 약간 조정하여 사용
+                      // (실제로는 백엔드에서 지역 평균을 제공하는 것이 좋음)
+                      const regionAvg = avgRate * 0.7; // 시뮬레이션 값
+                      comparisonData.push({
+                          region: regionName,
+                          myProperty: Math.round(avgRate * 100) / 100,
+                          regionAverage: Math.round(regionAvg * 100) / 100,
+                          aptName: value.aptNames.join(', ')
+                      });
+                  }
               });
               
               // 최대 5개 지역만 표시
@@ -519,6 +601,18 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
         window.removeEventListener('scroll', handleScroll);
     }
   }, []);
+
+  // 모달이 열릴 때 배경 스크롤 고정
+  useEffect(() => {
+    if (isAddApartmentModalOpen || isMyPropertyModalOpen || isAddGroupModalOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isAddApartmentModalOpen, isMyPropertyModalOpen, isAddGroupModalOpen]);
 
   const handleTabChange = (groupId: string) => setActiveGroupId(groupId);
   const handleViewModeChange = (mode: 'separate' | 'combined') => setViewMode(mode);
@@ -681,13 +775,49 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
       const visibleAssets = activeGroup.assets.filter(asset => asset.isVisible);
       if (visibleAssets.length === 0) return [];
 
-      // 모아보기/개별보기 모두 아파트 이름 표시하지 않음
-      return visibleAssets.map(asset => ({
-          name: '',
-          data: filterDataByPeriod(asset.chartData),
-          color: asset.color,
-          visible: true
-      }));
+      if (viewMode === 'combined') {
+          // 모아보기: 모든 자산의 가격을 합산한 단일 그래프
+          const allDates = new Set<string>();
+          visibleAssets.forEach(asset => {
+              asset.chartData.forEach(d => allDates.add(d.time));
+          });
+          
+          const sortedDates = Array.from(allDates).sort();
+          const combinedData = sortedDates.map(date => {
+              let totalValue = 0;
+              visibleAssets.forEach(asset => {
+                  // 해당 날짜의 데이터가 있으면 사용, 없으면 가장 가까운 이전 데이터 사용
+                  const dataPoint = asset.chartData.find(d => d.time === date);
+                  if (dataPoint) {
+                      totalValue += dataPoint.value;
+                  } else {
+                      // 가장 가까운 이전 데이터 찾기
+                      const prevData = asset.chartData
+                          .filter(d => d.time <= date)
+                          .sort((a, b) => b.time.localeCompare(a.time))[0];
+                      if (prevData) {
+                          totalValue += prevData.value;
+                      }
+                  }
+              });
+              return { time: date, value: totalValue };
+          });
+          
+          return [{
+              name: '총 자산',
+              data: filterDataByPeriod(combinedData),
+              color: '#3182F6',
+              visible: true
+          }];
+      } else {
+          // 개별보기: 각 자산별 그래프
+          return visibleAssets.map(asset => ({
+              name: '',
+              data: filterDataByPeriod(asset.chartData),
+              color: asset.color,
+              visible: true
+          }));
+      }
   }, [activeGroup, viewMode, selectedPeriod]);
 
   // 아파트 검색 함수
@@ -741,64 +871,219 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
       return () => clearTimeout(timer);
   }, [apartmentSearchQuery, handleApartmentSearch]);
 
-  // 아파트 추가 핸들러 (내 자산 또는 관심 단지에 추가)
-  const handleAddApartment = async (aptId: number, aptName: string) => {
+  // 아파트 추가 핸들러 (내 자산, 관심 단지, 또는 사용자 추가 그룹에 추가)
+  const handleAddApartment = async (aptId: number, aptName: string, address?: string) => {
       if (!isSignedIn) return;
       
       try {
           if (activeGroupId === 'my') {
-              // 내 자산에 추가
-              await createMyProperty({
-                  apt_id: aptId,
-                  nickname: aptName,
-                  exclusive_area: 84,
-              });
-          } else {
-              // 관심 단지에 추가
+              // 내 자산에 추가 - 상세 모달 열기
+              setSelectedApartmentForAdd({ apt_id: aptId, apt_name: aptName });
+              setIsAddApartmentModalOpen(false);
+              setIsMyPropertyModalOpen(true);
+              
+              // 아파트 상세 정보 및 전용면적 목록 로드
+              try {
+                  const [detailRes, areasRes] = await Promise.all([
+                      fetchApartmentDetail(aptId).catch(() => null),
+                      fetchApartmentExclusiveAreas(aptId).catch(() => null)
+                  ]);
+                  
+                  if (detailRes?.success) {
+                      setApartmentDetail({ apt_name: detailRes.data.apt_name });
+                  }
+                  
+                  if (areasRes?.success && areasRes.data.exclusive_areas.length > 0) {
+                      setExclusiveAreaOptions(areasRes.data.exclusive_areas);
+                      setMyPropertyForm(prev => ({
+                          ...prev,
+                          exclusive_area: areasRes.data.exclusive_areas[0],
+                          nickname: aptName
+                      }));
+                  } else {
+                      setExclusiveAreaOptions([59, 84, 102, 114]);
+                      setMyPropertyForm(prev => ({
+                          ...prev,
+                          exclusive_area: 84,
+                          nickname: aptName
+                      }));
+                  }
+              } catch (error) {
+                  console.error('아파트 정보 로드 실패:', error);
+                  setExclusiveAreaOptions([59, 84, 102, 114]);
+                  setMyPropertyForm(prev => ({
+                      ...prev,
+                      exclusive_area: 84,
+                      nickname: aptName
+                  }));
+              }
+          } else if (activeGroupId === 'favorites') {
+              // 관심 단지에 추가 - API 호출
+              const token = await getToken();
+              if (token) setAuthToken(token);
+              
               await addFavoriteApartment({
                   apt_id: aptId,
                   nickname: aptName,
               });
+              
+              // 데이터 다시 로드
+              await loadData();
+              setIsAddApartmentModalOpen(false);
+              setApartmentSearchQuery('');
+              setSearchResults([]);
+          } else {
+              // 사용자 추가 그룹에 추가 - 로컬 상태에만 추가
+              const newAsset: DashboardAsset = {
+                  id: `local-${Date.now()}`,
+                  aptId: aptId,
+                  name: aptName,
+                  location: address || '위치 정보 없음',
+                  area: 84,
+                  currentPrice: 0,
+                  purchasePrice: 0,
+                  purchaseDate: '-',
+                  changeRate: 0,
+                  jeonsePrice: 0,
+                  gapPrice: 0,
+                  jeonseRatio: 0,
+                  isVisible: true,
+                  chartData: generateAssetHistory(50000, 500, aptName),
+                  color: CHART_COLORS[activeGroup.assets.length % CHART_COLORS.length]
+              };
+              
+              // 가격 정보 가져오기 시도
+              try {
+                  const compareRes = await fetchCompareApartments([aptId]);
+                  if (compareRes.apartments && compareRes.apartments.length > 0) {
+                      const aptData = compareRes.apartments[0];
+                      if (aptData.price) {
+                          // API에서 억 단위로 오므로 만원 단위로 변환 (5.8억 -> 58000만원)
+                          const priceInMan = Math.round(aptData.price * 10000);
+                          newAsset.currentPrice = priceInMan;
+                          newAsset.purchasePrice = priceInMan;
+                          newAsset.chartData = generateAssetHistory(priceInMan, 500, aptName);
+                      }
+                      if (aptData.address) {
+                          newAsset.location = aptData.address;
+                      }
+                  }
+              } catch {
+                  // 가격 정보 없어도 진행
+              }
+              
+              // 해당 그룹에 아파트 추가
+              setAssetGroups(prev => prev.map(group => {
+                  if (group.id === activeGroupId) {
+                      return {
+                          ...group,
+                          assets: [...group.assets, newAsset]
+                      };
+                  }
+                  return group;
+              }));
+              
+              setIsAddApartmentModalOpen(false);
+              setApartmentSearchQuery('');
+              setSearchResults([]);
           }
-          
-          // 데이터 다시 로드
-          await loadData();
-          setIsAddApartmentModalOpen(false);
-          setApartmentSearchQuery('');
-          setSearchResults([]);
       } catch (error) {
           console.error('아파트 추가 실패:', error);
           alert('아파트 추가에 실패했습니다. 다시 시도해 주세요.');
       }
   };
+  
+  // 내 자산 추가 제출 (PropertyDetail과 동일)
+  const handleMyPropertySubmit = async () => {
+      if (!isSignedIn || !selectedApartmentForAdd) {
+          alert('로그인이 필요합니다.');
+          return;
+      }
+      
+      setIsSubmitting(true);
+      try {
+          const token = await getToken();
+          if (token) setAuthToken(token);
+          
+          const data = {
+              apt_id: selectedApartmentForAdd.apt_id,
+              nickname: myPropertyForm.nickname || selectedApartmentForAdd.apt_name,
+              exclusive_area: myPropertyForm.exclusive_area,
+              purchase_price: myPropertyForm.purchase_price ? parseInt(myPropertyForm.purchase_price) : undefined,
+              loan_amount: myPropertyForm.loan_amount ? parseInt(myPropertyForm.loan_amount) : undefined,
+              purchase_date: myPropertyForm.purchase_date || undefined,
+              memo: myPropertyForm.memo || undefined
+          };
+          
+          const response = await createMyProperty(data);
+          if (response.success) {
+              setIsMyPropertyModalOpen(false);
+              setSelectedApartmentForAdd(null);
+              setMyPropertyForm({
+                  nickname: '',
+                  exclusive_area: 84,
+                  purchase_price: '',
+                  loan_amount: '',
+                  purchase_date: '',
+                  memo: ''
+              });
+              alert('내 자산에 추가되었습니다.');
+              await loadData();
+          }
+      } catch (error) {
+          console.error('내 자산 추가 실패:', error);
+          alert('처리 중 오류가 발생했습니다.');
+      } finally {
+          setIsSubmitting(false);
+      }
+  };
 
-  // 아파트 삭제 핸들러
+  // 아파트 삭제 핸들러 - 즉시 UI 갱신 후 백그라운드에서 API 호출
   const handleRemoveAsset = async (groupId: string, assetId: string) => {
+      const group = assetGroups.find(g => g.id === groupId);
+      const asset = group?.assets.find(a => a.id === assetId);
+      
+      // 1. 먼저 UI에서 즉시 제거 (모든 그룹 공통)
+      setAssetGroups(prev => prev.map(g => {
+          if (g.id === groupId) {
+              return {
+                  ...g,
+                  assets: g.assets.filter(a => a.id !== assetId)
+              };
+          }
+          return g;
+      }));
+      
+      // 2. 사용자 추가 그룹은 API 호출 불필요
+      if (groupId !== 'my' && groupId !== 'favorites') {
+          return;
+      }
+      
+      // 3. 내 자산/관심 단지는 백그라운드에서 API 호출
       if (!isSignedIn) return;
       
       try {
+          const token = await getToken();
+          if (token) setAuthToken(token);
+          
           if (groupId === 'my') {
               await deleteMyProperty(parseInt(assetId));
-          } else {
-              // assetId가 favorite_id이므로 해당 apt_id를 찾아야 함
-              const group = assetGroups.find(g => g.id === groupId);
-              const asset = group?.assets.find(a => a.id === assetId);
+          } else if (groupId === 'favorites') {
               if (asset && (asset as any).aptId) {
                   await removeFavoriteApartment((asset as any).aptId);
               }
           }
-          
-          // 데이터 다시 로드
-          await loadData();
       } catch (error) {
           console.error('아파트 삭제 실패:', error);
+          // 실패 시 데이터 다시 로드하여 복구
+          await loadData();
       }
   };
 
   const ControlsContent = () => (
       <>
         {/* Tabs */}
-        <div className="flex items-center gap-2 mb-6 border-b border-slate-100 pb-3 overflow-x-auto scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent hover:scrollbar-thumb-slate-300">
+        <div className="flex items-center gap-2 mb-6 border-b border-slate-100 pb-3 overflow-visible scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent hover:scrollbar-thumb-slate-300">
             {assetGroups.map((group) => (
                 <div
                     key={group.id}
@@ -806,7 +1091,7 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                     onDragStart={() => handleDragStart(group.id)}
                     onDragOver={(e) => handleDragOver(e, group.id)}
                     onDragEnd={handleDragEnd}
-                    className={`relative flex items-center gap-1 ${
+                    className={`relative flex items-center gap-1 flex-shrink-0 ${
                         draggedGroupId === group.id ? 'opacity-50' : ''
                     } ${isEditMode ? 'cursor-grab active:cursor-grabbing' : ''}`}
                 >
@@ -829,19 +1114,22 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                                     setEditingGroupName(group.name);
                                 }
                             }}
-                            className={`px-4 py-2 rounded-lg text-[15px] font-bold transition-all whitespace-nowrap border ${
+                            className={`px-4 py-2 rounded-lg text-[15px] font-bold transition-all whitespace-nowrap border min-w-[80px] text-center ${
                                 activeGroupId === group.id 
                                 ? 'bg-deep-900 text-white border-deep-900 shadow-sm' 
                                 : 'bg-white text-slate-500 hover:bg-slate-50 border-slate-200'
-                            } ${isEditMode ? 'pr-8' : ''}`}
+                            }`}
                         >
                             {group.name}
                         </button>
                     )}
                     {isEditMode && editingGroupId !== group.id && assetGroups.length > 1 && (
                         <button
-                            onClick={() => handleDeleteGroup(group.id)}
-                            className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center text-xs font-bold hover:bg-red-600 transition-colors shadow-sm"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteGroup(group.id);
+                            }}
+                            className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center text-xs font-bold hover:bg-red-600 transition-colors shadow-md z-50"
                         >
                             <X className="w-3 h-3" />
                         </button>
@@ -919,6 +1207,174 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
             </div>
         )}
 
+        {/* 내 자산 추가/수정 팝업 모달 (PropertyDetail과 동일) */}
+        {isMyPropertyModalOpen && selectedApartmentForAdd && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center animate-fade-in p-4">
+            <div 
+              className="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity"
+              onClick={() => {
+                setIsMyPropertyModalOpen(false);
+                setSelectedApartmentForAdd(null);
+              }}
+            />
+            <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden">
+              {/* 헤더 */}
+              <div className="p-6 border-b border-slate-100">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xl font-black text-slate-900">
+                    내 자산에 추가
+                  </h3>
+                  <button 
+                    onClick={() => {
+                      setIsMyPropertyModalOpen(false);
+                      setSelectedApartmentForAdd(null);
+                    }}
+                    className="p-2 rounded-full hover:bg-slate-100 text-slate-400 transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                <p className="text-[13px] text-slate-500 mt-1">{selectedApartmentForAdd.apt_name}</p>
+              </div>
+              
+              {/* 폼 내용 */}
+              <div className="p-6 space-y-5 max-h-[60vh] overflow-y-auto">
+                {/* 별칭 */}
+                <div>
+                  <label className="block text-[13px] font-bold text-slate-700 mb-2">별칭</label>
+                  <input 
+                    type="text"
+                    value={myPropertyForm.nickname}
+                    onChange={(e) => setMyPropertyForm(prev => ({ ...prev, nickname: e.target.value }))}
+                    placeholder={selectedApartmentForAdd.apt_name}
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 text-[15px] font-medium focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400 transition-all"
+                  />
+                </div>
+                
+                {/* 전용면적 */}
+                <div>
+                  <label className="block text-[13px] font-bold text-slate-700 mb-2">전용면적 (㎡)</label>
+                  {isLoadingExclusiveAreas ? (
+                    <div className="w-full px-4 py-3 rounded-xl border border-slate-200 text-[15px] font-medium bg-slate-50 flex items-center gap-2">
+                      <div className="w-4 h-4 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin"></div>
+                      <span className="text-slate-500">전용면적 목록 로딩 중...</span>
+                    </div>
+                  ) : (
+                    <select
+                      value={myPropertyForm.exclusive_area}
+                      onChange={(e) => setMyPropertyForm(prev => ({ ...prev, exclusive_area: Number(e.target.value) }))}
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 text-[15px] font-medium focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400 transition-all bg-white"
+                    >
+                      {exclusiveAreaOptions.length > 0 ? (
+                        exclusiveAreaOptions.map(area => {
+                          const pyeong = Math.round(area / 3.3058);
+                          return (
+                            <option key={area} value={area}>
+                              {area.toFixed(2)}㎡ (약 {pyeong}평)
+                            </option>
+                          );
+                        })
+                      ) : (
+                        <>
+                          <option value={59}>59㎡ (약 18평)</option>
+                          <option value={84}>84㎡ (약 25평)</option>
+                          <option value={102}>102㎡ (약 31평)</option>
+                          <option value={114}>114㎡ (약 34평)</option>
+                        </>
+                      )}
+                    </select>
+                  )}
+                  {exclusiveAreaOptions.length > 0 && (
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      실제 거래 내역 기반 전용면적 목록
+                    </p>
+                  )}
+                </div>
+                
+                {/* 구매가 */}
+                <div>
+                  <label className="block text-[13px] font-bold text-slate-700 mb-2">구매가 (만원)</label>
+                  <input 
+                    type="number"
+                    value={myPropertyForm.purchase_price}
+                    onChange={(e) => setMyPropertyForm(prev => ({ ...prev, purchase_price: e.target.value }))}
+                    placeholder="예: 85000"
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 text-[15px] font-medium focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400 transition-all"
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    {myPropertyForm.purchase_price && `${(Number(myPropertyForm.purchase_price) / 10000).toFixed(1)}억원`}
+                  </p>
+                </div>
+                
+                {/* 대출 금액 */}
+                <div>
+                  <label className="block text-[13px] font-bold text-slate-700 mb-2">대출 금액 (만원)</label>
+                  <input 
+                    type="number"
+                    value={myPropertyForm.loan_amount}
+                    onChange={(e) => setMyPropertyForm(prev => ({ ...prev, loan_amount: e.target.value }))}
+                    placeholder="예: 40000"
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 text-[15px] font-medium focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400 transition-all"
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    {myPropertyForm.loan_amount && `${(Number(myPropertyForm.loan_amount) / 10000).toFixed(1)}억원`}
+                  </p>
+                </div>
+                
+                {/* 매입일 */}
+                <div>
+                  <label className="block text-[13px] font-bold text-slate-700 mb-2">매입일</label>
+                  <input 
+                    type="date"
+                    value={myPropertyForm.purchase_date}
+                    onChange={(e) => setMyPropertyForm(prev => ({ ...prev, purchase_date: e.target.value }))}
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 text-[15px] font-medium focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400 transition-all"
+                  />
+                </div>
+                
+                {/* 메모 */}
+                <div>
+                  <label className="block text-[13px] font-bold text-slate-700 mb-2">메모</label>
+                  <textarea 
+                    value={myPropertyForm.memo}
+                    onChange={(e) => setMyPropertyForm(prev => ({ ...prev, memo: e.target.value }))}
+                    placeholder="메모를 입력하세요"
+                    rows={3}
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 text-[15px] font-medium focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400 transition-all resize-none"
+                  />
+                </div>
+              </div>
+              
+              {/* 푸터 버튼 */}
+              <div className="p-6 border-t border-slate-100 flex gap-3">
+                <button
+                  onClick={() => {
+                    setIsMyPropertyModalOpen(false);
+                    setSelectedApartmentForAdd(null);
+                  }}
+                  className="flex-1 py-3 px-4 rounded-xl border border-slate-200 text-slate-600 font-bold text-[15px] hover:bg-slate-50 transition-all"
+                >
+                  취소
+                </button>
+                <button
+                  onClick={handleMyPropertySubmit}
+                  disabled={isSubmitting}
+                  className="flex-1 py-3 px-4 rounded-xl bg-slate-900 text-white font-bold text-[15px] hover:bg-slate-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                      저장 중...
+                    </>
+                  ) : (
+                    '추가하기'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Add Apartment Modal */}
         {isAddApartmentModalOpen && (
             <div className="fixed inset-0 z-[100] flex items-start justify-center pt-24 p-4">
@@ -938,7 +1394,7 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                     <div className="p-6 border-b border-slate-100">
                         <div className="flex items-center justify-between mb-4">
                             <h3 className="text-lg font-black text-slate-900">
-                                {activeGroupId === 'my' ? '내 자산에 아파트 추가' : '관심 단지에 아파트 추가'}
+                                아파트 추가
                             </h3>
                             <button 
                                 onClick={() => {
@@ -973,7 +1429,7 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                             searchResults.map((apt) => (
                                 <div 
                                     key={apt.apt_id}
-                                    onClick={() => handleAddApartment(apt.apt_id, apt.apt_name)}
+                                    onClick={() => handleAddApartment(apt.apt_id, apt.apt_name, apt.address)}
                                     className="flex items-center justify-between p-4 rounded-xl hover:bg-blue-50 cursor-pointer transition-colors border border-slate-100 hover:border-blue-200"
                                 >
                                     <div className="flex items-center gap-3">
@@ -989,11 +1445,6 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                                             )}
                                         </div>
                                     </div>
-                                    {apt.price && apt.price > 0 && (
-                                        <div className="text-right">
-                                            <p className="font-bold text-slate-900">{(apt.price / 10000).toFixed(1)}억</p>
-                                        </div>
-                                    )}
                                 </div>
                             ))
                         ) : apartmentSearchQuery.trim() ? (
@@ -1015,15 +1466,13 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
         {/* PC Layout */}
         <div className="hidden md:flex flex-col gap-8 pb-24">
             {/* Main Content Grid */}
-            <div className="grid grid-cols-12 gap-8">
+            <div className="grid grid-cols-12 gap-8 items-stretch">
                 {/* Left: Profile & Widgets Card */}
                 <div className="col-span-2">
-                    <div className="sticky top-24">
-                        <ProfileWidgetsCard 
-                            activeGroupName={activeGroup.name}
-                            assets={activeGroup.assets}
-                        />
-                    </div>
+                    <ProfileWidgetsCard 
+                        activeGroupName={activeGroup.name}
+                        assets={activeGroup.assets}
+                    />
                 </div>
                 
                 {/* Right: Main Content Area */}
@@ -1104,7 +1553,7 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
 
                             {/* RIGHT COLUMN (Asset List) */}
                             <div className="col-span-5 h-full flex flex-col">
-                                <div className="bg-white rounded-[28px] p-10 shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-slate-100/80 flex flex-col h-full min-h-0 relative overflow-hidden">
+                                <div className="bg-white rounded-[28px] p-10 shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-slate-100/80 flex flex-col h-full min-h-0 relative">
                                     <div className="flex items-center justify-between mb-6 px-1">
                                         <h2 className="text-xl font-black text-slate-900 tracking-tight">관심 리스트</h2>
                                         <button 
@@ -1130,8 +1579,14 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                                                     <AssetRow 
                                                         key={prop.id} 
                                                         item={prop} 
-                                                        onClick={() => onPropertyClick(prop.aptId?.toString() || prop.id)}
+                                                        onClick={() => !isEditMode && onPropertyClick(prop.aptId?.toString() || prop.id)}
                                                         onToggleVisibility={(e) => toggleAssetVisibility(activeGroup.id, prop.id, e)}
+                                                        isEditMode={isEditMode}
+                                                        isDeleting={deletingAssetId === prop.id}
+                                                        onDelete={(e) => {
+                                                            e.stopPropagation();
+                                                            handleRemoveAsset(activeGroup.id, prop.id);
+                                                        }}
                                                     />
                                                 ))
                                             ) : (
@@ -1160,7 +1615,9 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                             <PolicyNewsList />
                         </div>
                         <div className="col-span-5 h-[520px]">
-                            <RegionComparisonChart data={regionComparisonData} isLoading={isLoading} />
+                            <div className="h-full">
+                                <RegionComparisonChart data={regionComparisonData} isLoading={isLoading} />
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1271,8 +1728,14 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                                 <AssetRow 
                                     key={prop.id} 
                                     item={prop} 
-                                    onClick={() => onPropertyClick(prop.aptId?.toString() || prop.id)}
+                                    onClick={() => !isEditMode && onPropertyClick(prop.aptId?.toString() || prop.id)}
                                     onToggleVisibility={(e) => toggleAssetVisibility(activeGroup.id, prop.id, e)}
+                                    isEditMode={isEditMode}
+                                    isDeleting={deletingAssetId === prop.id}
+                                    onDelete={(e) => {
+                                        e.stopPropagation();
+                                        handleRemoveAsset(activeGroup.id, prop.id);
+                                    }}
                                 />
                             ))
                         ) : (

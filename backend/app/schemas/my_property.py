@@ -98,6 +98,13 @@ class MyPropertyResponse(BaseModel):
     subway_time: Optional[str] = Field(None, description="지하철 소요 시간")
     total_parking_cnt: Optional[int] = Field(None, description="총 주차 대수")
     
+    # 추가 상세 정보
+    total_household_cnt: Optional[int] = Field(None, description="총 세대수")
+    use_approval_date: Optional[date] = Field(None, description="사용승인일")
+    index_change_rate: Optional[float] = Field(None, description="부동산 지수 변동률")
+    road_address: Optional[str] = Field(None, description="도로명 주소")
+    jibun_address: Optional[str] = Field(None, description="지번 주소")
+    
     model_config = ConfigDict(from_attributes=True)
 
 

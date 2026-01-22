@@ -2,6 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Calendar, TrendingUp, FileText, AlertCircle, X, TrendingDown, ChevronRight } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Sector, Area, AreaChart } from 'recharts';
 import { fetchInterestRates, type InterestRateItem } from '../services/api';
+import { useUser } from '@clerk/clerk-react';
 
 interface PortfolioData {
   region: string;
@@ -155,8 +156,12 @@ export const ProfileWidgetsCard: React.FC<ProfileWidgetsCardProps> = ({ activeGr
   const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null);
   const [interestRates, setInterestRates] = useState<InterestRateData[]>([]);
   const [isRatesLoading, setIsRatesLoading] = useState(true);
+  const [portfolioViewMode, setPortfolioViewMode] = useState<'apartment' | 'region'>('apartment');
   const eventRefs = useRef<(HTMLDivElement | null)[]>([]);
   const currentValue = 4.21;
+  
+  // Clerk 사용자 정보
+  const { user: clerkUser } = useUser();
 
   // 금리 데이터 API 호출
   useEffect(() => {
@@ -185,20 +190,23 @@ export const ProfileWidgetsCard: React.FC<ProfileWidgetsCardProps> = ({ activeGr
     loadInterestRates();
   }, []);
 
-  // 금리 히스토리 데이터 생성 (6개월)
+  // 금리 히스토리 데이터 생성 (1년)
   const generateRateHistory = (currentValue: number, change: number, trend: string) => {
-    const months = ['7월', '8월', '9월', '10월', '11월', '12월'];
+    // 1년 전과 현재만 표시
     const history = [];
-    let value = currentValue;
     
-    // 역순으로 계산 (현재부터 과거로)
-    for (let i = months.length - 1; i >= 0; i--) {
-      history.unshift({ month: months[i], value: Math.round(value * 100) / 100 });
-      if (trend === 'up') {
-        value -= Math.abs(change) * 0.8; // 과거로 갈수록 낮았음
-      } else if (trend === 'down') {
-        value += Math.abs(change) * 0.8; // 과거로 갈수록 높았음
-      }
+    if (trend === 'up') {
+      // 상승: 1년 전 낮았음 → 현재 높음
+      history.push({ month: '1년', value: Math.round((currentValue - Math.abs(change) * 3) * 100) / 100 });
+      history.push({ month: '현재', value: Math.round(currentValue * 100) / 100 });
+    } else if (trend === 'down') {
+      // 하락: 1년 전 높았음 → 현재 낮음
+      history.push({ month: '1년', value: Math.round((currentValue + Math.abs(change) * 3) * 100) / 100 });
+      history.push({ month: '현재', value: Math.round(currentValue * 100) / 100 });
+    } else {
+      // 동결: 약간의 변동 추가
+      history.push({ month: '1년', value: Math.round((currentValue + 0.05) * 100) / 100 });
+      history.push({ month: '현재', value: Math.round(currentValue * 100) / 100 });
     }
     return history;
   };
@@ -253,99 +261,154 @@ export const ProfileWidgetsCard: React.FC<ProfileWidgetsCardProps> = ({ activeGr
     return () => document.removeEventListener('click', handleClickOutside);
   }, [selectedEvent]);
 
+  // 스크롤 시 툴팁 닫기
+  useEffect(() => {
+    const handleScroll = () => {
+      if (selectedEvent) {
+        setSelectedEvent(null);
+        setTooltipPosition(null);
+      }
+    };
+    window.addEventListener('scroll', handleScroll, true);
+    return () => window.removeEventListener('scroll', handleScroll, true);
+  }, [selectedEvent]);
+
   return (
     <>
-      <div className="bg-white rounded-[28px] p-6 shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-slate-100/80 h-fit">
+      <div className="bg-white rounded-[28px] p-6 shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-slate-100/80 h-full flex flex-col">
         {/* Profile Section */}
         <div className="flex items-center gap-4 mb-6 pb-6 border-b border-slate-100">
           <div className="w-12 h-12 rounded-full bg-slate-200 flex items-center justify-center overflow-hidden border-2 border-white shadow-sm">
-            <img 
-              src="https://api.dicebear.com/7.x/avataaars/svg?seed=Felix" 
-              alt="User" 
-              className="w-full h-full" 
-            />
+            {clerkUser?.imageUrl ? (
+              <img src={clerkUser.imageUrl} alt="User" className="w-full h-full object-cover" />
+            ) : (
+              <img 
+                src="https://api.dicebear.com/7.x/avataaars/svg?seed=Felix" 
+                alt="User" 
+                className="w-full h-full" 
+              />
+            )}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-[15px] font-black text-slate-900 truncate">김부자님</p>
+            <p className="text-[15px] font-black text-slate-900 truncate">
+              {clerkUser?.fullName || clerkUser?.firstName || '사용자'}
+            </p>
             <p className="text-[12px] text-slate-500 font-medium">투자자</p>
           </div>
         </div>
 
-        {/* 금리 지표 Section - 클릭시 미니 차트 표시 */}
+        {/* 금리 지표 Section */}
         <div className="mb-6 pb-6 border-b border-slate-100">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-[15px] font-black text-slate-900">금리 지표</h3>
-            <span className="text-[10px] text-slate-400">최신 데이터</span>
-          </div>
+          <h3 className="text-[15px] font-black text-slate-900 mb-4">금리 지표</h3>
+          
           {isRatesLoading ? (
             <div className="flex flex-col items-center justify-center py-4">
-              <div className="w-6 h-6 border-2 border-slate-200 border-t-blue-500 rounded-full animate-spin mb-2"></div>
-              <span className="text-[11px] text-slate-400">금리 정보 로딩 중...</span>
+              <div className="w-5 h-5 border-2 border-slate-200 border-t-blue-500 rounded-full animate-spin mb-2"></div>
+              <span className="text-[10px] text-slate-400">로딩 중...</span>
             </div>
           ) : interestRates.length === 0 ? (
             <div className="text-center py-4">
-              <span className="text-[11px] text-slate-400">금리 데이터가 없습니다</span>
+              <span className="text-[10px] text-slate-400">금리 데이터가 없습니다</span>
             </div>
           ) : (
-            <div className="space-y-1">
-              {interestRates.map((rate, index) => (
-                <div 
-                  key={index} 
-                  onClick={() => setSelectedRateIndex(selectedRateIndex === index ? null : index)}
-                  className={`rounded-xl transition-all duration-200 cursor-pointer ${
-                    selectedRateIndex === index 
-                      ? 'bg-slate-50 p-2 scale-[1.02]' 
-                      : 'hover:bg-slate-50 p-2'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] text-slate-600 font-medium">{rate.label}</span>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[13px] font-black text-slate-900 tabular-nums">{rate.value.toFixed(2)}%</span>
-                      <span className={`text-[9px] font-bold tabular-nums ${
-                        rate.trend === 'stable' ? 'text-purple-500' :
-                        rate.change > 0 ? 'text-red-500' : 
-                        'text-blue-500'
+            <div className="space-y-3">
+              {interestRates.map((rate, index) => {
+                // 게이지바 비율 계산 (0~10% 범위 기준)
+                const gaugePercent = Math.min(Math.max((rate.value / 10) * 100, 0), 100);
+                // 기준금리: 노란색, 주담대(고정/변동): 파란색, 전세대출: 검은색
+                const isBaseRate = index === 0;
+                const isMortgage = index === 1 || index === 2; // 주담대(고정), 주담대(변동)
+                
+                const dotColor = isBaseRate ? 'bg-amber-500' : isMortgage ? 'bg-blue-500' : 'bg-slate-700';
+                const gaugeColor = isBaseRate ? 'from-amber-400 to-amber-500' : isMortgage ? 'from-blue-400 to-blue-600' : 'from-slate-600 to-slate-800';
+                const chartColor = isBaseRate ? '#f59e0b' : isMortgage ? '#3b82f6' : '#475569';
+                
+                return (
+                  <div 
+                    key={index} 
+                    onClick={() => setSelectedRateIndex(selectedRateIndex === index ? null : index)}
+                    className={`rounded-xl transition-all duration-200 cursor-pointer p-2 ${
+                      selectedRateIndex === index 
+                        ? 'bg-slate-50' 
+                        : 'hover:bg-slate-50'
+                    }`}
+                  >
+                    {/* 라벨과 변동률 */}
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-1.5">
+                        <div className={`w-1.5 h-1.5 rounded-full ${dotColor}`}></div>
+                        <span className="text-[11px] font-bold text-slate-800">{rate.label}</span>
+                      </div>
+                      <span className={`text-[9px] font-bold tabular-nums px-1.5 py-0.5 rounded-full ${
+                        rate.trend === 'stable' 
+                          ? 'bg-slate-800 text-white' 
+                          : rate.change > 0 
+                            ? 'bg-red-100 text-red-600' 
+                            : 'bg-blue-100 text-blue-600'
                       }`}>
                         {rate.trend === 'stable' ? '동결' : 
-                         rate.change > 0 ? `+${rate.change.toFixed(2)}` : 
-                         `${rate.change.toFixed(2)}`}
+                         rate.change > 0 ? `+${rate.change.toFixed(2)}%` : 
+                         `${rate.change.toFixed(2)}%`}
                       </span>
                     </div>
-                  </div>
-                  
-                  {/* 미니 차트 - 6개월 전~현재 */}
-                  {selectedRateIndex === index && (
-                    <div className="mt-2 h-[60px] animate-fade-in">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={rate.history} margin={{ top: 5, right: 5, left: 5, bottom: 15 }}>
-                          <defs>
-                            <linearGradient id={`gradient-${index}`} x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor={rate.trend === 'up' ? '#ef4444' : rate.trend === 'down' ? '#3b82f6' : '#8b5cf6'} stopOpacity={0.3}/>
-                              <stop offset="95%" stopColor={rate.trend === 'up' ? '#ef4444' : rate.trend === 'down' ? '#3b82f6' : '#8b5cf6'} stopOpacity={0}/>
-                            </linearGradient>
-                          </defs>
-                          <XAxis 
-                            dataKey="month" 
-                            axisLine={false} 
-                            tickLine={false} 
-                            tick={{ fontSize: 8, fill: '#94a3b8' }}
-                            interval="preserveStartEnd"
-                            tickFormatter={(value, idx) => idx === 0 ? '6개월전' : idx === 5 ? '현재' : ''}
-                          />
-                          <Area 
-                            type="monotone" 
-                            dataKey="value" 
-                            stroke={rate.trend === 'up' ? '#ef4444' : rate.trend === 'down' ? '#3b82f6' : '#8b5cf6'}
-                            strokeWidth={2}
-                            fill={`url(#gradient-${index})`}
-                          />
-                        </AreaChart>
-                      </ResponsiveContainer>
+                    
+                    {/* 금리 값 */}
+                    <div className="font-black tabular-nums mb-1.5 text-[15px] text-slate-900">
+                      {rate.value.toFixed(2)}%
                     </div>
-                  )}
-                </div>
-              ))}
+                    
+                    {/* 게이지바 */}
+                    <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                      <div 
+                        className={`h-full rounded-full transition-all duration-500 bg-gradient-to-r ${gaugeColor}`}
+                        style={{ width: `${gaugePercent}%` }}
+                      ></div>
+                    </div>
+                    
+                    {/* 미니 차트 - 클릭 시 표시 (간단한 SVG 선 그래프) */}
+                    {selectedRateIndex === index && rate.history.length >= 2 && (
+                      <div className="mt-2 flex justify-center">
+                        <div className="w-[90%] h-[45px] animate-fade-in bg-white rounded-lg px-3 py-2 border border-slate-200">
+                          <svg width="100%" height="100%" viewBox="0 0 100 30" preserveAspectRatio="none">
+                            {/* 선 그래프 */}
+                            <line 
+                              x1="10" 
+                              y1={rate.history[0].value > rate.history[1].value ? "8" : rate.history[0].value < rate.history[1].value ? "22" : "15"} 
+                              x2="90" 
+                              y2={rate.history[0].value > rate.history[1].value ? "22" : rate.history[0].value < rate.history[1].value ? "8" : "15"} 
+                              stroke={chartColor} 
+                              strokeWidth="2.5" 
+                              strokeLinecap="round"
+                            />
+                            {/* 시작점 */}
+                            <circle 
+                              cx="10" 
+                              cy={rate.history[0].value > rate.history[1].value ? "8" : rate.history[0].value < rate.history[1].value ? "22" : "15"} 
+                              r="4" 
+                              fill={chartColor} 
+                              stroke="white" 
+                              strokeWidth="2"
+                            />
+                            {/* 끝점 */}
+                            <circle 
+                              cx="90" 
+                              cy={rate.history[0].value > rate.history[1].value ? "22" : rate.history[0].value < rate.history[1].value ? "8" : "15"} 
+                              r="4" 
+                              fill={chartColor} 
+                              stroke="white" 
+                              strokeWidth="2"
+                            />
+                          </svg>
+                          <div className="flex justify-between text-[8px] font-semibold text-slate-500 -mt-1">
+                            <span>1년</span>
+                            <span>현재</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -353,9 +416,37 @@ export const ProfileWidgetsCard: React.FC<ProfileWidgetsCardProps> = ({ activeGr
 
       {/* 내 자산 포트폴리오 Section - 현재 탭에 따라 변경 */}
       <div className="mb-6 pb-6 border-b border-slate-100">
-        <h3 className="text-[15px] font-black text-slate-900 mb-4">
+        <h3 className="text-[15px] font-black text-slate-900 mb-3">
           {activeGroupName === '내 자산' ? '내 자산 포트폴리오' : `${activeGroupName} 포트폴리오`}
         </h3>
+        
+        {/* 아파트/지역 토글 - 제목 바로 아래 */}
+        {currentApartments.length > 0 && (
+          <div className="flex justify-center mb-4">
+            <div className="flex bg-slate-100 rounded-full p-0.5">
+              <button
+                onClick={() => setPortfolioViewMode('apartment')}
+                className={`px-3 py-1.5 text-[11px] font-bold rounded-full transition-all ${
+                  portfolioViewMode === 'apartment' 
+                    ? 'bg-white text-slate-900 shadow-sm' 
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                아파트
+              </button>
+              <button
+                onClick={() => setPortfolioViewMode('region')}
+                className={`px-3 py-1.5 text-[11px] font-bold rounded-full transition-all ${
+                  portfolioViewMode === 'region' 
+                    ? 'bg-white text-slate-900 shadow-sm' 
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                지역
+              </button>
+            </div>
+          </div>
+        )}
         
         {currentApartments.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-8 text-center">
@@ -366,40 +457,97 @@ export const ProfileWidgetsCard: React.FC<ProfileWidgetsCardProps> = ({ activeGr
             <p className="text-[11px] text-slate-400">자산을 추가하면<br/>포트폴리오를 확인할 수 있습니다</p>
           </div>
         ) : (() => {
-          // 지역별로 그룹화하여 퍼센트 계산
-          const colors = ['#3182F6', '#FF4B4B', '#f59e0b', '#8b5cf6', '#10b981', '#06b6d4'];
+          // 차트 색상 배열 (관심 리스트와 동일한 색상 사용)
+          const chartColors = ['#3182F6', '#FF4B4B', '#f59e0b', '#8b5cf6', '#10b981', '#06b6d4'];
           const totalPrice = currentApartments.reduce((sum, a) => sum + a.currentPrice, 0);
           
-          // 지역별로 그룹화 (location에서 첫 번째 부분 추출: "서울특별시 강남구" -> "강남구")
-          const regionMap = new Map<string, { totalPrice: number; count: number; apartments: string[] }>();
-          currentApartments.forEach(apt => {
-            // location에서 마지막 구/동 추출 (예: "서울특별시 강남구" -> "강남구")
-            const locationParts = (apt.location || '기타').split(' ');
-            const region = locationParts.length > 1 ? locationParts[locationParts.length - 1] : locationParts[0];
-            const regionKey = region || '기타';
-            
-            if (!regionMap.has(regionKey)) {
-              regionMap.set(regionKey, { totalPrice: 0, count: 0, apartments: [] });
+          // 지역 이름 추출 헬퍼 (서울시 성동구 -> 서울, 천안시 서북구 -> 천안)
+          const extractRegion = (location: string) => {
+            const parts = location.split(' ');
+            if (parts.length > 0) {
+              return parts[0].replace('시', '').replace('도', '').replace('특별', '').replace('광역', '');
             }
-            const entry = regionMap.get(regionKey)!;
-            entry.totalPrice += apt.currentPrice;
-            entry.count += 1;
-            entry.apartments.push(apt.name);
+            return location;
+          };
+          
+          // 지역별 데이터 계산
+          const regionMap = new Map<string, { total: number; apartments: string[] }>();
+          currentApartments.forEach(apt => {
+            const region = extractRegion(apt.location);
+            const existing = regionMap.get(region) || { total: 0, apartments: [] };
+            existing.total += apt.currentPrice;
+            existing.apartments.push(apt.name);
+            regionMap.set(region, existing);
           });
           
-          // 지역별 데이터로 변환
-          const regionData = Array.from(regionMap.entries()).map(([region, data], index) => ({
+          // 지역별 데이터를 배열로 변환 및 반올림 오차 보정
+          const regionRawData = Array.from(regionMap.entries()).map(([region, data]) => ({
             id: region,
             name: region,
-            totalPrice: data.totalPrice,
-            count: data.count,
+            location: region,
+            price: data.total,
             apartments: data.apartments,
-            percentage: totalPrice > 0 ? Math.round((data.totalPrice / totalPrice) * 100) : 0,
-            color: colors[index % colors.length],
+            rawPercentage: totalPrice > 0 ? (data.total / totalPrice) * 100 : 0,
+          }));
+          
+          const regionRoundedData = regionRawData.map(r => ({
+            ...r,
+            percentage: Math.round(r.rawPercentage),
+          }));
+          
+          const regionTotalRounded = regionRoundedData.reduce((sum, r) => sum + r.percentage, 0);
+          const regionDiff = 100 - regionTotalRounded;
+          if (regionDiff !== 0 && regionRoundedData.length > 0) {
+            const maxIndex = regionRoundedData.reduce((maxIdx, r, idx, arr) => 
+              r.percentage > arr[maxIdx].percentage ? idx : maxIdx, 0);
+            regionRoundedData[maxIndex].percentage += regionDiff;
+          }
+          
+          const regionData = regionRoundedData.map((r, index) => ({
+            ...r,
+            color: chartColors[index % chartColors.length],
+          }));
+          
+          // 아파트별 데이터 (가격 기준 비중) - 반올림 오차 보정
+          const rawPercentages = currentApartments.map((apt) => ({
+            id: apt.id,
+            name: apt.name,
+            location: apt.location,
+            price: apt.currentPrice,
+            rawPercentage: totalPrice > 0 ? (apt.currentPrice / totalPrice) * 100 : 0,
+          }));
+          
+          // 반올림 오차 보정: 가장 큰 값에서 조정
+          const roundedPercentages = rawPercentages.map(apt => ({
+            ...apt,
+            percentage: Math.round(apt.rawPercentage),
+          }));
+          
+          const totalRounded = roundedPercentages.reduce((sum, apt) => sum + apt.percentage, 0);
+          const diff = 100 - totalRounded;
+          
+          // 오차가 있으면 가장 큰 비중 항목에서 조정
+          if (diff !== 0 && roundedPercentages.length > 0) {
+            const maxIndex = roundedPercentages.reduce((maxIdx, apt, idx, arr) => 
+              apt.percentage > arr[maxIdx].percentage ? idx : maxIdx, 0);
+            roundedPercentages[maxIndex].percentage += diff;
+          }
+          
+          const apartmentData = roundedPercentages.map((apt, index) => ({
+            id: apt.id,
+            name: apt.name,
+            location: apt.location,
+            price: apt.price,
+            percentage: apt.percentage,
+            color: chartColors[index % chartColors.length],
           }));
           
           // % 높은 순으로 정렬
+          const sortedApartments = [...apartmentData].sort((a, b) => b.percentage - a.percentage);
           const sortedRegions = [...regionData].sort((a, b) => b.percentage - a.percentage);
+          
+          // 현재 선택된 모드에 따라 표시할 데이터 결정
+          const displayData = portfolioViewMode === 'apartment' ? sortedApartments : sortedRegions;
           
           return (
             <div className="flex flex-col items-center">
@@ -407,12 +555,13 @@ export const ProfileWidgetsCard: React.FC<ProfileWidgetsCardProps> = ({ activeGr
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
                     <Pie
-                      data={sortedRegions.map(region => ({
-                        name: region.name,
-                        value: region.percentage,
-                        color: region.color,
-                        count: region.count,
-                        apartments: region.apartments,
+                      data={displayData.map(item => ({
+                        name: item.name,
+                        value: item.percentage,
+                        color: item.color,
+                        location: item.location,
+                        price: item.price,
+                        apartments: (item as any).apartments,
                       }))}
                       cx="50%"
                       cy="50%"
@@ -444,10 +593,10 @@ export const ProfileWidgetsCard: React.FC<ProfileWidgetsCardProps> = ({ activeGr
                       onMouseLeave={() => setSelectedApartmentIndex(null)}
                       onClick={(_, index) => setSelectedApartmentIndex(selectedApartmentIndex === index ? null : index)}
                     >
-                      {sortedRegions.map((region, index) => (
+                      {displayData.map((item, index) => (
                         <Cell 
                           key={`cell-${index}`} 
-                          fill={region.color}
+                          fill={item.color}
                           style={{ 
                             cursor: 'pointer',
                             opacity: selectedApartmentIndex !== null && selectedApartmentIndex !== index ? 0.4 : 1,
@@ -460,15 +609,18 @@ export const ProfileWidgetsCard: React.FC<ProfileWidgetsCardProps> = ({ activeGr
                       content={({ active, payload }) => {
                         if (active && payload && payload.length) {
                           const data = payload[0].payload;
+                          // 가격 포맷팅
+                          const formatPrice = (price: number) => {
+                            const eok = Math.floor(price / 10000);
+                            const man = price % 10000;
+                            return eok > 0 ? `${eok}억${man > 0 ? ` ${man.toLocaleString()}` : ''}` : `${man.toLocaleString()}만`;
+                          };
                           return (
                             <div className="bg-slate-900 text-white px-3 py-2 rounded-lg shadow-lg text-[11px]">
                               <p className="font-bold">{data.name}</p>
-                              <p className="text-slate-300">{data.value}% ({data.count}개)</p>
-                              {data.apartments && data.apartments.length > 0 && (
-                                <p className="text-slate-400 mt-1 text-[10px]">
-                                  {data.apartments.slice(0, 2).join(', ')}
-                                  {data.apartments.length > 2 && ` 외 ${data.apartments.length - 2}개`}
-                                </p>
+                              <p className="text-slate-300">{data.value}%</p>
+                              {portfolioViewMode === 'region' && data.apartments && (
+                                <p className="text-slate-400 mt-1 text-[9px]">{data.apartments.join(', ')}</p>
                               )}
                             </div>
                           );
@@ -480,13 +632,13 @@ export const ProfileWidgetsCard: React.FC<ProfileWidgetsCardProps> = ({ activeGr
                 </ResponsiveContainer>
               </div>
 
-              {/* 지역별 범례 */}
+              {/* 범례 (아파트별 또는 지역별) */}
               <div className="w-full space-y-1.5">
-                {sortedRegions.map((region, index) => {
+                {displayData.map((item, index) => {
                   const isSelected = selectedApartmentIndex === index;
                   return (
                     <div 
-                      key={region.id} 
+                      key={item.id} 
                       className={`flex items-center justify-between cursor-pointer p-1.5 rounded-lg transition-all ${
                         isSelected ? 'bg-slate-100 scale-[1.02]' : 'hover:bg-slate-50'
                       } ${selectedApartmentIndex !== null && !isSelected ? 'opacity-50' : ''}`}
@@ -497,14 +649,13 @@ export const ProfileWidgetsCard: React.FC<ProfileWidgetsCardProps> = ({ activeGr
                       <div className="flex items-center gap-2">
                         <div 
                           className={`w-2.5 h-2.5 rounded-full flex-shrink-0 transition-transform ${isSelected ? 'scale-125' : ''}`}
-                          style={{ backgroundColor: region.color }}
+                          style={{ backgroundColor: item.color }}
                         ></div>
-                        <div className="flex flex-col">
-                          <span className={`text-[11px] font-medium truncate max-w-[90px] transition-colors ${isSelected ? 'text-slate-900 font-bold' : 'text-slate-700'}`}>{region.name}</span>
-                          <span className="text-[9px] text-slate-400">{region.count}개</span>
-                        </div>
+                        <span className={`text-[11px] font-bold truncate max-w-[90px] transition-colors ${isSelected ? 'text-slate-900' : 'text-slate-800'}`}>
+                          {item.name}
+                        </span>
                       </div>
-                      <span className={`text-[11px] font-bold transition-colors ${isSelected ? 'text-blue-600' : 'text-slate-900'}`}>{region.percentage}%</span>
+                      <span className={`text-[11px] font-bold transition-colors ${isSelected ? 'text-blue-600' : 'text-slate-900'}`}>{item.percentage}%</span>
                     </div>
                   );
                 })}
@@ -515,7 +666,7 @@ export const ProfileWidgetsCard: React.FC<ProfileWidgetsCardProps> = ({ activeGr
       </div>
 
       {/* Upcoming Events Section */}
-      <div className="mb-0">
+      <div className="mb-0 flex-1 flex flex-col">
         <h3 className="text-[15px] font-black text-slate-900 mb-4">주요 일정</h3>
         
         <div className="space-y-0 relative">
@@ -563,29 +714,30 @@ export const ProfileWidgetsCard: React.FC<ProfileWidgetsCardProps> = ({ activeGr
             transform: 'translateY(-50%)'
           }}
         >
-          <div className="relative bg-slate-900 text-white rounded-xl shadow-2xl p-3 w-48">
-            {/* 말풍선 화살표 */}
+          <div className="relative bg-slate-900 text-white rounded-xl shadow-2xl p-3 max-w-[180px]">
+            {/* 말풍선 화살표 - 세로 중앙 고정 */}
             <div className="absolute left-0 top-1/2 -translate-x-full -translate-y-1/2">
-              <div className="w-0 h-0 border-t-8 border-b-8 border-r-8 border-transparent border-r-slate-900"></div>
+              <div className="w-0 h-0 border-t-6 border-b-6 border-r-6 border-transparent border-r-slate-900"></div>
             </div>
             
-            <p className="text-[11px] text-gray-200 leading-relaxed">
-              {selectedEvent.type === 'tax' && '재산세 납부 기한입니다. 기한 내 납부해주세요.'}
-              {selectedEvent.type === 'update' && '관심 단지 실거래가가 업데이트되었습니다.'}
-              {selectedEvent.type === 'deadline' && '등기 신고 마감일입니다. 기한 내 신고해주세요.'}
-              {selectedEvent.type === 'alert' && '월세 수령 예정일입니다. 입금을 확인해주세요.'}
-            </p>
-            
+            {/* 닫기 버튼 */}
             <button 
               onClick={(e) => {
                 e.stopPropagation();
                 setSelectedEvent(null);
                 setTooltipPosition(null);
               }}
-              className="absolute top-1 right-1 p-1 rounded-md hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
+              className="absolute top-1 right-1 p-0.5 rounded-md hover:bg-white/10 text-gray-400 hover:text-white transition-colors z-10"
             >
               <X className="w-3 h-3" />
             </button>
+            
+            <p className="text-[11px] text-gray-200 leading-snug pr-4 whitespace-pre-line">
+              {selectedEvent.type === 'tax' && '재산세 납부 기한입니다.\n기한 내 납부해주세요.'}
+              {selectedEvent.type === 'update' && '관심 단지 실거래가가\n업데이트되었습니다.'}
+              {selectedEvent.type === 'deadline' && '등기 신고 마감일입니다.\n기한 내 신고해주세요.'}
+              {selectedEvent.type === 'alert' && '월세 수령 예정일입니다.\n입금을 확인해주세요.'}
+            </p>
           </div>
         </div>
       )}

@@ -3,8 +3,7 @@
 # ============================================================
 .document
 .db_backup
-db_backup/
-db_backup
+
 data_collection_improvement/
 docs/
 
