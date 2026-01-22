@@ -146,91 +146,132 @@ async def get_my_properties(
         # 응답 데이터 구성 (Apartment 관계 정보 포함)
         properties_data = []
         from datetime import datetime
-        from sqlalchemy import select, func, or_, and_
+        from sqlalchemy import select, func, or_, and_, desc
         from app.models.sale import Sale
         from app.models.rent import Rent
+        from app.models.house_score import HouseScore
+        
         current_ym = datetime.now().strftime("%Y%m")
         
-        for prop in properties:
-            apartment = prop.apartment  # Apartment 관계 로드됨
-            region = apartment.region if apartment else None  # State 관계
-            apart_detail = apartment.apart_detail if apartment else None  # ApartDetail 관계
-            
-            # 지역별 최신 부동산 지수 조회 (변동률용)
-            index_change_rate = None
-            if region and region.region_id:
-                try:
-                    house_scores = await house_score_crud.get_by_region_and_month(
-                        db,
-                        region_id=region.region_id,
-                        base_ym=current_ym
+        # 3. 일괄 조회 최적화
+        # 3.1. 모든 아파트 ID와 지역 ID 수집
+        apt_ids = [p.apt_id for p in properties if p.apt_id]
+        region_ids = set()
+        for p in properties:
+            if p.apartment and p.apartment.region_id:
+                region_ids.add(p.apartment.region_id)
+        
+        # 3.2. 지역별 최신 부동산 지수 일괄 조회
+        region_scores = {}
+        if region_ids:
+            try:
+                score_stmt = (
+                    select(HouseScore)
+                    .where(
+                        and_(
+                            HouseScore.region_id.in_(list(region_ids)),
+                            HouseScore.base_ym == current_ym,
+                            HouseScore.index_type == 'APT',
+                            (HouseScore.is_deleted == False) | (HouseScore.is_deleted.is_(None))
+                        )
                     )
-                    # APT 타입의 지수 우선, 없으면 첫 번째 사용
-                    apt_score = next((s for s in house_scores if s.index_type == "APT"), None)
-                    if apt_score and apt_score.index_change_rate is not None:
-                        index_change_rate = float(apt_score.index_change_rate)
-                except Exception:
-                    # 지수 조회 실패 시 무시 (None 유지)
-                    pass
-            
-            # 최근 거래 가격 조회 (전체 기간에서 가장 최근 거래)
-            current_market_price = prop.current_market_price
-            purchase_price = prop.purchase_price if prop.purchase_price else None
-            if apartment:
-                try:
-                    from sqlalchemy import desc
-                    # 매매 최근 거래 조회 (면적 필터 없이 해당 아파트의 최신 거래)
-                    sale_stmt = (
-                        select(Sale.trans_price, Sale.contract_date)
-                        .where(
-                            Sale.apt_id == prop.apt_id,
+                )
+                score_result = await db.execute(score_stmt)
+                for score in score_result.scalars().all():
+                    region_scores[score.region_id] = float(score.index_change_rate) if score.index_change_rate is not None else None
+            except Exception as e:
+                logger.warning(f"⚠️ 부동산 지수 일괄 조회 실패: {str(e)}")
+        
+        # 3.3. 아파트별 최신 매매가 일괄 조회 (Window Function 사용)
+        latest_prices = {}
+        if apt_ids:
+            try:
+                # 각 아파트별 가장 최신 거래 1건씩 조회
+                subq = (
+                    select(
+                        Sale.apt_id,
+                        Sale.trans_price,
+                        func.row_number().over(
+                            partition_by=Sale.apt_id,
+                            order_by=desc(Sale.contract_date)
+                        ).label("rn")
+                    )
+                    .where(
+                        and_(
+                            Sale.apt_id.in_(apt_ids),
                             Sale.is_canceled == False,
                             (Sale.is_deleted == False) | (Sale.is_deleted.is_(None)),
                             Sale.trans_price.isnot(None),
                             Sale.trans_price > 0
                         )
-                        .order_by(desc(Sale.contract_date))
-                        .limit(1)
                     )
-                    sale_result = await db.execute(sale_stmt)
-                    recent_sale = sale_result.first()
-                    
-                    if recent_sale and recent_sale.trans_price:
-                        current_market_price = int(recent_sale.trans_price)
-                        logger.info(f"✅ 내 자산 가격 조회 성공 - apt_id: {prop.apt_id}, price: {current_market_price}")
-                except Exception as e:
-                    logger.warning(f"⚠️ 내 자산 가격 조회 실패 - apt_id: {prop.apt_id}, error: {str(e)}")
-            
-            properties_data.append({
-                "property_id": prop.property_id,
-                "account_id": prop.account_id,
-                "apt_id": prop.apt_id,
-                "nickname": prop.nickname,
-                "exclusive_area": float(prop.exclusive_area) if prop.exclusive_area else None,
-                "current_market_price": current_market_price,
-                "purchase_price": purchase_price,
-                "risk_checked_at": prop.risk_checked_at.isoformat() if prop.risk_checked_at else None,
-                "memo": prop.memo,
-                "created_at": prop.created_at.isoformat() if prop.created_at else None,
-                "updated_at": prop.updated_at.isoformat() if prop.updated_at else None,
-                "is_deleted": prop.is_deleted,
-                "apt_name": apartment.apt_name if apartment else None,
-                "kapt_code": apartment.kapt_code if apartment else None,
-                "region_name": region.region_name if region else None,
-                "city_name": region.city_name if region else None,
-                # 아파트 상세 정보
-                "builder_name": apart_detail.builder_name if apart_detail else None,
-                "code_heat_nm": apart_detail.code_heat_nm if apart_detail else None,
-                "educationFacility": apart_detail.educationFacility if apart_detail else None,
-                "subway_line": apart_detail.subway_line if apart_detail else None,
-                "subway_station": apart_detail.subway_station if apart_detail else None,
-                "subway_time": apart_detail.subway_time if apart_detail else None,
-                "total_parking_cnt": apart_detail.total_parking_cnt if apart_detail else None,
-                # 완공년도, 세대수, 변동률 추가
-                "use_approval_date": apart_detail.use_approval_date.isoformat() if apart_detail and apart_detail.use_approval_date else None,
-                "total_household_cnt": apart_detail.total_household_cnt if apart_detail else None,
-                "index_change_rate": index_change_rate,
-            })
+                    .subquery()
+                )
+                
+                price_stmt = (
+                    select(subq.c.apt_id, subq.c.trans_price)
+                    .where(subq.c.rn == 1)
+                )
+                
+                price_result = await db.execute(price_stmt)
+                for row in price_result.all():
+                    latest_prices[row.apt_id] = int(row.trans_price)
+            except Exception as e:
+                logger.warning(f"⚠️ 최신 매매가 일괄 조회 실패: {str(e)}")
+        
+        # 4. 데이터 조립
+        for prop in properties:
+            try:
+                apartment = prop.apartment
+                region = apartment.region if apartment else None
+                apart_detail = apartment.apart_detail if apartment else None
+                
+                # 지수 변동률
+                index_change_rate = None
+                if region and region.region_id in region_scores:
+                    index_change_rate = region_scores[region.region_id]
+                
+                # 최신 매매가 (없으면 기존 값 유지)
+                current_market_price = prop.current_market_price
+                if prop.apt_id in latest_prices:
+                    current_market_price = latest_prices[prop.apt_id]
+                
+                properties_data.append({
+                    "property_id": prop.property_id,
+                    "account_id": prop.account_id,
+                    "apt_id": prop.apt_id,
+                    "nickname": prop.nickname,
+                    "exclusive_area": float(prop.exclusive_area) if prop.exclusive_area else None,
+                    "current_market_price": current_market_price,
+                    "purchase_price": prop.purchase_price,
+                    "risk_checked_at": prop.risk_checked_at if prop.risk_checked_at else None,
+                    "memo": prop.memo,
+                    "created_at": prop.created_at if prop.created_at else None,
+                    "updated_at": prop.updated_at if prop.updated_at else None,
+                    "is_deleted": prop.is_deleted,
+                    "apt_name": apartment.apt_name if apartment else None,
+                    "kapt_code": apartment.kapt_code if apartment else None,
+                    "region_name": region.region_name if region else None,
+                    "city_name": region.city_name if region else None,
+                    # 아파트 상세 정보
+                    "builder_name": apart_detail.builder_name if apart_detail else None,
+                    "code_heat_nm": apart_detail.code_heat_nm if apart_detail else None,
+                    "educationFacility": apart_detail.educationFacility if apart_detail else None,
+                    "subway_line": apart_detail.subway_line if apart_detail else None,
+                    "subway_station": apart_detail.subway_station if apart_detail else None,
+                    "subway_time": apart_detail.subway_time if apart_detail else None,
+                    "total_parking_cnt": apart_detail.total_parking_cnt if apart_detail else None,
+                    # 완공년도, 세대수, 변동률 추가
+                    "use_approval_date": apart_detail.use_approval_date if apart_detail and apart_detail.use_approval_date else None,
+                    "total_household_cnt": apart_detail.total_household_cnt if apart_detail else None,
+                    "index_change_rate": index_change_rate,
+                    "road_address": apart_detail.road_address if apart_detail else None,
+                    "jibun_address": apart_detail.jibun_address if apart_detail else None,
+                })
+            except Exception as e:
+                logger.error(f"❌ 개별 내 집 데이터 변환 중 오류 (property_id: {prop.property_id}): {str(e)}")
+                # 오류가 난 항목은 건너뛰고 계속 진행하거나, 최소한의 정보만 담아서 추가
+                continue
     
         response_data = {
             "properties": properties_data,
