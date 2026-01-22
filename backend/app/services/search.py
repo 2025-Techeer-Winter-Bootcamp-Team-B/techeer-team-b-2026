@@ -109,8 +109,8 @@ class SearchService:
             .where(
                 Apartment.is_deleted == False,
                 or_(
-                    # 아파트명 prefix 검색 (lower + text_pattern_ops 인덱스 활용)
-                    func.lower(Apartment.apt_name).like(like_pattern),
+                    # 아파트명 prefix 검색 (pg_trgm GIN 인덱스 활용을 위해 ilike 사용)
+                    Apartment.apt_name.ilike(like_pattern),
                     # 도로명주소 prefix 검색
                     func.lower(ApartDetail.road_address).like(like_pattern),
                     # 지번주소 prefix 검색
@@ -120,7 +120,7 @@ class SearchService:
             .order_by(
                 # 정확히 시작하는 것 우선
                 case(
-                    (func.lower(Apartment.apt_name).like(like_pattern), 0),
+                    (Apartment.apt_name.ilike(like_pattern), 0),
                     else_=1
                 ),
                 Apartment.apt_name

@@ -208,77 +208,68 @@ async def get_my_properties(
                 )
                 print(f"[WARNING] 부동산 지수 일괄 조회 실패: {type(e).__name__}: {str(e)}")
         
-        # 3.3. 내 자산별 전용면적에 맞는 최신 매매가 조회
-        # 각 내 자산의 exclusive_area에 맞는 최근 거래가를 조회
+        # 3.3. 내 자산별 전용면적에 맞는 최신 매매가 조회 (최적화: 일괄 조회)
+        # N+1 문제 해결: 모든 아파트의 최근 거래를 한 번에 가져와서 메모리에서 매칭
         latest_prices = {}
-        if properties:
+        if properties and apt_ids:
             try:
-                # 각 내 자산별로 전용면적에 맞는 최신 거래 조회
+                # 12개월치 거래 데이터를 일괄 조회 (이미 최신순 정렬됨)
+                recent_sales = await sale_crud.get_recent_sales_for_apartments(
+                    db,
+                    apt_ids=list(set(apt_ids)),
+                    months=12
+                )
+                
+                # 아파트 ID별로 거래 데이터 그룹화
+                sales_by_apt = {}
+                for sale_item in recent_sales:
+                    # sale_item은 (apt_id, trans_price, contract_date, exclusive_area) 튜플 형태의 Row
+                    s_apt_id = sale_item.apt_id
+                    if s_apt_id not in sales_by_apt:
+                        sales_by_apt[s_apt_id] = []
+                    sales_by_apt[s_apt_id].append(sale_item)
+                
+                # 각 내 자산별로 최적의 거래 매칭
                 for prop in properties:
-                    if not prop.apt_id or not prop.exclusive_area:
+                    if not prop.apt_id or prop.apt_id not in sales_by_apt:
                         continue
-                    
+                        
+                    prop_sales = sales_by_apt[prop.apt_id]
+                    if not prop_sales:
+                        continue
+                        
                     # 전용면적 허용 오차 (±5㎡)
+                    target_area = float(prop.exclusive_area) if prop.exclusive_area else 0
                     area_tolerance = 5.0
-                    min_area = float(prop.exclusive_area) - area_tolerance
-                    max_area = float(prop.exclusive_area) + area_tolerance
+                    min_area = target_area - area_tolerance
+                    max_area = target_area + area_tolerance
                     
-                    # 해당 전용면적 범위 내의 가장 최신 거래 조회
-                    sale_stmt = (
-                        select(Sale.trans_price, Sale.contract_date, Sale.exclusive_area)
-                        .where(
-                            and_(
-                                Sale.apt_id == prop.apt_id,
-                                Sale.is_canceled == False,
-                                (Sale.is_deleted == False) | (Sale.is_deleted.is_(None)),
-                                Sale.trans_price.isnot(None),
-                                Sale.trans_price > 0,
-                                Sale.exclusive_area.isnot(None),
-                                Sale.exclusive_area >= min_area,
-                                Sale.exclusive_area <= max_area
-                            )
-                        )
-                        .order_by(desc(Sale.contract_date))
-                        .limit(1)
-                    )
+                    # 1. 면적 범위 내 최신 거래 찾기
+                    matched_sale = None
+                    for s in prop_sales:
+                        s_area = float(s.exclusive_area) if s.exclusive_area else 0
+                        if min_area <= s_area <= max_area:
+                            matched_sale = s
+                            break # 이미 최신순 정렬되어 있으므로 첫 번째가 최신
                     
-                    sale_result = await db.execute(sale_stmt)
-                    recent_sale = sale_result.first()
-                    
-                    if recent_sale and recent_sale.trans_price:
-                        latest_prices[prop.apt_id] = int(recent_sale.trans_price)
+                    if matched_sale:
+                        latest_prices[prop.apt_id] = int(matched_sale.trans_price)
                         logger.info(
-                            f"✅ 내 자산 최신가 조회 성공 - "
+                            f"✅ 내 자산 최신가 조회 성공 (Batch) - "
                             f"property_id: {prop.property_id}, apt_id: {prop.apt_id}, "
                             f"등록면적: {prop.exclusive_area}㎡, "
-                            f"거래면적: {recent_sale.exclusive_area}㎡, "
-                            f"가격: {recent_sale.trans_price}만원, "
-                            f"날짜: {recent_sale.contract_date}"
+                            f"거래면적: {matched_sale.exclusive_area}㎡, "
+                            f"가격: {matched_sale.trans_price}만원"
                         )
                     else:
-                        # 전용면적에 맞는 거래가 없으면 전체 최신 거래 조회 (fallback)
-                        fallback_stmt = (
-                            select(Sale.trans_price)
-                            .where(
-                                and_(
-                                    Sale.apt_id == prop.apt_id,
-                                    Sale.is_canceled == False,
-                                    (Sale.is_deleted == False) | (Sale.is_deleted.is_(None)),
-                                    Sale.trans_price.isnot(None),
-                                    Sale.trans_price > 0
-                                )
-                            )
-                            .order_by(desc(Sale.contract_date))
-                            .limit(1)
+                        # 2. 면적 불일치 시, 해당 아파트의 가장 최신 거래 사용 (fallback)
+                        fallback_sale = prop_sales[0] # 첫 번째가 최신
+                        latest_prices[prop.apt_id] = int(fallback_sale.trans_price)
+                        logger.warning(
+                            f"⚠️ 전용면적({prop.exclusive_area}㎡)에 맞는 거래 없음, "
+                            f"전체 최신 거래 사용 - apt_id: {prop.apt_id}, 가격: {fallback_sale.trans_price}만원"
                         )
-                        fallback_result = await db.execute(fallback_stmt)
-                        fallback_sale = fallback_result.first()
-                        if fallback_sale and fallback_sale.trans_price:
-                            latest_prices[prop.apt_id] = int(fallback_sale.trans_price)
-                            logger.warning(
-                                f"⚠️ 전용면적({prop.exclusive_area}㎡)에 맞는 거래 없음, "
-                                f"전체 최신 거래 사용 - apt_id: {prop.apt_id}, 가격: {fallback_sale.trans_price}만원"
-                            )
+
             except Exception as e:
                 error_traceback = traceback.format_exc()
                 logger.warning(
