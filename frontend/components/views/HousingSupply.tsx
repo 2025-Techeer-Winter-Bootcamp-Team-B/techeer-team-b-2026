@@ -175,22 +175,22 @@ export const HousingSupply: React.FC = () => {
         </h2>
       </div>
 
-      {/* 검색 및 액션 바 */}
-      <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-        <div className="relative flex-1 max-w-md">
+      {/* 검색 및 필터 섹션 */}
+      <div className="flex flex-row justify-between items-end gap-4">
+        {/* 검색 입력 필드 */}
+        <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
           <input
             type="text"
             placeholder="주택명 또는 주소로 검색"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-lg text-[14px] font-bold text-slate-700 focus:ring-2 focus:ring-brand-blue focus:border-transparent"
+            className="w-full pl-10 pr-4 h-[59px] border border-slate-200 rounded-2xl text-[14px] font-bold text-slate-700"
           />
         </div>
-      </div>
 
-      {/* 필터 섹션 */}
-      <div className="inline-block rounded-[24px] transition-all duration-300 relative bg-white border border-slate-200 shadow-[0_2px_8px_rgba(0,0,0,0.04)] p-6 overflow-visible">
+        {/* 필터 섹션 */}
+        <div className="inline-block rounded-[24px] transition-all duration-300 relative bg-white border border-slate-200 shadow-[0_2px_8px_rgba(0,0,0,0.04)] p-6 overflow-visible">
         <div className="flex flex-row gap-6 items-center">
           {/* 1번: 지역 (시, 군구) */}
           <div className="flex flex-col gap-2">
@@ -340,6 +340,7 @@ export const HousingSupply: React.FC = () => {
               조회하기
             </button>
           </div>
+        </div>
         </div>
       </div>
 
