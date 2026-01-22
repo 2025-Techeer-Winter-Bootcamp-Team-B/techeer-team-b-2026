@@ -958,6 +958,19 @@ export const Comparison: React.FC = () => {
   };
 
   return (
+    <>
+      <style>{`
+        .recharts-wrapper svg:focus,
+        .recharts-wrapper svg:focus-visible,
+        .recharts-wrapper:focus,
+        .recharts-wrapper:focus-visible {
+          outline: none !important;
+          border: none !important;
+        }
+        .recharts-wrapper svg {
+          outline: none !important;
+        }
+      `}</style>
     <div className="pb-32 animate-fade-in px-4 md:px-0 pt-10">
       
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-10 gap-4">
@@ -1266,7 +1279,11 @@ export const Comparison: React.FC = () => {
                           )}
                       </div>
 
-                       <div className="flex-1 w-full min-h-[350px]">
+                       <div 
+                           className="flex-1 w-full min-h-[350px]" 
+                           style={{ outline: 'none' }}
+                           onMouseDown={(e) => e.preventDefault()}
+                       >
                            <ResponsiveContainer width="100%" height="100%">
                               <BarChart
                                   data={chartData}
@@ -1276,6 +1293,8 @@ export const Comparison: React.FC = () => {
                                       left: chartDisplayFilter === '건축연도' ? 50 : 20, 
                                       bottom: 60 
                                   }}
+                                  style={{ outline: 'none' }}
+                                  tabIndex={-1}
                               >
                                   {/* SVG 패턴 정의 - 전세가 줄무늬용 */}
                                   {chartDisplayFilter === '매매가' && (
@@ -1915,5 +1934,6 @@ export const Comparison: React.FC = () => {
           comparisonMode={comparisonMode}
       />
     </div>
+    </>
   );
 };
