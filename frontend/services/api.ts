@@ -786,3 +786,76 @@ export interface InterestRatesResponse {
 
 export const fetchInterestRates = () =>
   apiFetch<InterestRatesResponse>('/interest-rates');
+
+// ============================================
+// AI 검색 API
+// ============================================
+
+export interface AISearchCriteria {
+  location?: string | null;
+  region_id?: number | null;
+  min_area?: number | null;
+  max_area?: number | null;
+  min_price?: number | null;
+  max_price?: number | null;
+  min_deposit?: number | null;
+  max_deposit?: number | null;
+  min_monthly_rent?: number | null;
+  max_monthly_rent?: number | null;
+  subway_max_distance_minutes?: number | null;
+  subway_line?: string | null;
+  subway_station?: string | null;
+  has_education_facility?: boolean | null;
+  min_build_year?: number | null;
+  max_build_year?: number | null;
+  build_year_range?: string | null;
+  min_floor?: number | null;
+  max_floor?: number | null;
+  floor_type?: string | null;
+  min_parking_cnt?: number | null;
+  has_parking?: boolean | null;
+  builder_name?: string | null;
+  developer_name?: string | null;
+  heating_type?: string | null;
+  manage_type?: string | null;
+  hallway_type?: string | null;
+  recent_transaction_months?: number | null;
+  apartment_name?: string | null;
+  raw_query: string;
+  parsed_confidence?: number | null;
+}
+
+export interface AISearchApartment {
+  apt_id: number;
+  apt_name: string;
+  address?: string | null;
+  location?: ApartmentLocation | null;
+  exclusive_area?: number | null;
+  average_price?: number | null;
+  average_deposit?: number | null;
+  average_monthly_rent?: number | null;
+  subway_station?: string | null;
+  subway_time?: string | null;
+  education_facility?: string | null;
+  build_year?: number | null;
+  total_household_cnt?: number | null;
+  total_parking_cnt?: number | null;
+  region_name?: string | null;
+  city_name?: string | null;
+}
+
+export interface AISearchResponse {
+  success: boolean;
+  data: {
+    criteria: AISearchCriteria;
+    apartments: AISearchApartment[];
+    count: number;
+    total: number;
+  };
+}
+
+export const aiSearchApartments = (query: string) =>
+  apiFetch<AISearchResponse>('/ai/search', {
+    method: 'POST',
+    body: { query }
+  });
