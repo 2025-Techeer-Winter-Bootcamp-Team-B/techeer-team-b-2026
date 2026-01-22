@@ -6,10 +6,12 @@ Redis 캐싱을 위한 헬퍼 함수들을 제공합니다.
 성능 최적화:
 - Redis 연결 실패 시 graceful degradation (캐시 없이 진행)
 - 캐시 조회/저장 실패 시 예외 억제 (서비스 중단 방지)
+- 모든 캐시 작업에 타임아웃 적용 (빠른 실패)
 - 로깅 레벨 조정 (과도한 경고 방지)
 """
 import json
 import logging
+import asyncio
 from typing import Optional, Any, List, Dict
 from datetime import timedelta
 
@@ -22,6 +24,9 @@ CACHE_NAMESPACE = "realestate"
 
 # 기본 TTL (초 단위)
 DEFAULT_TTL = 3600  # 1시간
+
+# 캐시 작업 타임아웃 (빠른 실패)
+CACHE_OPERATION_TIMEOUT = 1.0  # 1초
 
 # 캐시 실패 카운터 (로깅 최적화용)
 _cache_fail_count = 0
@@ -50,6 +55,7 @@ async def get_from_cache(key: str) -> Optional[Any]:
     Redis에서 캐시된 값을 조회합니다
     
     성능 최적화:
+    - 타임아웃 1초 (빠른 실패)
     - Redis 연결 실패 시 None 반환 (graceful degradation)
     - 과도한 로깅 방지
     
@@ -66,7 +72,11 @@ async def get_from_cache(key: str) -> Optional[Any]:
         if redis_client is None:
             return None  # Redis 비활성화 시 캐시 없이 진행
         
-        cached_value = await redis_client.get(key)
+        # 타임아웃 적용
+        cached_value = await asyncio.wait_for(
+            redis_client.get(key),
+            timeout=CACHE_OPERATION_TIMEOUT
+        )
         
         if cached_value is None:
             return None
@@ -74,13 +84,18 @@ async def get_from_cache(key: str) -> Optional[Any]:
         # JSON 디코딩
         _cache_fail_count = 0  # 성공 시 카운터 리셋
         return json.loads(cached_value)
+    except asyncio.TimeoutError:
+        _cache_fail_count += 1
+        if _cache_fail_count % _cache_fail_log_threshold == 1:
+            logger.debug(f"⏱️ 캐시 조회 타임아웃 (키: {key})")
+        return None
     except json.JSONDecodeError as e:
         logger.warning(f"⚠️ 캐시 JSON 디코딩 실패 (키: {key}): {e}")
         return None
     except Exception as e:
         _cache_fail_count += 1
         if _cache_fail_count % _cache_fail_log_threshold == 1:
-            logger.warning(f"⚠️ 캐시 조회 실패 (키: {key}): {e}")
+            logger.debug(f"⚠️ 캐시 조회 실패 (키: {key}): {type(e).__name__}")
         return None
 
 
@@ -93,6 +108,7 @@ async def set_to_cache(
     Redis에 값을 캐시합니다
     
     성능 최적화:
+    - 타임아웃 1초 (빠른 실패)
     - Redis 연결 실패 시 False 반환 (서비스 중단 방지)
     - 과도한 로깅 방지
     
@@ -114,15 +130,22 @@ async def set_to_cache(
         # JSON 인코딩
         serialized_value = json.dumps(value, ensure_ascii=False, default=str)
         
-        # Redis에 저장 (TTL 설정)
-        await redis_client.setex(key, ttl, serialized_value)
-        logger.debug(f"✅ 캐시 저장 성공 (키: {key}, TTL: {ttl}초)")
+        # Redis에 저장 (TTL 설정) - 타임아웃 적용
+        await asyncio.wait_for(
+            redis_client.setex(key, ttl, serialized_value),
+            timeout=CACHE_OPERATION_TIMEOUT
+        )
         _cache_fail_count = 0  # 성공 시 카운터 리셋
         return True
+    except asyncio.TimeoutError:
+        _cache_fail_count += 1
+        if _cache_fail_count % _cache_fail_log_threshold == 1:
+            logger.debug(f"⏱️ 캐시 저장 타임아웃 (키: {key})")
+        return False
     except Exception as e:
         _cache_fail_count += 1
         if _cache_fail_count % _cache_fail_log_threshold == 1:
-            logger.warning(f"⚠️ 캐시 저장 실패 (키: {key}): {e}")
+            logger.debug(f"⚠️ 캐시 저장 실패 (키: {key}): {type(e).__name__}")
         return False
 
 
