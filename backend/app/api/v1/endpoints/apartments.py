@@ -1144,10 +1144,11 @@ async def get_nearby_comparison(
     주소를 좌표로 변환하고 geometry 컬럼을 일괄 업데이트합니다.
     
     ### 기능
-    1. apart_details 테이블의 **모든 레코드**를 조회 (geometry가 있는 것도 포함)
-    2. 각 레코드의 road_address 또는 jibun_address를 사용하여 카카오 API 호출
-    3. 좌표를 받아서 PostGIS Point로 변환하여 geometry 컬럼 업데이트
-    4. **이미 geometry가 있는 레코드는 건너뜁니다** (중복 처리 방지)
+    1. apart_details 테이블에서 **주소가 있는 레코드만** 조회 (geometry가 없는 것만)
+    2. ⚠️ **도로명 주소 또는 지번 주소가 있는 경우만** 처리 (빈 문자열 제외)
+    3. 각 레코드의 road_address 또는 jibun_address를 사용하여 카카오 API 호출
+    4. 좌표를 받아서 PostGIS Point로 변환하여 geometry 컬럼 업데이트
+    5. **이미 geometry가 있는 레코드는 건너뜁니다** (중복 처리 방지)
     
     ### Query Parameters
     - `limit`: 처리할 최대 레코드 수 (기본값: None, 전체 처리)
@@ -1190,9 +1191,10 @@ async def update_geometry(
     """
     주소를 좌표로 변환하여 geometry 일괄 업데이트
     
-    apart_details 테이블의 geometry가 없는 레코드에 대해
-    카카오 API를 통해 좌표를 조회하고 geometry 컬럼을 일괄 업데이트합니다.
-    (이미 geometry가 있는 레코드는 건너뜁니다)
+    ⚠️ 중요: 아파트 상세정보가 있고 주소 수집이 가능한 아파트만 처리합니다.
+    - apart_details 테이블의 geometry가 없는 레코드
+    - 도로명 주소 또는 지번 주소가 있는 레코드만 (빈 문자열 제외)
+    - 이미 geometry가 있는 레코드는 건너뜁니다
     
     Args:
         limit: 처리할 최대 레코드 수 (None이면 전체)
@@ -1205,10 +1207,30 @@ async def update_geometry(
     try:
         logger.info("🚀 Geometry 일괄 업데이트 작업 시작")
         
-        # geometry가 NULL인 레코드 조회
-        logger.info("🔍 geometry가 비어있는 레코드 조회 중...")
+        # geometry가 NULL이고 주소가 있는 레코드만 조회
+        # ⚠️ 중요: 아파트 상세정보가 있고 주소 수집이 가능한 경우만 처리
+        logger.info("🔍 geometry가 비어있고 주소가 있는 레코드 조회 중...")
         
-        stmt = select(ApartDetail).where(ApartDetail.geometry.is_(None))
+        stmt = (
+            select(ApartDetail)
+            .where(
+                and_(
+                    ApartDetail.geometry.is_(None),
+                    ApartDetail.is_deleted == False,
+                    # 도로명 주소 또는 지번 주소가 있는 경우만 (빈 문자열 제외)
+                    or_(
+                        and_(
+                            ApartDetail.road_address.isnot(None),
+                            ApartDetail.road_address != ""
+                        ),
+                        and_(
+                            ApartDetail.jibun_address.isnot(None),
+                            ApartDetail.jibun_address != ""
+                        )
+                    )
+                )
+            )
+        )
         
         if limit:
             stmt = stmt.limit(limit)
@@ -1219,10 +1241,10 @@ async def update_geometry(
         total_processed = len(records)
         
         if total_processed == 0:
-            logger.info("ℹ️  업데이트할 레코드가 없습니다. (모든 레코드에 geometry가 이미 설정되어 있습니다)")
+            logger.info("ℹ️  업데이트할 레코드가 없습니다. (모든 레코드에 geometry가 이미 설정되어 있거나 주소가 없습니다)")
             return {
                 "success": True,
-                "message": "업데이트할 레코드가 없습니다.",
+                "message": "업데이트할 레코드가 없습니다. (geometry가 이미 설정되어 있거나 주소가 없는 레코드는 제외됩니다)",
                 "data": {
                     "total_processed": 0,
                     "success_count": 0,
@@ -1231,7 +1253,7 @@ async def update_geometry(
                 }
             }
         
-        logger.info(f"📊 총 {total_processed}개 레코드 처리 예정")
+        logger.info(f"📊 총 {total_processed}개 레코드 처리 예정 (주소가 있는 아파트 상세정보만)")
         
         success_count = 0
         failed_count = 0
