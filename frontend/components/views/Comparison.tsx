@@ -362,6 +362,32 @@ const SearchAndSelectApart: React.FC<SearchAndSelectApartProps> = ({
         return { assets, hasMore: results.length >= limit };
     };
     
+    // 모달 열림/닫힘 시 body 스크롤 제어 및 검색 화면 초기화
+    useEffect(() => {
+        if (isOpen) {
+            // 모달이 열릴 때 body 스크롤 차단
+            document.body.style.overflow = 'hidden';
+            // 모달이 열릴 때 검색 화면으로 초기화 (평수 선택 화면이 아닌)
+            setSearchQuery('');
+            setSelectedAssetForPyeong(null);
+            setSearchAssets([]);
+            setSearchError(null);
+            setPyeongOptions([]);
+            setIsPyeongLoading(false);
+            setSearchLimit(15);
+            setHasMoreResults(false);
+            setIsLoadingMore(false);
+        } else {
+            // 모달이 닫힐 때 body 스크롤 복원
+            document.body.style.overflow = '';
+        }
+        
+        return () => {
+            // 컴포넌트 언마운트 시 스크롤 복원
+            document.body.style.overflow = '';
+        };
+    }, [isOpen]);
+
     // 모달 외부 클릭 및 ESC 키 감지
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
@@ -442,12 +468,16 @@ const SearchAndSelectApart: React.FC<SearchAndSelectApartProps> = ({
     };
     
     const handleClose = () => {
+        // 모든 상태 초기화 (검색 화면으로 돌아가기)
         setSearchQuery('');
         setSelectedAssetForPyeong(null);
         setSearchAssets([]);
         setSearchError(null);
         setPyeongOptions([]);
         setIsPyeongLoading(false);
+        setSearchLimit(15);
+        setHasMoreResults(false);
+        setIsLoadingMore(false);
         onClose();
     };
     

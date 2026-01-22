@@ -395,10 +395,11 @@ class AptDetailCollectionService(DataCollectionServiceBase):
         semaphore: asyncio.Semaphore
     ) -> Dict[str, Any]:
         """
-        단일 아파트의 상세 정보 수집 및 저장 (최적화 버전)
+        단일 아파트의 상세 정보 수집 및 저장 (kapt_code 기반 매칭으로 개선)
         
-        사전 중복 체크를 거쳤으므로 바로 API 호출하고 저장합니다.
-        각 작업이 독립적인 세션을 사용합니다.
+        ⚠️ 중요: kapt_code 기반으로 매칭하여 429 에러 후 재시작해도 일관성 유지
+        - apt_id 간격이 생겨도 문제 없음
+        - 서버 재시작 후에도 정확한 매칭 보장
         
         Args:
             apt: 아파트 객체
@@ -417,17 +418,42 @@ class AptDetailCollectionService(DataCollectionServiceBase):
             # 독립적인 세션 사용
             async with AsyncSessionLocal() as local_db:
                 try:
-                    # 사전 중복 체크를 거쳤지만, 동시성 문제를 대비해 한 번 더 체크
-                    exists_stmt = select(ApartDetail).where(
-                        and_(
-                            ApartDetail.apt_id == apt.apt_id,
-                            ApartDetail.is_deleted == False
+                    # 🔑 핵심 개선: kapt_code 기반으로 중복 체크 및 아파트 조회
+                    # 이렇게 하면 apt_id 간격과 무관하게 정확한 매칭 가능
+                    kapt_code = apt.kapt_code
+                    
+                    # kapt_code로 아파트를 다시 조회하여 최신 apt_id 가져오기
+                    # (429 에러 후 재시작 시 apt_id가 변경되었을 수 있음)
+                    current_apt = await apartment_crud.get_by_kapt_code(local_db, kapt_code=kapt_code)
+                    if not current_apt:
+                        error_msg = f"아파트를 찾을 수 없음: kapt_code={kapt_code}"
+                        logger.error(f"❌ {apt.apt_name}: {error_msg}")
+                        return {
+                            "success": False,
+                            "apt_name": apt.apt_name,
+                            "saved": False,
+                            "skipped": False,
+                            "error": error_msg
+                        }
+                    
+                    # kapt_code 기반으로 상세 정보 중복 체크
+                    # (apt_id 대신 kapt_code로 조회하여 일관성 보장)
+                    exists_stmt = (
+                        select(ApartDetail)
+                        .join(Apartment, ApartDetail.apt_id == Apartment.apt_id)
+                        .where(
+                            and_(
+                                Apartment.kapt_code == kapt_code,
+                                ApartDetail.is_deleted == False,
+                                Apartment.is_deleted == False
+                            )
                         )
                     )
                     exists_result = await local_db.execute(exists_stmt)
                     existing_detail = exists_result.scalars().first()
                     
                     if existing_detail:
+                        logger.debug(f"⏭️ 이미 존재함: {apt.apt_name} (kapt_code: {kapt_code}, apt_id: {current_apt.apt_id})")
                         return {
                             "success": True,
                             "apt_name": apt.apt_name,
@@ -437,11 +463,11 @@ class AptDetailCollectionService(DataCollectionServiceBase):
                         }
                     
                     # 기본정보와 상세정보 API 호출 (Rate Limit 방지를 위해 순차 처리)
-                    logger.info(f"🌐 외부 API 호출 시작: {apt.apt_name} (kapt_code: {apt.kapt_code})")
+                    logger.info(f"🌐 외부 API 호출 시작: {apt.apt_name} (kapt_code: {kapt_code})")
                     # 429 에러 방지를 위해 순차적으로 호출 (각 호출 사이에 작은 딜레이)
-                    basic_info = await self.fetch_apartment_basic_info(apt.kapt_code)
+                    basic_info = await self.fetch_apartment_basic_info(kapt_code)
                     await asyncio.sleep(0.1)  # API 호출 간 작은 딜레이
-                    detail_info = await self.fetch_apartment_detail_info(apt.kapt_code)
+                    detail_info = await self.fetch_apartment_detail_info(kapt_code)
                     
                     # 예외 처리
                     if isinstance(basic_info, Exception):
@@ -490,12 +516,16 @@ class AptDetailCollectionService(DataCollectionServiceBase):
                             "error": f"상세정보 API 오류: {detail_msg}"
                         }
                     
+                    # 🔑 핵심: kapt_code로 조회한 최신 apt_id 사용
+                    # 이렇게 하면 429 에러 후 재시작해도 항상 정확한 apt_id 사용
+                    current_apt_id = current_apt.apt_id
+                    
                     # 3. 데이터 파싱
-                    logger.info(f"🔍 파싱 시작: {apt.apt_name} (apt_id: {apt.apt_id}, kapt_code: {apt.kapt_code})")
-                    detail_create = self.parse_apartment_details(basic_info, detail_info, apt.apt_id)
+                    logger.info(f"🔍 파싱 시작: {apt.apt_name} (kapt_code: {kapt_code}, apt_id: {current_apt_id})")
+                    detail_create = self.parse_apartment_details(basic_info, detail_info, current_apt_id)
                     
                     if not detail_create:
-                        logger.warning(f"⚠️ 파싱 실패: {apt.apt_name} (kapt_code: {apt.kapt_code}) - 필수 필드 누락")
+                        logger.warning(f"⚠️ 파싱 실패: {apt.apt_name} (kapt_code: {kapt_code}) - 필수 필드 누락")
                         return {
                             "success": False,
                             "apt_name": apt.apt_name,
@@ -504,10 +534,10 @@ class AptDetailCollectionService(DataCollectionServiceBase):
                             "error": "파싱 실패: 필수 필드 누락"
                         }
                     
-                    logger.info(f"✅ 파싱 성공: {apt.apt_name} (apt_id: {apt.apt_id})")
+                    logger.info(f"✅ 파싱 성공: {apt.apt_name} (apt_id: {current_apt_id})")
                     
                     # 4. 저장 (매매/전월세와 동일한 방식)
-                    logger.info(f"💾 저장 시도: {apt.apt_name} (apt_id: {apt.apt_id})")
+                    logger.info(f"💾 저장 시도: {apt.apt_name} (kapt_code: {kapt_code}, apt_id: {current_apt_id})")
                     try:
                         # apt_detail_id를 명시적으로 제거하여 자동 생성되도록 함
                         detail_dict = detail_create.model_dump()
@@ -523,7 +553,7 @@ class AptDetailCollectionService(DataCollectionServiceBase):
                         local_db.add(db_obj)
                         await local_db.commit()
                         await local_db.refresh(db_obj)  # 생성된 apt_detail_id 가져오기
-                        logger.info(f"✅ 저장 성공: {apt.apt_name} (apt_id: {apt.apt_id}, apt_detail_id: {db_obj.apt_detail_id}, kapt_code: {apt.kapt_code})")
+                        logger.info(f"✅ 저장 성공: {apt.apt_name} (kapt_code: {kapt_code}, apt_id: {current_apt_id}, apt_detail_id: {db_obj.apt_detail_id})")
                         
                         return {
                             "success": True,
@@ -534,7 +564,7 @@ class AptDetailCollectionService(DataCollectionServiceBase):
                         }
                     except Exception as save_error:
                         await local_db.rollback()
-                        logger.error(f"❌ 저장 중 예외 발생: {apt.apt_name} (apt_id: {apt.apt_id}) - {save_error}")
+                        logger.error(f"❌ 저장 중 예외 발생: {apt.apt_name} (kapt_code: {kapt_code}, apt_id: {current_apt_id}) - {save_error}")
                         raise save_error
                     
                 except Exception as e:
@@ -545,30 +575,36 @@ class AptDetailCollectionService(DataCollectionServiceBase):
                         error_str = str(e).lower()
                         # apt_id 중복 (unique constraint) 또는 apt_detail_id 중복 (primary key)
                         if 'duplicate key' in error_str or 'unique constraint' in error_str:
-                            # 실제로 존재하는지 다시 확인
-                            verify_stmt = select(ApartDetail).where(
-                                and_(
-                                    ApartDetail.apt_id == apt.apt_id,
-                                    ApartDetail.is_deleted == False
+                            # kapt_code로 다시 확인
+                            kapt_code = apt.kapt_code
+                            verify_stmt = (
+                                select(ApartDetail)
+                                .join(Apartment, ApartDetail.apt_id == Apartment.apt_id)
+                                .where(
+                                    and_(
+                                        Apartment.kapt_code == kapt_code,
+                                        ApartDetail.is_deleted == False,
+                                        Apartment.is_deleted == False
+                                    )
                                 )
                             )
                             verify_result = await local_db.execute(verify_stmt)
                             existing = verify_result.scalars().first()
                             
                             if existing:
-                                logger.info(f"⏭️ 중복으로 건너뜀: {apt.apt_name} (apt_id: {apt.apt_id}, apt_detail_id: {existing.apt_detail_id}) - 이미 존재함")
+                                logger.info(f"⏭️ 중복으로 건너뜀: {apt.apt_name} (kapt_code: {kapt_code}, apt_detail_id: {existing.apt_detail_id}) - 이미 존재함")
                             else:
                                 # apt_detail_id 중복 에러인 경우 시퀀스 문제로 판단
                                 if 'apt_detail_id' in str(e) or 'apart_details_pkey' in str(e):
                                     logger.error(
-                                        f"❌ 시퀀스 동기화 문제 감지: {apt.apt_name} (apt_id: {apt.apt_id}). "
+                                        f"❌ 시퀀스 동기화 문제 감지: {apt.apt_name} (kapt_code: {kapt_code}). "
                                         f"apart_details 테이블의 apt_detail_id 시퀀스가 실제 데이터와 동기화되지 않았습니다. "
                                         f"다음 SQL을 실행하세요: "
                                         f"SELECT setval('apart_details_apt_detail_id_seq', COALESCE((SELECT MAX(apt_detail_id) FROM apart_details), 0) + 1, false);"
                                     )
                                 else:
                                     logger.warning(
-                                        f"⚠️ 중복 에러 발생했지만 실제로는 존재하지 않음: {apt.apt_name} (apt_id: {apt.apt_id}). "
+                                        f"⚠️ 중복 에러 발생했지만 실제로는 존재하지 않음: {apt.apt_name} (kapt_code: {kapt_code}). "
                                         f"에러: {str(e)}"
                                     )
                             

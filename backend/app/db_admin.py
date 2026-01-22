@@ -76,6 +76,7 @@ from app.models.state import State
 from app.models.sale import Sale
 from app.models.rent import Rent
 from app.models.house_score import HouseScore
+from app.models.apart_detail import ApartDetail
 
 
 # ============================================================================
@@ -1567,6 +1568,9 @@ class DatabaseAdmin:
         """
         매매와 전월세 거래가 모두 없는 아파트에만 더미 데이터 생성 (실제 데이터 활용 버전)
         
+        ⚠️ 중요: 아파트 상세정보(apart_details)가 있는 아파트만 대상으로 합니다.
+        아파트 상세정보가 없는 아파트는 더미 데이터를 생성하지 않습니다.
+        
         거래가 없는 아파트를 찾아서 2020년 1월부터 오늘까지의 더미 데이터를 생성합니다.
         
         개선 사항 (실제 DB 데이터 활용):
@@ -1584,11 +1588,21 @@ class DatabaseAdmin:
         
         try:
             # 1. 거래가 없는 아파트 찾기 (확인용)
+            # ⚠️ 중요: 아파트 상세정보가 있는 아파트만 대상으로 함
             async with self.engine.begin() as conn:
                 from sqlalchemy import exists
                 
                 no_sales = ~exists(select(1).where(Sale.apt_id == Apartment.apt_id))
                 no_rents = ~exists(select(1).where(Rent.apt_id == Apartment.apt_id))
+                # 아파트 상세정보가 있는 아파트만 필터링
+                has_detail = exists(
+                    select(1).where(
+                        and_(
+                            ApartDetail.apt_id == Apartment.apt_id,
+                            (ApartDetail.is_deleted == False) | (ApartDetail.is_deleted.is_(None))
+                        )
+                    )
+                )
                 
                 result = await conn.execute(
                     select(func.count(Apartment.apt_id))
@@ -1596,7 +1610,8 @@ class DatabaseAdmin:
                     .where(
                         ((Apartment.is_deleted == False) | (Apartment.is_deleted.is_(None))),
                         no_sales,
-                        no_rents
+                        no_rents,
+                        has_detail  # 아파트 상세정보가 있는 경우만
                     )
                 )
                 empty_count = result.scalar() or 0
@@ -1606,9 +1621,10 @@ class DatabaseAdmin:
                 return True
             
             # 거래량이 0인 아파트 수를 먼저 출력하고 확인
-            print(f"\n📊 거래량이 0인 아파트: {empty_count:,}개")
+            print(f"\n📊 거래량이 0인 아파트: {empty_count:,}개 (아파트 상세정보가 있는 경우만)")
             print("\n⚠️  경고: 거래가 없는 아파트에 더미 데이터 생성 (실제 데이터 활용)")
             print("   - 매매와 전월세 거래가 모두 없는 아파트만 대상입니다.")
+            print("   - ⚠️ 아파트 상세정보(apart_details)가 있는 아파트만 대상입니다.")
             print(f"   - 2020년 1월부터 {date.today().strftime('%Y년 %m월 %d일')}까지의 데이터가 생성됩니다.")
             print("   - 월별 거래량: 푸아송 분포 기반 (평균 1~3건, 계절성 반영)")
             print("   - 가격지수: house_scores 테이블의 실제 주택가격지수 우선 사용")
@@ -1722,11 +1738,21 @@ class DatabaseAdmin:
                 return max(30, min(500, monthly))
             
             # 1. 거래가 없는 아파트 찾기 (상세 정보)
+            # ⚠️ 중요: 아파트 상세정보가 있는 아파트만 대상으로 함
             async with self.engine.begin() as conn:
                 from sqlalchemy import exists
                 
                 no_sales = ~exists(select(1).where(Sale.apt_id == Apartment.apt_id))
                 no_rents = ~exists(select(1).where(Rent.apt_id == Apartment.apt_id))
+                # 아파트 상세정보가 있는 아파트만 필터링
+                has_detail = exists(
+                    select(1).where(
+                        and_(
+                            ApartDetail.apt_id == Apartment.apt_id,
+                            (ApartDetail.is_deleted == False) | (ApartDetail.is_deleted.is_(None))
+                        )
+                    )
+                )
                 
                 result = await conn.execute(
                     select(
@@ -1739,16 +1765,17 @@ class DatabaseAdmin:
                     .where(
                         ((Apartment.is_deleted == False) | (Apartment.is_deleted.is_(None))),
                         no_sales,
-                        no_rents
+                        no_rents,
+                        has_detail  # 아파트 상세정보가 있는 경우만
                     )
                 )
                 empty_apartments = result.fetchall()
             
             if not empty_apartments:
-                print("   ✅ 거래가 없는 아파트가 없습니다.")
+                print("   ✅ 거래가 없고 상세정보가 있는 아파트가 없습니다.")
                 return True
             
-            print(f"   ✅ 거래가 없는 아파트 {len(empty_apartments):,}개 발견")
+            print(f"   ✅ 거래가 없고 상세정보가 있는 아파트 {len(empty_apartments):,}개 발견")
             
             # 2. 지역별 평균 가격 조회 (같은 동(region_name) 기준)
             print("   📊 지역별 평균 가격 조회 중... (같은 동 기준)")
