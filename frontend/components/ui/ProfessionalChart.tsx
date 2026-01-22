@@ -171,7 +171,6 @@ export const ProfessionalChart: React.FC<ProfessionalChartProps> = ({
                     fixLeftEdge: false, // 마커가 잘리지 않도록 false로 설정
                     fixRightEdge: false, // 마커가 잘리지 않도록 false로 설정
                     rightOffset: 10, // 오른쪽 여유 공간
-                    leftOffset: 10, // 왼쪽 여유 공간
                     tickMarkFormatter: (time: number | string) => {
                         if (typeof time === 'string') {
                             const date = new Date(time);

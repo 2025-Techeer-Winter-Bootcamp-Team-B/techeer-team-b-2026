@@ -11,7 +11,8 @@
 """
 from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_, and_, literal, text, case
+from sqlalchemy import select, func, or_, and_, case
+from sqlalchemy.sql import text
 
 from app.models.apartment import Apartment
 from app.models.apart_detail import ApartDetail
@@ -145,40 +146,28 @@ class SearchService:
         """
         pg_trgm 유사도 검색 (LIKE 검색 결과 부족 시)
         
-        pg_trgm 확장을 사용하여 유사도 기반 검색을 수행합니다.
+        pg_trgm % 연산자를 사용하여 GIN 인덱스를 활용합니다.
+        - similarity() 함수는 인덱스를 사용하지 않아 매우 느림
+        - % 연산자는 GIN 인덱스를 활용하여 빠름
         """
         if limit <= 0:
             return []
         
-        # 아파트명 유사도 점수
-        apt_name_similarity = func.similarity(
-            func.normalize_apt_name(Apartment.apt_name),
-            normalized_q
-        )
+        # pg_trgm 유사도 임계값 설정 (세션 레벨)
+        # 이 값을 기준으로 % 연산자가 동작함
+        await db.execute(text(f"SET pg_trgm.similarity_threshold = {threshold}"))
         
-        # 주소 유사도 점수 (숫자 제외)
-        road_address_similarity = func.coalesce(
-            func.similarity(
-                func.regexp_replace(func.coalesce(ApartDetail.road_address, ''), '[0-9]', '', 'g'),
-                func.regexp_replace(query, '[0-9]', '', 'g')
-            ),
-            literal(0.0)
-        )
+        # % 연산자를 사용한 유사도 필터링 (GIN 인덱스 활용)
+        # func.op('%')를 사용하여 % 연산자 적용
+        apt_name_match = Apartment.apt_name.op('%')(query)
+        normalized_apt_name_match = func.normalize_apt_name(Apartment.apt_name).op('%')(normalized_q)
         
-        jibun_address_similarity = func.coalesce(
-            func.similarity(
-                func.regexp_replace(func.coalesce(ApartDetail.jibun_address, ''), '[0-9]', '', 'g'),
-                func.regexp_replace(query, '[0-9]', '', 'g')
-            ),
-            literal(0.0)
-        )
+        # 주소 매칭 (% 연산자 사용)
+        road_address_match = ApartDetail.road_address.op('%')(query)
+        jibun_address_match = ApartDetail.jibun_address.op('%')(query)
         
-        # 최대 유사도 점수
-        max_similarity = func.greatest(
-            apt_name_similarity,
-            road_address_similarity,
-            jibun_address_similarity
-        )
+        # 유사도 점수 계산 (결과 정렬용, SELECT에서만 사용)
+        apt_name_similarity = func.similarity(Apartment.apt_name, query)
         
         stmt = (
             select(
@@ -190,7 +179,7 @@ class SearchService:
                 ApartDetail.jibun_address,
                 func.ST_X(ApartDetail.geometry).label('lng'),
                 func.ST_Y(ApartDetail.geometry).label('lat'),
-                max_similarity.label('score')
+                apt_name_similarity.label('score')
             )
             .outerjoin(
                 ApartDetail,
@@ -201,10 +190,12 @@ class SearchService:
             )
             .where(
                 Apartment.is_deleted == False,
+                # % 연산자로 필터링 (GIN 인덱스 활용)
                 or_(
-                    apt_name_similarity > threshold,
-                    road_address_similarity > threshold,
-                    jibun_address_similarity > threshold
+                    apt_name_match,
+                    normalized_apt_name_match,
+                    road_address_match,
+                    jibun_address_match
                 )
             )
         )
@@ -213,7 +204,7 @@ class SearchService:
         if exclude_apt_ids:
             stmt = stmt.where(~Apartment.apt_id.in_(exclude_apt_ids))
         
-        stmt = stmt.order_by(max_similarity.desc()).limit(limit)
+        stmt = stmt.order_by(apt_name_similarity.desc()).limit(limit)
         
         result = await db.execute(stmt)
         apartments = result.all()
