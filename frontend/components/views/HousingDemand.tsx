@@ -117,17 +117,13 @@ export const HousingDemand: React.FC = () => {
     };
   }, []);
   
-  // 사용 가능한 년도 목록 생성 (최대 10년, 2026년 제외)
+  // 사용 가능한 년도 목록 생성 (2020년부터 2025년까지, 최신순)
   const getAvailableYears = (): number[] => {
     const years: number[] = [];
-    const currentYear = new Date().getFullYear();
     
-    for (let i = 0; i <= 10; i++) {
-      const year = currentYear - i;
-      // 2026년 제외
-      if (year !== 2026) {
-        years.push(year);
-      }
+    // 최신 년도가 가장 위에 오도록 역순으로 배열
+    for (let year = 2025; year >= 2020; year--) {
+      years.push(year);
     }
     
     return years;
@@ -507,19 +503,6 @@ export const HousingDemand: React.FC = () => {
                       
                       {isHpiYearDropdownOpen && (
                         <div className="absolute right-0 top-full mt-2 w-full bg-white rounded-xl shadow-deep border border-slate-200 overflow-hidden z-50 animate-enter origin-top-right max-h-[300px] overflow-y-auto">
-                          <button
-                            onClick={() => {
-                              setHpiSelectedYear(null);
-                              setIsHpiYearDropdownOpen(false);
-                            }}
-                            className={`w-full text-left px-4 py-3 text-[14px] font-bold transition-colors ${
-                              !hpiSelectedYear
-                                ? 'bg-slate-100 text-slate-900'
-                                : 'text-slate-700 hover:bg-slate-50'
-                            }`}
-                          >
-                            년도 선택
-                          </button>
                           {getAvailableYears().map((year) => (
                             <button
                               key={year}
@@ -556,19 +539,6 @@ export const HousingDemand: React.FC = () => {
                       
                       {isHpiMonthDropdownOpen && (
                         <div className="absolute right-0 top-full mt-2 w-full bg-white rounded-xl shadow-deep border border-slate-200 overflow-hidden z-50 animate-enter origin-top-right">
-                          <button
-                            onClick={() => {
-                              setHpiSelectedMonth(null);
-                              setIsHpiMonthDropdownOpen(false);
-                            }}
-                            className={`w-full text-left px-4 py-3 text-[14px] font-bold transition-colors ${
-                              !hpiSelectedMonth
-                                ? 'bg-slate-100 text-slate-900'
-                                : 'text-slate-700 hover:bg-slate-50'
-                            }`}
-                          >
-                            월 선택
-                          </button>
                           {getAvailableMonths().map((month) => (
                             <button
                               key={month.value}
