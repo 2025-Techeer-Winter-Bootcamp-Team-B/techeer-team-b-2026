@@ -337,9 +337,6 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
   const [myPropertyForm, setMyPropertyForm] = useState({
     nickname: '',
     exclusive_area: 84,
-    purchase_price: '',
-    loan_amount: '',
-    purchase_date: '',
     memo: ''
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -470,19 +467,27 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
           
           // 내 자산과 관심 아파트를 병렬로 로드
           const [myPropertiesRes, favoritesRes] = await Promise.all([
-              fetchMyProperties().catch(() => ({ success: false, data: { properties: [] } })),
-              fetchFavoriteApartments().catch(() => ({ success: false, data: { favorites: [] } }))
+              fetchMyProperties().catch((e) => { console.error('내 자산 조회 실패:', e); return { success: false, data: { properties: [] } }; }),
+              fetchFavoriteApartments().catch((e) => { console.error('관심 아파트 조회 실패:', e); return { success: false, data: { favorites: [] } }; })
           ]);
+
+          console.log('📦 내 자산 API 응답:', myPropertiesRes);
+          console.log('📦 관심 아파트 API 응답:', favoritesRes);
 
           const rawMyProperties = myPropertiesRes.success && myPropertiesRes.data.properties 
               ? myPropertiesRes.data.properties
               : [];
+          
+          console.log('📊 내 자산 원본 데이터:', rawMyProperties);
           
           const myProps = rawMyProperties.map(mapMyPropertyToProperty);
           
           const favProps = favoritesRes.success && favoritesRes.data.favorites
               ? favoritesRes.data.favorites.map(mapFavoriteToProperty)
               : [];
+          
+          console.log('📊 변환된 내 자산:', myProps);
+          console.log('📊 변환된 관심 아파트:', favProps);
 
           const myAssets = mapToDashboardAsset(myProps, 0);
           const favAssets = mapToDashboardAsset(favProps, 3);
@@ -1220,30 +1225,40 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
               apt_id: selectedApartmentForAdd.apt_id,
               nickname: myPropertyForm.nickname || selectedApartmentForAdd.apt_name,
               exclusive_area: myPropertyForm.exclusive_area,
-              purchase_price: myPropertyForm.purchase_price ? parseInt(myPropertyForm.purchase_price) : undefined,
-              loan_amount: myPropertyForm.loan_amount ? parseInt(myPropertyForm.loan_amount) : undefined,
-              purchase_date: myPropertyForm.purchase_date || undefined,
               memo: myPropertyForm.memo || undefined
           };
           
+          console.log('내 자산 추가 요청 데이터:', data);
+          console.log('인증 토큰 존재:', !!token);
+          
           const response = await createMyProperty(data);
+          console.log('내 자산 추가 응답:', response);
           if (response.success) {
               setIsMyPropertyModalOpen(false);
               setSelectedApartmentForAdd(null);
               setMyPropertyForm({
                   nickname: '',
                   exclusive_area: 84,
-                  purchase_price: '',
-                  loan_amount: '',
-                  purchase_date: '',
                   memo: ''
               });
               alert('내 자산에 추가되었습니다.');
               await loadData();
           }
-      } catch (error) {
+      } catch (error: any) {
           console.error('내 자산 추가 실패:', error);
-          alert('처리 중 오류가 발생했습니다.');
+          console.error('에러 상세:', {
+            message: error?.message,
+            status: error?.status,
+            details: error?.details,
+            data: {
+              apt_id: selectedApartmentForAdd?.apt_id,
+              nickname: myPropertyForm.nickname || selectedApartmentForAdd?.apt_name,
+              exclusive_area: myPropertyForm.exclusive_area,
+              memo: myPropertyForm.memo
+            }
+          });
+          const errorMessage = error?.message || error?.details?.detail || '처리 중 오류가 발생했습니다.';
+          alert(errorMessage);
       } finally {
           setIsSubmitting(false);
       }
@@ -1502,47 +1517,6 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                   )}
                 </div>
                 
-                {/* 구매가 */}
-                <div>
-                  <label className="block text-[13px] font-bold text-slate-700 mb-2">구매가 (만원)</label>
-                  <input 
-                    type="number"
-                    value={myPropertyForm.purchase_price}
-                    onChange={(e) => setMyPropertyForm(prev => ({ ...prev, purchase_price: e.target.value }))}
-                    placeholder="예: 85000"
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 text-[15px] font-medium focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400 transition-all"
-                  />
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    {myPropertyForm.purchase_price && `${(Number(myPropertyForm.purchase_price) / 10000).toFixed(1)}억원`}
-                  </p>
-                </div>
-                
-                {/* 대출 금액 */}
-                <div>
-                  <label className="block text-[13px] font-bold text-slate-700 mb-2">대출 금액 (만원)</label>
-                  <input 
-                    type="number"
-                    value={myPropertyForm.loan_amount}
-                    onChange={(e) => setMyPropertyForm(prev => ({ ...prev, loan_amount: e.target.value }))}
-                    placeholder="예: 40000"
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 text-[15px] font-medium focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400 transition-all"
-                  />
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    {myPropertyForm.loan_amount && `${(Number(myPropertyForm.loan_amount) / 10000).toFixed(1)}억원`}
-                  </p>
-                </div>
-                
-                {/* 매입일 */}
-                <div>
-                  <label className="block text-[13px] font-bold text-slate-700 mb-2">매입일</label>
-                  <input 
-                    type="date"
-                    value={myPropertyForm.purchase_date}
-                    onChange={(e) => setMyPropertyForm(prev => ({ ...prev, purchase_date: e.target.value }))}
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 text-[15px] font-medium focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400 transition-all"
-                  />
-                </div>
-                
                 {/* 메모 */}
                 <div>
                   <label className="block text-[13px] font-bold text-slate-700 mb-2">메모</label>
@@ -1676,10 +1650,19 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
 
         {/* PC Layout */}
         <div className="hidden md:flex flex-col gap-8 pb-24">
+            {/* 태블릿: Profile Card를 상단에 가로로 배치 */}
+            <div className="lg:hidden">
+                <ProfileWidgetsCard 
+                    activeGroupName={activeGroup.name}
+                    assets={activeGroup.assets}
+                    isHorizontal={true}
+                />
+            </div>
+            
             {/* Main Content Grid */}
             <div className="grid grid-cols-12 gap-8 items-stretch">
-                {/* Left: Profile & Widgets Card */}
-                <div className="col-span-2">
+                {/* Left: Profile & Widgets Card - 데스크톱에서만 표시 */}
+                <div className="hidden lg:block lg:col-span-2">
                     <ProfileWidgetsCard 
                         activeGroupName={activeGroup.name}
                         assets={activeGroup.assets}
@@ -1687,7 +1670,7 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                 </div>
                 
                 {/* Right: Main Content Area */}
-                <div className="col-span-10">
+                <div className="col-span-12 lg:col-span-10">
                     <div className="grid grid-cols-12 gap-8">
                         {/* Top Row: Chart and Asset List (SWAPPED) */}
                         <div className="col-span-12 grid grid-cols-12 gap-8 min-h-[600px]">
