@@ -337,9 +337,6 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
   const [myPropertyForm, setMyPropertyForm] = useState({
     nickname: '',
     exclusive_area: 84,
-    purchase_price: '',
-    loan_amount: '',
-    purchase_date: '',
     memo: ''
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -1220,9 +1217,6 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
               apt_id: selectedApartmentForAdd.apt_id,
               nickname: myPropertyForm.nickname || selectedApartmentForAdd.apt_name,
               exclusive_area: myPropertyForm.exclusive_area,
-              purchase_price: myPropertyForm.purchase_price ? parseInt(myPropertyForm.purchase_price) : undefined,
-              loan_amount: myPropertyForm.loan_amount ? parseInt(myPropertyForm.loan_amount) : undefined,
-              purchase_date: myPropertyForm.purchase_date || undefined,
               memo: myPropertyForm.memo || undefined
           };
           
@@ -1233,9 +1227,6 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
               setMyPropertyForm({
                   nickname: '',
                   exclusive_area: 84,
-                  purchase_price: '',
-                  loan_amount: '',
-                  purchase_date: '',
                   memo: ''
               });
               alert('내 자산에 추가되었습니다.');
@@ -1500,47 +1491,6 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                       실제 거래 내역 기반 전용면적 목록
                     </p>
                   )}
-                </div>
-                
-                {/* 구매가 */}
-                <div>
-                  <label className="block text-[13px] font-bold text-slate-700 mb-2">구매가 (만원)</label>
-                  <input 
-                    type="number"
-                    value={myPropertyForm.purchase_price}
-                    onChange={(e) => setMyPropertyForm(prev => ({ ...prev, purchase_price: e.target.value }))}
-                    placeholder="예: 85000"
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 text-[15px] font-medium focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400 transition-all"
-                  />
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    {myPropertyForm.purchase_price && `${(Number(myPropertyForm.purchase_price) / 10000).toFixed(1)}억원`}
-                  </p>
-                </div>
-                
-                {/* 대출 금액 */}
-                <div>
-                  <label className="block text-[13px] font-bold text-slate-700 mb-2">대출 금액 (만원)</label>
-                  <input 
-                    type="number"
-                    value={myPropertyForm.loan_amount}
-                    onChange={(e) => setMyPropertyForm(prev => ({ ...prev, loan_amount: e.target.value }))}
-                    placeholder="예: 40000"
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 text-[15px] font-medium focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400 transition-all"
-                  />
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    {myPropertyForm.loan_amount && `${(Number(myPropertyForm.loan_amount) / 10000).toFixed(1)}억원`}
-                  </p>
-                </div>
-                
-                {/* 매입일 */}
-                <div>
-                  <label className="block text-[13px] font-bold text-slate-700 mb-2">매입일</label>
-                  <input 
-                    type="date"
-                    value={myPropertyForm.purchase_date}
-                    onChange={(e) => setMyPropertyForm(prev => ({ ...prev, purchase_date: e.target.value }))}
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 text-[15px] font-medium focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400 transition-all"
-                  />
                 </div>
                 
                 {/* 메모 */}
