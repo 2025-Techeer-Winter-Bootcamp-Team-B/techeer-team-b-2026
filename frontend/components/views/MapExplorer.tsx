@@ -1,9 +1,21 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Search, Sparkles, SlidersHorizontal, Map, X, Clock, TrendingUp, Building2, MapPin, Loader2 } from 'lucide-react';
+import { Search, Sparkles, SlidersHorizontal, Map, X, Clock, TrendingUp, Building2, MapPin, Loader2, Navigation, ChevronDown } from 'lucide-react';
 import { ViewProps } from '../../types';
 import { MapSideDetail } from '../MapSideDetail';
 import { useKakaoLoader } from '../../hooks/useKakaoLoader';
-import { fetchCompareApartments, fetchTrendingApartments, searchApartments, ApartmentSearchItem, TrendingApartmentItem, aiSearchApartments, AISearchApartment } from '../../services/api';
+import { 
+  fetchCompareApartments, 
+  fetchTrendingApartments, 
+  searchApartments, 
+  ApartmentSearchItem, 
+  TrendingApartmentItem, 
+  aiSearchApartments, 
+  AISearchApartment,
+  fetchMapBoundsData,
+  MapBoundsRequest,
+  RegionPriceItem,
+  ApartmentPriceItem
+} from '../../services/api';
 
 // 쿠키 관련 상수
 const COOKIE_KEY_RECENT_SEARCHES = 'map_recent_searches';
@@ -79,6 +91,37 @@ const formatPriceLabel = (price?: number | null) => {
   return `${price.toFixed(1)}억`;
 };
 
+// 가격에 따른 색상 반환
+const getPriceColor = (price: number, isRegion = false): string => {
+  if (isRegion) {
+    // 지역 오버레이는 파란색 계열
+    if (price >= 15) return 'rgba(30, 64, 175, 0.95)';  // 15억 이상
+    if (price >= 10) return 'rgba(37, 99, 235, 0.95)';  // 10억 이상
+    if (price >= 5) return 'rgba(59, 130, 246, 0.95)';  // 5억 이상
+    return 'rgba(96, 165, 250, 0.95)';  // 5억 미만
+  } else {
+    // 아파트 오버레이는 더 다양한 색상
+    if (price >= 20) return 'rgba(127, 29, 29, 0.95)';  // 20억 이상 - 진한 빨강
+    if (price >= 15) return 'rgba(185, 28, 28, 0.95)';  // 15억 이상 - 빨강
+    if (price >= 10) return 'rgba(234, 88, 12, 0.95)';  // 10억 이상 - 주황
+    if (price >= 5) return 'rgba(59, 130, 246, 0.95)';  // 5억 이상 - 파랑
+    return 'rgba(34, 197, 94, 0.95)';  // 5억 미만 - 초록
+  }
+};
+
+// 확대 레벨에 따른 데이터 타입 결정
+// 카카오맵: 레벨이 낮을수록 확대, 높을수록 축소
+// - 레벨 11 이상 (축소): 시/도
+// - 레벨 6~10: 시군구
+// - 레벨 4~5: 동
+// - 레벨 1~3 (확대): 아파트
+const getDataTypeByZoom = (zoomLevel: number): 'sido' | 'sigungu' | 'dong' | 'apartment' => {
+  if (zoomLevel >= 11) return 'sido';
+  if (zoomLevel >= 6) return 'sigungu';
+  if (zoomLevel >= 4) return 'dong';
+  return 'apartment';
+};
+
 export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock }) => {
   const [isAiActive, setIsAiActive] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -87,6 +130,11 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
   const [loadError, setLoadError] = useState<string | null>(null);
   const errorTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [mapApartments, setMapApartments] = useState<MapApartment[]>([]);
+  const [transactionType, setTransactionType] = useState<'sale' | 'jeonse'>('sale');
+  const [currentZoomLevel, setCurrentZoomLevel] = useState(7);
+  const [isLoadingMapData, setIsLoadingMapData] = useState(false);
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [isLocating, setIsLocating] = useState(false);
   
   // 검색 패널 상태
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
@@ -104,11 +152,14 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
   const mapRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
   const overlaysRef = useRef<any[]>([]);
+  const regionOverlaysRef = useRef<any[]>([]);
   const clustererRef = useRef<any>(null);
   const clusterOverlaysRef = useRef<any[]>([]);
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const mapDataDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const userMarkerRef = useRef<any>(null);
   const { isLoaded: kakaoLoaded } = useKakaoLoader();
   
   // 쿠키에서 최근 검색어 로드
@@ -198,201 +249,417 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
     };
   }, [searchQuery, isAiActive]);
 
-  useEffect(() => {
-    if (!kakaoLoaded || !mapContainerRef.current || mapRef.current) return;
-    
-    const defaultCenter = new window.kakao.maps.LatLng(37.5665, 126.9780);
-    mapRef.current = new window.kakao.maps.Map(mapContainerRef.current, {
-      center: defaultCenter,
-      level: 6
+  // 오버레이 제거 함수
+  const clearAllOverlays = useCallback(() => {
+    // 지역 오버레이 제거
+    regionOverlaysRef.current.forEach((overlay: any) => {
+      overlay.setMap(null);
     });
+    regionOverlaysRef.current = [];
     
-    // 마커 클러스터러 생성
-    const kakaoMaps = window.kakao.maps as any;
-    clustererRef.current = new kakaoMaps.MarkerClusterer({
-      map: mapRef.current,
-      averageCenter: true, // 클러스터에 포함된 마커들의 평균 위치를 클러스터 마커 위치로 설정
-      minLevel: 5, // 클러스터 할 최소 지도 레벨
-      disableClickZoom: true, // 클러스터 마커를 클릭했을 때 지도가 확대되지 않도록 설정
-      gridSize: 80, // 그리드 크기 조절
-      
-      // 기본 클러스터 아이콘을 투명하게 만듭니다.
-      // 실제 클릭 영역은 유지되지만 눈에는 보이지 않게 됩니다.
-      styles: [{
-        width: '50px',
-        height: '50px',
-        background: 'none', // 배경 없음
-        color: 'transparent' // 글자 투명
-      }]
-    });
-    
-    // 오버레이들을 깨끗하게 지우는 함수 분리
-    const clearClusterOverlays = () => {
-      if (clusterOverlaysRef.current) {
-        clusterOverlaysRef.current.forEach((overlay: any) => {
-          overlay.setMap(null);
-        });
-        clusterOverlaysRef.current = [];
-      }
-    };
-
-    // 중요: 지도가 줌인/줌아웃 '시작'할 때 기존 오버레이 즉시 삭제
-    // 이걸 넣지 않으면 확대되는 애니메이션 동안 이전 오버레이가 둥둥 떠있게 됩니다.
-    kakaoMaps.event.addListener(mapRef.current, 'zoom_start', () => {
-      clearClusterOverlays();
-    });
-
-    // 클러스터 클릭 이벤트 등록
-    kakaoMaps.event.addListener(clustererRef.current, 'clusterclick', (cluster: any) => {
-      // 현재 지도 레벨에서 1레벨 확대한 레벨
-      const level = mapRef.current.getLevel() - 1;
-      // 지도를 클릭된 클러스터의 마커의 위치를 기준으로 확대
-      mapRef.current.setLevel(level, { anchor: cluster.getCenter() });
-    });
-    
-    // 클러스터링이 완료되었을 때 실행되는 이벤트 (새로운 오버레이 그리기)
-    kakaoMaps.event.addListener(clustererRef.current, 'clustered', (clusters: any[]) => {
-      // 안전을 위해 그리기 전에 한 번 더 초기화
-      clearClusterOverlays();
-
-      clusters.forEach((cluster: any) => {
-        const markers = cluster.getMarkers();
-        
-        let sum = 0;
-        let count = 0;
-
-        markers.forEach((marker: any) => {
-          if (marker.priceValue) {
-            sum += marker.priceValue;
-            count++;
-          }
-        });
-
-        const totalPrice = sum;
-        const priceLabel = totalPrice > 0 ? `${totalPrice.toFixed(1)}억` : '가격없음';
-
-        // 오버레이 컨텐츠 생성
-        const content = document.createElement('div');
-        content.style.cssText = `
-            width: 54px;
-            height: 54px;
-            background: rgba(59, 130, 246, 0.95);
-            border-radius: 50%;
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 13px;
-            font-weight: bold;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-            border: 2px solid white;
-            cursor: pointer;
-            transition: transform 0.2s;
-        `;
-        content.innerHTML = priceLabel;
-        
-        content.onmouseenter = () => { content.style.transform = 'scale(1.1)'; };
-        content.onmouseleave = () => { content.style.transform = 'scale(1.0)'; };
-
-        // 클릭 시 확대 이벤트
-        content.addEventListener('click', (e) => {
-            e.stopPropagation(); 
-            const level = mapRef.current.getLevel() - 1;
-            mapRef.current.setLevel(level, { anchor: cluster.getCenter() });
-        });
-
-        const overlay = new kakaoMaps.CustomOverlay({
-          position: cluster.getCenter(),
-          content: content,
-          map: mapRef.current,
-          yAnchor: 0.5,
-          zIndex: 3
-        });
-
-        clusterOverlaysRef.current.push(overlay);
-      });
-    });
-    
-    // 지도 레벨 변경 이벤트 - 가격 라벨 표시/숨김
-    kakaoMaps.event.addListener(mapRef.current, 'zoom_changed', () => {
-      const currentLevel = mapRef.current.getLevel();
-      overlaysRef.current.forEach((overlay) => {
-        if (currentLevel <= 4) {
-          overlay.setMap(mapRef.current);
-        } else {
-          overlay.setMap(null);
-        }
-      });
-    });
-  }, [kakaoLoaded]);
-
-  useEffect(() => {
-    if (!mapRef.current || !clustererRef.current) return;
-    
-    // 기존 마커 제거 (클러스터러에서)
-    clustererRef.current.clear();
-    markersRef.current = [];
-    
-    // 기존 오버레이 제거
-    overlaysRef.current.forEach((overlay) => {
+    // 아파트 오버레이 제거
+    overlaysRef.current.forEach((overlay: any) => {
       overlay.setMap(null);
     });
     overlaysRef.current = [];
     
-    const markers: any[] = [];
+    // 클러스터 오버레이 제거
+    clusterOverlaysRef.current.forEach((overlay: any) => {
+      overlay.setMap(null);
+    });
+    clusterOverlaysRef.current = [];
     
-    mapApartments.forEach((apt) => {
-      const position = new window.kakao.maps.LatLng(apt.lat, apt.lng);
-      
-      // 마커 생성 (클러스터러로 관리할 마커는 지도 객체를 설정하지 않음)
-      const marker = new window.kakao.maps.Marker({
-        position: position
-      });
+    // 마커 제거
+    markersRef.current.forEach((marker: any) => {
+      marker.setMap(null);
+    });
+    markersRef.current = [];
+    
+    // 클러스터러 초기화
+    if (clustererRef.current) {
+      clustererRef.current.clear();
+    }
+  }, []);
 
-      // 중요: 클러스터러 계산을 위해 마커 객체에 가격 데이터 주입
-      (marker as any).priceValue = apt.priceValue || 0;
-      
-      markers.push(marker);
-      markersRef.current.push(marker);
-      
-      // 마커 클릭 이벤트
-      window.kakao.maps.event.addListener(marker, 'click', () => {
-        handleMarkerClick(apt.id);
-      });
-      
-      // 가격 라벨 오버레이 생성
-      const priceContent = document.createElement('div');
-      priceContent.innerHTML = `
-        <div style="
-          background: #3B82F6;
-          color: white;
-          padding: 4px 8px;
-          border-radius: 12px;
-          font-size: 12px;
-          font-weight: 600;
-          white-space: nowrap;
-          box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-          transform: translateY(-8px);
-        ">${apt.priceLabel}</div>
-      `;
-      
-      const overlay = new window.kakao.maps.CustomOverlay({
-        position: position,
-        content: priceContent,
-        yAnchor: 2.5 // 마커 위에 위치하도록 조정
-      });
-      
-      // 현재 지도 레벨이 8 이상일 때만 가격 라벨 표시
-      const currentLevel = mapRef.current.getLevel();
-      if (currentLevel >= 8) {
-        overlay.setMap(mapRef.current);
-      }
-      overlaysRef.current.push(overlay);
+  // 지역 오버레이 생성 함수
+  const createRegionOverlay = useCallback((
+    region: RegionPriceItem,
+    kakaoMaps: any,
+    map: any
+  ) => {
+    if (!region.lat || !region.lng) return null;
+    
+    const position = new kakaoMaps.LatLng(region.lat, region.lng);
+    const bgColor = getPriceColor(region.avg_price, true);
+    
+    // 오버레이 컨텐츠 생성
+    const content = document.createElement('div');
+    content.className = 'region-overlay';
+    content.style.cssText = `
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-width: 60px;
+      padding: 6px 10px;
+      background: ${bgColor};
+      border-radius: 12px;
+      color: white;
+      font-weight: 700;
+      box-shadow: 0 3px 8px rgba(0,0,0,0.25);
+      border: 1.5px solid rgba(255,255,255,0.3);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      backdrop-filter: blur(4px);
+    `;
+    
+    content.innerHTML = `
+      <div style="font-size: 12px; opacity: 0.95; margin-bottom: 1px; white-space: nowrap; font-weight: 600;">${region.region_name}</div>
+      <div style="font-size: 16px; font-weight: 800; letter-spacing: -0.5px;">${formatPriceLabel(region.avg_price)}</div>
+      <div style="font-size: 11px; opacity: 0.85; margin-top: 1px;">${region.transaction_count}건</div>
+    `;
+    
+    content.onmouseenter = () => {
+      content.style.transform = 'scale(1.08)';
+      content.style.boxShadow = '0 6px 20px rgba(0,0,0,0.35)';
+    };
+    content.onmouseleave = () => {
+      content.style.transform = 'scale(1)';
+      content.style.boxShadow = '0 4px 12px rgba(0,0,0,0.25)';
+    };
+    
+    content.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // 클릭 시 해당 지역으로 확대
+      const level = Math.max(map.getLevel() - 2, 3);
+      map.setLevel(level, { anchor: position });
     });
     
-    // 클러스터러에 마커들을 추가
-    clustererRef.current.addMarkers(markers);
-  }, [mapApartments, selectedMarkerId]);
+    const overlay = new kakaoMaps.CustomOverlay({
+      position: position,
+      content: content,
+      map: map,
+      yAnchor: 0.5,
+      zIndex: 10
+    });
+    
+    return overlay;
+  }, []);
+
+  // 아파트 오버레이 생성 함수
+  const createApartmentOverlay = useCallback((
+    apt: ApartmentPriceItem,
+    kakaoMaps: any,
+    map: any,
+    onClick: (aptId: number) => void
+  ) => {
+    const position = new kakaoMaps.LatLng(apt.lat, apt.lng);
+    const bgColor = getPriceColor(apt.avg_price, false);
+    
+    // 오버레이 컨텐츠 생성
+    const content = document.createElement('div');
+    content.className = 'apartment-overlay';
+    content.style.cssText = `
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-width: 55px;
+      padding: 5px 8px;
+      background: ${bgColor};
+      border-radius: 10px;
+      color: white;
+      font-weight: 600;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      border: 1.5px solid rgba(255,255,255,0.25);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    `;
+    
+    // 이름 줄이기
+    const shortName = apt.apt_name.length > 7 
+      ? apt.apt_name.substring(0, 7) + '..' 
+      : apt.apt_name;
+    
+    content.innerHTML = `
+      <div style="font-size: 11px; opacity: 0.95; margin-bottom: 1px; white-space: nowrap; max-width: 70px; overflow: hidden; text-overflow: ellipsis; font-weight: 600;">${shortName}</div>
+      <div style="font-size: 15px; font-weight: 800; letter-spacing: -0.3px;">${formatPriceLabel(apt.avg_price)}</div>
+    `;
+    
+    content.onmouseenter = () => {
+      content.style.transform = 'scale(1.1)';
+      content.style.boxShadow = '0 5px 15px rgba(0,0,0,0.3)';
+    };
+    content.onmouseleave = () => {
+      content.style.transform = 'scale(1)';
+      content.style.boxShadow = '0 3px 10px rgba(0,0,0,0.2)';
+    };
+    
+    content.addEventListener('click', (e) => {
+      e.stopPropagation();
+      onClick(apt.apt_id);
+    });
+    
+    const overlay = new kakaoMaps.CustomOverlay({
+      position: position,
+      content: content,
+      map: map,
+      yAnchor: 0.5,
+      zIndex: 15
+    });
+    
+    return overlay;
+  }, []);
+
+  // 로딩 상태를 ref로 관리하여 의존성 문제 해결
+  const isLoadingRef = useRef(false);
+
+  // 지도 데이터 로드 함수
+  const loadMapData = useCallback(async (map: any) => {
+    if (!map) {
+      console.log('[Map] loadMapData - map is null');
+      return;
+    }
+    
+    if (isLoadingRef.current) {
+      console.log('[Map] loadMapData - already loading, skip');
+      return;
+    }
+    
+    const bounds = map.getBounds();
+    const sw = bounds.getSouthWest();
+    const ne = bounds.getNorthEast();
+    const level = map.getLevel();
+    
+    console.log('[Map] loadMapData - level:', level, 'bounds:', {
+      sw: { lat: sw.getLat(), lng: sw.getLng() },
+      ne: { lat: ne.getLat(), lng: ne.getLng() }
+    });
+    
+    setCurrentZoomLevel(level);
+    
+    // 디바운스
+    if (mapDataDebounceRef.current) {
+      clearTimeout(mapDataDebounceRef.current);
+    }
+    
+    mapDataDebounceRef.current = setTimeout(async () => {
+      isLoadingRef.current = true;
+      setIsLoadingMapData(true);
+      
+      try {
+        const boundsRequest: MapBoundsRequest = {
+          sw_lat: sw.getLat(),
+          sw_lng: sw.getLng(),
+          ne_lat: ne.getLat(),
+          ne_lng: ne.getLng(),
+          zoom_level: level
+        };
+        
+        console.log('[Map] API request:', boundsRequest, 'transactionType:', transactionType);
+        
+        const response = await fetchMapBoundsData(boundsRequest, transactionType);
+        
+        console.log('[Map] API response:', {
+          data_type: response.data_type,
+          total_count: response.total_count,
+          regions_count: response.regions?.length || 0,
+          apartments_count: response.apartments?.length || 0
+        });
+        
+        // 기존 오버레이 제거
+        clearAllOverlays();
+        
+        const kakaoMaps = window.kakao.maps as any;
+        
+        if (response.data_type === 'regions' && response.regions) {
+          console.log('[Map] Creating region overlays:', response.regions.length);
+          // 지역 오버레이 표시
+          response.regions.forEach((region, index) => {
+            const overlay = createRegionOverlay(region, kakaoMaps, map);
+            if (overlay) {
+              regionOverlaysRef.current.push(overlay);
+            } else {
+              console.log('[Map] Region overlay creation failed for:', region.region_name, 'lat:', region.lat, 'lng:', region.lng);
+            }
+          });
+          console.log('[Map] Region overlays created:', regionOverlaysRef.current.length);
+        } else if (response.data_type === 'apartments' && response.apartments) {
+          console.log('[Map] Creating apartment overlays:', response.apartments.length);
+          // 아파트 오버레이 표시
+          response.apartments.forEach((apt, index) => {
+            const overlay = createApartmentOverlay(apt, kakaoMaps, map, (aptId) => {
+              handleMarkerClick(String(aptId));
+              // mapApartments에 추가 (사이드 패널 표시용)
+              const newApt: MapApartment = {
+                id: String(aptId),
+                aptId: aptId,
+                name: apt.apt_name,
+                priceLabel: formatPriceLabel(apt.avg_price),
+                priceValue: apt.avg_price,
+                location: apt.address || '',
+                lat: apt.lat,
+                lng: apt.lng
+              };
+              setMapApartments(prev => {
+                const exists = prev.find(a => a.aptId === aptId);
+                if (exists) return prev;
+                return [...prev, newApt];
+              });
+            });
+            overlaysRef.current.push(overlay);
+          });
+          console.log('[Map] Apartment overlays created:', overlaysRef.current.length);
+        } else {
+          console.log('[Map] No data to display - data_type:', response.data_type);
+        }
+        
+      } catch (error) {
+        console.error('[Map] Failed to load map data:', error);
+      } finally {
+        isLoadingRef.current = false;
+        setIsLoadingMapData(false);
+      }
+    }, 300);
+  }, [transactionType, clearAllOverlays, createRegionOverlay, createApartmentOverlay]);
+
+  // 현재 위치 가져오기
+  const getCurrentLocation = useCallback(() => {
+    if (!navigator.geolocation) {
+      setLoadError('이 브라우저에서는 위치 서비스를 사용할 수 없습니다.');
+      return;
+    }
+    
+    setIsLocating(true);
+    
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        setUserLocation({ lat: latitude, lng: longitude });
+        
+        if (mapRef.current) {
+          const kakaoMaps = window.kakao.maps as any;
+          const center = new kakaoMaps.LatLng(latitude, longitude);
+          mapRef.current.setCenter(center);
+          mapRef.current.setLevel(5);
+          
+          // 사용자 위치 마커 표시
+          if (userMarkerRef.current) {
+            userMarkerRef.current.setMap(null);
+          }
+          
+          // 커스텀 마커 생성 (파란 점)
+          const markerContent = document.createElement('div');
+          markerContent.style.cssText = `
+            width: 20px;
+            height: 20px;
+            background: #3B82F6;
+            border-radius: 50%;
+            border: 3px solid white;
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.5);
+            animation: pulse 2s infinite;
+          `;
+          
+          // CSS 애니메이션 추가
+          const style = document.createElement('style');
+          style.textContent = `
+            @keyframes pulse {
+              0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5); }
+              70% { box-shadow: 0 0 0 15px rgba(59, 130, 246, 0); }
+              100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+            }
+          `;
+          document.head.appendChild(style);
+          
+          userMarkerRef.current = new kakaoMaps.CustomOverlay({
+            position: center,
+            content: markerContent,
+            map: mapRef.current,
+            yAnchor: 0.5,
+            zIndex: 100
+          });
+        }
+        
+        setIsLocating(false);
+      },
+      (error) => {
+        console.error('Geolocation error:', error);
+        let errorMsg = '위치를 가져올 수 없습니다.';
+        if (error.code === 1) errorMsg = '위치 권한이 거부되었습니다.';
+        if (error.code === 2) errorMsg = '위치 정보를 사용할 수 없습니다.';
+        if (error.code === 3) errorMsg = '위치 요청 시간이 초과되었습니다.';
+        setLoadError(errorMsg);
+        setIsLocating(false);
+        
+        // 5초 후 에러 메시지 제거
+        setTimeout(() => setLoadError(null), 5000);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0
+      }
+    );
+  }, []);
+
+  // 지도 초기화
+  useEffect(() => {
+    if (!kakaoLoaded) {
+      console.log('[Map] Kakao SDK not loaded yet');
+      return;
+    }
+    if (!mapContainerRef.current) {
+      console.log('[Map] Map container not ready');
+      return;
+    }
+    if (mapRef.current) {
+      console.log('[Map] Map already initialized');
+      return;
+    }
+    
+    console.log('[Map] Initializing map...');
+    
+    // 기본 중심: 서울
+    const defaultCenter = new window.kakao.maps.LatLng(37.5665, 126.9780);
+    mapRef.current = new window.kakao.maps.Map(mapContainerRef.current, {
+      center: defaultCenter,
+      level: 7
+    });
+    
+    console.log('[Map] Map created with level 7');
+    
+    const kakaoMaps = window.kakao.maps as any;
+    
+    // 지도 이벤트 등록
+    kakaoMaps.event.addListener(mapRef.current, 'idle', () => {
+      console.log('[Map] idle event triggered');
+      loadMapData(mapRef.current);
+    });
+    
+    kakaoMaps.event.addListener(mapRef.current, 'zoom_changed', () => {
+      const level = mapRef.current.getLevel();
+      console.log('[Map] zoom_changed event - new level:', level);
+      setCurrentZoomLevel(level);
+    });
+    
+    // 초기 데이터 로드 (idle 이벤트가 바로 발생하지 않을 수 있으므로)
+    console.log('[Map] Initial data load');
+    loadMapData(mapRef.current);
+    
+    // 현재 위치로 이동 시도 (약간의 지연 후)
+    setTimeout(() => {
+      console.log('[Map] Attempting to get current location');
+      getCurrentLocation();
+    }, 500);
+    
+  }, [kakaoLoaded, loadMapData, getCurrentLocation]);
+
+  // 거래 유형 변경 시 데이터 다시 로드
+  useEffect(() => {
+    if (mapRef.current) {
+      loadMapData(mapRef.current);
+    }
+  }, [transactionType, loadMapData]);
 
   const handleMarkerClick = (id: string) => {
     const isSelecting = selectedMarkerId !== id;
@@ -427,63 +694,6 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
     }
     return priceMap;
   };
-
-  const loadTrendingApartments = async () => {
-    try {
-      setLoadError(null);
-      const trending = await fetchTrendingApartments(10);
-      const items = trending.data.apartments;
-      const ids = items.map((item) => item.apt_id);
-      const priceMap = await fetchCompareMap(ids);
-      
-      const mapped = items
-        .filter((item) => item.location)
-        .map((item) => {
-          const priceValue = priceMap.get(item.apt_id) ?? null;
-          return {
-            id: String(item.apt_id),
-            aptId: item.apt_id,
-            name: item.apt_name,
-            priceLabel: formatPriceLabel(priceValue),
-            priceValue,
-            location: item.address || '',
-            lat: item.location?.lat || 0,
-            lng: item.location?.lng || 0,
-            isSpeculationArea: false
-          } as MapApartment;
-        });
-      
-      setMapApartments(mapped);
-    } catch (error) {
-      const errorMessage = error instanceof Error 
-        ? error.message 
-        : typeof error === 'string' 
-        ? error 
-        : '지도 데이터를 불러오지 못했습니다.';
-      setLoadError(errorMessage);
-      
-      // 5초 후 에러 메시지 자동 제거
-      if (errorTimeoutRef.current) {
-        clearTimeout(errorTimeoutRef.current);
-      }
-      errorTimeoutRef.current = setTimeout(() => {
-        setLoadError(null);
-      }, 5000);
-    }
-  };
-
-  useEffect(() => {
-    // 컴포넌트 마운트 시 에러 상태 초기화
-    setLoadError(null);
-    loadTrendingApartments();
-    
-    // cleanup: 컴포넌트 언마운트 시 타이머 정리
-    return () => {
-      if (errorTimeoutRef.current) {
-        clearTimeout(errorTimeoutRef.current);
-      }
-    };
-  }, []);
 
   // 검색 결과 선택 핸들러
   const handleSelectSearchResult = async (apt: ApartmentSearchItem | AISearchApartment) => {
@@ -524,6 +734,9 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
     setSearchQuery('');
     setSearchResults([]);
     setAiResults([]);
+    
+    // 선택된 아파트 상세 패널 열기
+    handleMarkerClick(String(apt.apt_id));
   };
   
   // 급상승 아파트 선택 핸들러
@@ -554,6 +767,7 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
     }
     
     setIsSearchExpanded(false);
+    handleMarkerClick(String(apt.apt_id));
   };
   
   // 최근 검색어 클릭 핸들러
@@ -674,6 +888,17 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
   const selectedProperty = selectedMarkerId
     ? mapApartments.find((apt) => apt.id === selectedMarkerId) || null
     : null;
+
+  // 현재 데이터 유형 표시 텍스트
+  const getDataTypeText = () => {
+    const type = getDataTypeByZoom(currentZoomLevel);
+    switch (type) {
+      case 'sido': return '시/도별 평균가';
+      case 'sigungu': return '시군구별 평균가';
+      case 'dong': return '동별 평균가';
+      case 'apartment': return '아파트별 가격';
+    }
+  };
 
   return (
     <div 
@@ -944,8 +1169,16 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
               )}
             </div>
 
-            <button className="hidden md:flex w-[60px] h-[60px] rounded-xl bg-white border border-slate-200 shadow-sharp items-center justify-center text-slate-600 hover:text-blue-600 transition-colors active:scale-95">
-                <Map className="w-6 h-6" />
+            <button 
+              onClick={getCurrentLocation}
+              disabled={isLocating}
+              className="hidden md:flex w-[60px] h-[60px] rounded-xl bg-white border border-slate-200 shadow-sharp items-center justify-center text-slate-600 hover:text-blue-600 transition-colors active:scale-95 disabled:opacity-50"
+            >
+                {isLocating ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <Navigation className="w-6 h-6" />
+                )}
             </button>
         </div>
 
@@ -976,16 +1209,49 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
                 ) : (
                     <div className="space-y-3">
                          <div className="flex justify-between items-center">
-                             <span className="text-[15px] font-bold text-slate-700">매매/전세</span>
+                             <span className="text-[15px] font-bold text-slate-700">거래 유형</span>
                              <div className="flex bg-slate-100 rounded-lg p-0.5">
-                                 <button className="px-3 py-1.5 bg-white rounded-md shadow-sm text-[13px] font-bold text-slate-900">매매</button>
-                                 <button className="px-3 py-1.5 text-slate-400 text-[13px] font-bold hover:text-slate-600">전세</button>
+                                 <button 
+                                   onClick={() => setTransactionType('sale')}
+                                   className={`px-3 py-1.5 rounded-md text-[13px] font-bold transition-all ${
+                                     transactionType === 'sale' 
+                                       ? 'bg-white shadow-sm text-slate-900' 
+                                       : 'text-slate-400 hover:text-slate-600'
+                                   }`}
+                                 >
+                                   매매
+                                 </button>
+                                 <button 
+                                   onClick={() => setTransactionType('jeonse')}
+                                   className={`px-3 py-1.5 rounded-md text-[13px] font-bold transition-all ${
+                                     transactionType === 'jeonse' 
+                                       ? 'bg-white shadow-sm text-slate-900' 
+                                       : 'text-slate-400 hover:text-slate-600'
+                                   }`}
+                                 >
+                                   전세
+                                 </button>
                              </div>
                          </div>
                     </div>
                 )}
             </div>
         )}
+      </div>
+
+      {/* 지도 레벨 & 데이터 타입 표시 */}
+      <div className="absolute bottom-24 left-4 md:bottom-8 md:left-16 z-10 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-2 shadow-md border border-slate-200/50">
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-slate-500">레벨 {currentZoomLevel}</span>
+          <span className="text-slate-300">|</span>
+          <span className="font-medium text-slate-700">{getDataTypeText()}</span>
+          {isLoadingMapData && (
+            <>
+              <span className="text-slate-300">|</span>
+              <Loader2 className="w-3 h-3 animate-spin text-blue-500" />
+            </>
+          )}
+        </div>
       </div>
 
       <div className={`absolute inset-0 w-full h-full bg-[#e3e8f0] transition-all duration-500 ${selectedMarkerId ? 'md:pr-[504px]' : ''}`}>
