@@ -274,32 +274,18 @@ async def get_region_prices(
     end_date = date.today()
     start_date = end_date - timedelta(days=months * 30)
     
-    # region_type에 따른 필터 및 그룹화
-    if region_type == "sido":
-        # 시/도 레벨: city_name으로 그룹화
-        region_filter = text("1=1")  # 모든 지역
-        region_group_expr = State.city_name
-    elif region_type == "sigungu":
-        # 시군구 레벨: region_code가 _____00000 형태
-        region_filter = State.region_code.like("_____00000")
-        region_group_expr = func.substr(State.region_code, 1, 5)
-    else:
-        # 동 레벨: region_code가 _____00000이 아닌 것
-        region_filter = ~State.region_code.like("_____00000")
-        region_group_expr = State.region_id
-    
     # 영역 내의 지역만 조회 (geometry 기반)
-    # geometry가 NULL인 경우도 처리
     bounds_filter = or_(
-        State.geometry.is_(None),  # geometry가 없는 경우는 일단 포함
+        State.geometry.is_(None),
         geo_func.ST_Within(
             State.geometry,
             geo_func.ST_MakeEnvelope(sw_lng, sw_lat, ne_lng, ne_lat, 4326)
         )
     )
     
-    # 시/도 레벨의 경우 city_name으로 그룹화
+    # region_type에 따른 쿼리 분기
     if region_type == "sido":
+        # 시/도 레벨: city_name으로 그룹화
         stmt = (
             select(
                 func.min(State.region_id).label('region_id'),
@@ -328,7 +314,41 @@ async def get_region_prices(
             .order_by(desc('transaction_count'))
             .limit(50)
         )
+    elif region_type == "sigungu":
+        # 시군구 레벨: region_code 앞 5자리로 그룹화 (동 데이터를 시군구로 집계)
+        sigungu_code = func.substr(State.region_code, 1, 5)
+        stmt = (
+            select(
+                func.min(State.region_id).label('region_id'),
+                func.min(State.region_name).label('region_name'),
+                func.min(State.city_name).label('city_name'),
+                func.avg(price_field).label('avg_price'),
+                func.count(trans_table.trans_id).label('transaction_count'),
+                func.avg(geo_func.ST_X(State.geometry)).label('lng'),
+                func.avg(geo_func.ST_Y(State.geometry)).label('lat'),
+                sigungu_code.label('sigungu_code')
+            )
+            .select_from(trans_table)
+            .join(Apartment, trans_table.apt_id == Apartment.apt_id)
+            .join(State, Apartment.region_id == State.region_id)
+            .where(
+                and_(
+                    base_filter,
+                    date_field >= start_date,
+                    date_field <= end_date,
+                    bounds_filter,
+                    (Apartment.is_deleted == False) | (Apartment.is_deleted.is_(None)),
+                    State.is_deleted == False,
+                    State.region_code.isnot(None)
+                )
+            )
+            .group_by(sigungu_code)
+            .having(func.count(trans_table.trans_id) >= 1)
+            .order_by(desc('transaction_count'))
+            .limit(100)
+        )
     else:
+        # 동 레벨: 개별 동으로 표시
         stmt = (
             select(
                 State.region_id,
@@ -347,7 +367,6 @@ async def get_region_prices(
                     base_filter,
                     date_field >= start_date,
                     date_field <= end_date,
-                    region_filter,
                     bounds_filter,
                     (Apartment.is_deleted == False) | (Apartment.is_deleted.is_(None)),
                     State.is_deleted == False
