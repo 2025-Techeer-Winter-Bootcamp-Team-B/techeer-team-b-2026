@@ -795,6 +795,44 @@ export const fetchHPIByRegionType = (
   return apiFetch<HPIRegionTypeResponse>(`/statistics/hpi/by-region-type?${params.toString()}`);
 };
 
+// ============================================
+// 거래량 API
+// ============================================
+
+export interface TransactionVolumeDataPoint {
+  year: number;
+  month: number;
+  volume: number;
+  city_name?: string | null;
+}
+
+export interface TransactionVolumeResponse {
+  success: boolean;
+  data: TransactionVolumeDataPoint[];
+  region_type: string;
+  period: string;
+  max_years: number;
+}
+
+/**
+ * 거래량 조회 (월별 데이터)
+ * 
+ * @param regionType 지역 유형: "전국", "수도권", "지방5대광역시"
+ * @param transactionType 거래 유형: "sale" (매매), "rent" (전월세)
+ * @param maxYears 최대 연도 수 (1~7, 기본값: 7)
+ */
+export const fetchTransactionVolume = (
+  regionType: '전국' | '수도권' | '지방5대광역시',
+  transactionType: 'sale' | 'rent' = 'sale',
+  maxYears: number = 7
+) => {
+  const params = new URLSearchParams();
+  params.append('region_type', regionType);
+  params.append('transaction_type', transactionType);
+  params.append('max_years', maxYears.toString());
+  return apiFetch<TransactionVolumeResponse>(`/statistics/transaction-volume?${params.toString()}`);
+};
+
 
 // ============================================
 // 지역별 아파트 목록 API

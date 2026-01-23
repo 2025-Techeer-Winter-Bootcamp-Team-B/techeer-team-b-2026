@@ -143,3 +143,24 @@ class HPIRegionTypeResponse(BaseModel):
     base_ym: str = Field(..., description="기준 년월 (YYYYMM)")
 
 
+# ============================================================
+# 거래량 API 스키마 (하이브리드 방식 - 통합)
+# ============================================================
+
+class TransactionVolumeDataPoint(BaseModel):
+    """월별 거래량 데이터 포인트"""
+    year: int = Field(..., description="연도")
+    month: int = Field(..., description="월 (1~12)")
+    volume: int = Field(..., description="거래량")
+    city_name: Optional[str] = Field(None, description="시도명 (지방5대광역시일 때만 포함)")
+
+
+class TransactionVolumeResponse(BaseModel):
+    """거래량 응답 스키마 (통합)"""
+    success: bool = Field(..., description="성공 여부")
+    data: List[TransactionVolumeDataPoint] = Field(..., description="월별 거래량 데이터 리스트")
+    region_type: str = Field(..., description="지역 유형")
+    period: str = Field(..., description="기간 설명 (예: '2018-01 ~ 2024-12')")
+    max_years: int = Field(..., description="조회한 최대 연도 수")
+
+

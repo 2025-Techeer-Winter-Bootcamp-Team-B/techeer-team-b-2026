@@ -43,7 +43,9 @@ from app.schemas.statistics import (
     PopulationMovementSankeyDataPoint,
     CorrelationAnalysisResponse,
     HPIRegionTypeResponse,
-    HPIRegionTypeDataPoint
+    HPIRegionTypeDataPoint,
+    TransactionVolumeResponse,
+    TransactionVolumeDataPoint
 )
 from app.utils.cache import get_from_cache, set_to_cache, build_cache_key
 
@@ -1642,4 +1644,289 @@ async def get_hpi_by_region_type(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"HPI 데이터 조회 중 오류가 발생했습니다: {str(e)}"
+        )
+
+
+@router.get(
+    "/transaction-volume",
+    response_model=TransactionVolumeResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["📊 Statistics (통계)"],
+    summary="거래량 조회 (월별 데이터)",
+    description="""
+    전국, 수도권, 지방5대광역시의 월별 거래량을 조회합니다.
+    
+    ### 지역 유형
+    - **전국**: 전체 지역
+    - **수도권**: 서울특별시, 경기도, 인천광역시
+    - **지방5대광역시**: 부산광역시, 대구광역시, 광주광역시, 대전광역시, 울산광역시
+    
+    ### 데이터 형식
+    - 월별 데이터를 반환합니다 (연도, 월, 거래량)
+    - 지방5대광역시의 경우 `city_name` 필드가 포함됩니다
+    - 프론트엔드에서 연도별 집계 또는 월별 뷰로 변환하여 사용합니다
+    
+    ### Query Parameters
+    - `region_type`: 지역 유형 (필수) - "전국", "수도권", "지방5대광역시"
+    - `transaction_type`: 거래 유형 (선택) - "sale"(매매), "rent"(전월세), 기본값: "sale"
+    - `max_years`: 최대 연도 수 (선택) - 1~10, 기본값: 10
+    """
+)
+async def get_transaction_volume(
+    region_type: str = Query(..., description="지역 유형: 전국, 수도권, 지방5대광역시"),
+    transaction_type: str = Query("sale", description="거래 유형: sale(매매), rent(전월세)"),
+    max_years: int = Query(10, ge=1, le=10, description="최대 연도 수 (1~10)"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    거래량 조회 (월별 데이터)
+    
+    최근 N년치 월별 거래량 데이터를 반환합니다.
+    프론트엔드에서 연도별 집계 또는 월별 뷰로 변환하여 사용합니다.
+    """
+    # 파라미터 검증
+    if region_type not in ["전국", "수도권", "지방5대광역시"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"유효하지 않은 region_type: {region_type}. 허용 값: 전국, 수도권, 지방5대광역시"
+        )
+    
+    if transaction_type not in ["sale", "rent"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"유효하지 않은 transaction_type: {transaction_type}. 허용 값: sale, rent"
+        )
+    
+    # 캐시 키 생성
+    cache_key = build_cache_key(
+        "statistics", "volume", region_type, transaction_type, str(max_years)
+    )
+    
+    # 캐시에서 조회 시도
+    cached_data = await get_from_cache(cache_key)
+    if cached_data is not None:
+        logger.info(f"✅ [Statistics Transaction Volume] 캐시에서 반환 - region_type: {region_type}")
+        return cached_data
+    
+    try:
+        logger.info(
+            f"🔍 [Statistics Transaction Volume] 거래량 데이터 조회 시작 - "
+            f"region_type: {region_type}, transaction_type: {transaction_type}, max_years: {max_years}"
+        )
+        
+        # 현재 날짜 기준으로 연도 범위 계산
+        current_date = date.today()
+        start_year = current_date.year - max_years + 1
+        start_date = date(start_year, 1, 1)
+        end_date = current_date
+        
+        logger.info(
+            f"📅 [Statistics Transaction Volume] 날짜 범위 설정 - "
+            f"start_date: {start_date}, end_date: {end_date}, "
+            f"start_year: {start_year}, max_years: {max_years}"
+        )
+        
+        # 디버깅: 실제 DB에 존재하는 최신 데이터 연도 확인
+        max_date_query = select(
+            func.max(date_field).label('max_date'),
+            func.min(date_field).label('min_date'),
+            func.count().label('total_count')
+        ).select_from(trans_table).where(
+            and_(
+                trans_table.is_canceled == False if transaction_type == "sale" else True,
+                (trans_table.is_deleted == False) | (trans_table.is_deleted.is_(None)),
+                date_field.isnot(None),
+                or_(trans_table.remarks != "더미", trans_table.remarks.is_(None))
+            )
+        )
+        max_date_result = await db.execute(max_date_query)
+        max_date_row = max_date_result.first()
+        if max_date_row and max_date_row.max_date:
+            logger.info(
+                f"🔍 [Statistics Transaction Volume] DB 실제 데이터 범위 확인 - "
+                f"최신 날짜: {max_date_row.max_date}, "
+                f"최 old 날짜: {max_date_row.min_date}, "
+                f"전체 거래 수: {max_date_row.total_count}"
+            )
+        
+        # 거래 유형에 따른 테이블 및 필드 선택
+        if transaction_type == "sale":
+            trans_table = Sale
+            date_field = Sale.contract_date
+            base_filter = and_(
+                Sale.is_canceled == False,
+                (Sale.is_deleted == False) | (Sale.is_deleted.is_(None)),
+                Sale.contract_date.isnot(None),
+                or_(Sale.remarks != "더미", Sale.remarks.is_(None)),
+                Sale.contract_date >= start_date,
+                Sale.contract_date <= end_date
+            )
+        else:  # rent
+            trans_table = Rent
+            date_field = Rent.deal_date
+            base_filter = and_(
+                (Rent.is_deleted == False) | (Rent.is_deleted.is_(None)),
+                Rent.deal_date.isnot(None),
+                or_(Rent.remarks != "더미", Rent.remarks.is_(None)),
+                Rent.deal_date >= start_date,
+                Rent.deal_date <= end_date
+            )
+        
+        # 지역 필터링 조건 가져오기
+        region_filter = get_region_type_filter(region_type)
+        
+        # 디버깅: 실제 데이터 존재 여부 확인 (지방5대광역시만)
+        if region_type == "지방5대광역시":
+            debug_query = select(
+                extract('year', date_field).label('year'),
+                func.count().label('count')
+            ).select_from(
+                trans_table
+            ).join(
+                Apartment, trans_table.apt_id == Apartment.apt_id
+            ).join(
+                State, Apartment.region_id == State.region_id
+            ).where(
+                and_(base_filter, region_filter)
+            ).group_by(
+                extract('year', date_field)
+            ).order_by(
+                desc(extract('year', date_field))
+            )
+            debug_result = await db.execute(debug_query)
+            debug_rows = debug_result.all()
+            debug_years = [int(row.year) for row in debug_rows[:10]]  # 최신 10개 연도
+            logger.info(
+                f"🔍 [Statistics Transaction Volume] 지방5대광역시 실제 데이터 연도 확인 - "
+                f"최신 연도: {debug_years[0] if debug_years else 'N/A'}, "
+                f"연도 목록: {debug_years}"
+            )
+        
+        # 쿼리 구성
+        if region_type == "전국":
+            # 전국: JOIN 없이 거래 테이블만 사용
+            query = select(
+                extract('year', date_field).label('year'),
+                extract('month', date_field).label('month'),
+                func.count().label('volume')
+            ).select_from(
+                trans_table
+            ).where(
+                base_filter
+            ).group_by(
+                extract('year', date_field),
+                extract('month', date_field)
+            ).order_by(
+                desc(extract('year', date_field)),
+                extract('month', date_field)
+            )
+        elif region_type == "지방5대광역시":
+            # 지방5대광역시: city_name 포함하여 그룹화
+            query = select(
+                extract('year', date_field).label('year'),
+                extract('month', date_field).label('month'),
+                State.city_name.label('city_name'),
+                func.count().label('volume')
+            ).select_from(
+                trans_table
+            ).join(
+                Apartment, trans_table.apt_id == Apartment.apt_id
+            ).join(
+                State, Apartment.region_id == State.region_id
+            ).where(
+                and_(base_filter, region_filter)
+            ).group_by(
+                extract('year', date_field),
+                extract('month', date_field),
+                State.city_name
+            ).order_by(
+                desc(extract('year', date_field)),
+                extract('month', date_field),
+                State.city_name
+            )
+        else:  # 수도권
+            # 수도권: JOIN 사용하지만 city_name은 그룹화하지 않음
+            query = select(
+                extract('year', date_field).label('year'),
+                extract('month', date_field).label('month'),
+                func.count().label('volume')
+            ).select_from(
+                trans_table
+            ).join(
+                Apartment, trans_table.apt_id == Apartment.apt_id
+            ).join(
+                State, Apartment.region_id == State.region_id
+            ).where(
+                and_(base_filter, region_filter)
+            ).group_by(
+                extract('year', date_field),
+                extract('month', date_field)
+            ).order_by(
+                desc(extract('year', date_field)),
+                extract('month', date_field)
+            )
+        
+        # 쿼리 실행
+        result = await db.execute(query)
+        rows = result.all()
+        
+        logger.info(
+            f"📊 [Statistics Transaction Volume] 쿼리 결과 - "
+            f"총 {len(rows)}개 행 반환"
+        )
+        
+        # 연도별 데이터 존재 여부 확인 (디버깅용)
+        if rows:
+            years = sorted(set(int(row.year) for row in rows), reverse=True)
+            logger.info(
+                f"📊 [Statistics Transaction Volume] 데이터 연도 범위 - "
+                f"최신: {years[0] if years else 'N/A'}, "
+                f"최 old: {years[-1] if years else 'N/A'}, "
+                f"전체 연도: {years[:5]}..."  # 최신 5개만 표시
+            )
+        
+        # 데이터 포인트 생성
+        data_points = []
+        for row in rows:
+            data_point = TransactionVolumeDataPoint(
+                year=int(row.year),
+                month=int(row.month),
+                volume=int(row.volume),
+                city_name=row.city_name if hasattr(row, 'city_name') and row.city_name else None
+            )
+            data_points.append(data_point)
+        
+        # 기간 문자열 생성
+        period_str = f"{start_date.strftime('%Y-%m')} ~ {end_date.strftime('%Y-%m')}"
+        
+        # 응답 생성
+        response_data = TransactionVolumeResponse(
+            success=True,
+            data=data_points,
+            region_type=region_type,
+            period=period_str,
+            max_years=max_years
+        )
+        
+        # 캐시에 저장
+        if len(data_points) > 0:
+            await set_to_cache(cache_key, response_data.dict(), ttl=STATISTICS_CACHE_TTL)
+        
+        logger.info(
+            f"✅ [Statistics Transaction Volume] 거래량 데이터 생성 완료 - "
+            f"데이터 포인트 수: {len(data_points)}, 기간: {period_str}"
+        )
+        
+        return response_data
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"❌ [Statistics Transaction Volume] 거래량 데이터 조회 실패: {e}",
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"거래량 데이터 조회 중 오류가 발생했습니다: {str(e)}"
         )
