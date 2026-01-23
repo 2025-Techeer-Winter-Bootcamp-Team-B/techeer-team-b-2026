@@ -417,50 +417,6 @@ export const fetchApartmentTransactions = (
 };
 
 // ============================================
-// 아파트 랭킹 API
-// ============================================
-
-export interface ApartmentRankingItem {
-  apt_id: number;
-  apt_name: string;
-  region: string;
-  avg_price?: number;
-  avg_price_per_pyeong?: number;
-  transaction_count?: number;
-  change_rate?: number;
-  rank: number;
-}
-
-export interface ApartmentRankingResponse {
-  success: boolean;
-  data: {
-    ranking_type: string;
-    period_months: number;
-    apartments: ApartmentRankingItem[];
-  };
-}
-
-export const fetchApartmentRankings = (
-  rankingType: 'price_highest' | 'price_lowest' | 'volume' | 'price_change_up' | 'price_change_down',
-  options: {
-    priceMonths?: number;
-    volumeMonths?: number;
-    changeMonths?: number;
-    limit?: number;
-    transactionType?: 'sale' | 'jeonse';
-  } = {}
-) => {
-  const params = new URLSearchParams();
-  params.append('ranking_type', rankingType);
-  if (options.priceMonths) params.append('price_months', String(options.priceMonths));
-  if (options.volumeMonths) params.append('volume_months', String(options.volumeMonths));
-  if (options.changeMonths) params.append('change_months', String(options.changeMonths));
-  if (options.limit) params.append('limit', String(options.limit));
-  if (options.transactionType) params.append('transaction_type', options.transactionType);
-  
-  return apiFetch<ApartmentRankingResponse>(`/apartments/rankings?${params.toString()}`);
-};
-
 // 대시보드 랭킹 API (변동률 6개월용)
 export interface DashboardRankingItem {
   apt_id: number;
@@ -812,45 +768,6 @@ export const fetchInterestRates = () =>
 // 통계 API (주택 수요 페이지용)
 // ============================================
 
-export interface TransactionVolumeDataPoint {
-  period: string;
-  value?: number | null;
-  [key: string]: any; // 동적 키 (예: {period: "1월", 2023: 140, 2024: 150})
-}
-
-export interface TransactionVolumeResponse {
-  success: boolean;
-  data: TransactionVolumeDataPoint[];
-  years?: number[] | null;
-  region_type: string;
-  period_type: string;
-  year_range?: number | null;
-  start_year?: number | null;
-  end_year?: number | null;
-}
-
-export interface MarketPhaseDataPoint {
-  region_id: number;
-  region_name: string;
-  city_name: string;
-  phase: string;
-  trend: string;
-  change: string;
-  price_change_rate: number;
-  volume_change_rate: number;
-  recent_price?: number | null;
-  previous_price?: number | null;
-  recent_volume?: number | null;
-  previous_volume?: number | null;
-}
-
-export interface MarketPhaseResponse {
-  success: boolean;
-  data: MarketPhaseDataPoint[];
-  region_type: string;
-  period_months: number;
-}
-
 export interface HPIRegionTypeDataPoint {
   id?: string | null;
   name: string;
@@ -866,47 +783,6 @@ export interface HPIRegionTypeResponse {
   base_ym: string;
 }
 
-export interface PopulationMovementRegionTypeDataPoint {
-  name: string;
-  value: number;
-  label: string;
-  in_migration: number;
-  out_migration: number;
-  net_migration: number;
-}
-
-export interface PopulationMovementRegionTypeResponse {
-  success: boolean;
-  data: PopulationMovementRegionTypeDataPoint[];
-  region_type: string;
-  start_ym: string;
-  end_ym: string;
-  period_months: number;
-}
-
-export const fetchTransactionVolume = (
-  regionType: string,
-  periodType: 'monthly' | 'yearly',
-  yearRange?: number,
-  startYear?: number,
-  endYear?: number
-) => {
-  const params = new URLSearchParams();
-  params.append('region_type', regionType);
-  params.append('period_type', periodType);
-  if (yearRange !== undefined) params.append('year_range', String(yearRange));
-  if (startYear !== undefined) params.append('start_year', String(startYear));
-  if (endYear !== undefined) params.append('end_year', String(endYear));
-  return apiFetch<TransactionVolumeResponse>(`/statistics/transaction-volume?${params.toString()}`);
-};
-
-export const fetchMarketPhase = (regionType: string, periodMonths = 2) => {
-  const params = new URLSearchParams();
-  params.append('region_type', regionType);
-  params.append('period_months', String(periodMonths));
-  return apiFetch<MarketPhaseResponse>(`/statistics/market-phase?${params.toString()}`);
-};
-
 export const fetchHPIByRegionType = (
   regionType: string,
   indexType: string,
@@ -919,13 +795,6 @@ export const fetchHPIByRegionType = (
   return apiFetch<HPIRegionTypeResponse>(`/statistics/hpi/by-region-type?${params.toString()}`);
 };
 
-export const fetchPopulationMovementsByRegionType = (regionType: string) => {
-  const params = new URLSearchParams();
-  params.append('region_type', regionType);
-  return apiFetch<PopulationMovementRegionTypeResponse>(
-    `/statistics/population-movements/by-region-type?${params.toString()}`
-  );
-};
 
 // ============================================
 // 지역별 아파트 목록 API
