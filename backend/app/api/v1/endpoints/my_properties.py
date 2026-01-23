@@ -495,7 +495,8 @@ async def create_my_property(
     )
     
     # 4. 캐시 무효화 (해당 계정의 모든 내 집 캐시 삭제)
-    cache_pattern = get_my_property_pattern_key(current_user.account_id)
+    CACHE_VERSION = "v2"
+    cache_pattern = f"{CACHE_VERSION}:{get_my_property_pattern_key(current_user.account_id)}"
     await delete_cache_pattern(cache_pattern)
     
     # State 관계 정보 포함 (region_id로 직접 조회하여 lazy loading 방지)
@@ -759,7 +760,8 @@ async def update_my_property(
     )
     
     # 캐시 무효화 (해당 계정의 모든 내 집 캐시 삭제)
-    cache_pattern = get_my_property_pattern_key(current_user.account_id)
+    CACHE_VERSION = "v2"
+    cache_pattern = f"{CACHE_VERSION}:{get_my_property_pattern_key(current_user.account_id)}"
     await delete_cache_pattern(cache_pattern)
     
     # 응답 데이터 구성 (Apartment 관계 정보 포함)
@@ -870,7 +872,8 @@ async def delete_my_property(
         raise NotFoundException("내 집")
     
     # 캐시 무효화 (해당 계정의 모든 내 집 캐시 삭제)
-    cache_pattern = get_my_property_pattern_key(current_user.account_id)
+    CACHE_VERSION = "v2"
+    cache_pattern = f"{CACHE_VERSION}:{get_my_property_pattern_key(current_user.account_id)}"
     await delete_cache_pattern(cache_pattern)
     
     return {
