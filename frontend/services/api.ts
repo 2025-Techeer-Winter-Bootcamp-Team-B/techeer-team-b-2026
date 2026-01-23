@@ -385,6 +385,18 @@ export const fetchTrendingApartments = (limit = 5) =>
 export const fetchApartmentDetail = (aptId: number) =>
   apiFetch<ApartmentDetailResponse>(`/apartments/${aptId}/detail`);
 
+export interface ApartmentExclusiveAreasResponse {
+  success: boolean;
+  data: {
+    apt_id: number;
+    apt_name: string;
+    exclusive_areas: number[];
+  };
+}
+
+export const fetchApartmentExclusiveAreas = (aptId: number) =>
+  apiFetch<ApartmentExclusiveAreasResponse>(`/apartments/${aptId}/exclusive-areas`);
+
 export const fetchApartmentTransactions = (
   aptId: number,
   transactionType: 'sale' | 'jeonse' | 'monthly' = 'sale',
