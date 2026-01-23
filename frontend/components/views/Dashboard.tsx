@@ -298,7 +298,7 @@ const AssetRow: React.FC<{
 export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortfolio }) => {
   
   // Clerk 인증 상태
-  const { isLoaded: isClerkLoaded, isSignedIn } = useUser();
+  const { isLoaded: isClerkLoaded, isSignedIn, user: clerkUser } = useUser();
   const { getToken } = useClerkAuth();
   
   const [isLoading, setIsLoading] = useState(true);
@@ -465,6 +465,21 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
               return;
           }
           
+          // 🔍 디버깅: 현재 사용자 정보 확인
+          if (clerkUser) {
+              console.log('👤 현재 로그인한 사용자:', {
+                  id: clerkUser.id,
+                  email: clerkUser.primaryEmailAddress?.emailAddress,
+                  firstName: clerkUser.firstName,
+                  lastName: clerkUser.lastName,
+                  // Clerk의 사용자 ID와 account_id는 다를 수 있음
+              });
+          }
+          
+          // 🔍 디버깅: API 요청 URL 확인
+          const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+          console.log('🌐 API 요청 URL:', `${API_BASE_URL}/my-properties?skip=0&limit=100`);
+          
           // 내 자산과 관심 아파트를 병렬로 로드
           const [myPropertiesRes, favoritesRes] = await Promise.all([
               fetchMyProperties().catch((e) => { console.error('내 자산 조회 실패:', e); return { success: false, data: { properties: [] } }; }),
@@ -472,6 +487,7 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
           ]);
 
           console.log('📦 내 자산 API 응답:', myPropertiesRes);
+          console.log('📦 내 자산 API 응답 (전체):', JSON.stringify(myPropertiesRes, null, 2));
           console.log('📦 관심 아파트 API 응답:', favoritesRes);
 
           const rawMyProperties = myPropertiesRes.success && myPropertiesRes.data.properties 
@@ -479,6 +495,7 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
               : [];
           
           console.log('📊 내 자산 원본 데이터:', rawMyProperties);
+          console.log('📊 내 자산 원본 데이터 개수:', rawMyProperties.length);
           
           const myProps = rawMyProperties.map(mapMyPropertyToProperty);
           
