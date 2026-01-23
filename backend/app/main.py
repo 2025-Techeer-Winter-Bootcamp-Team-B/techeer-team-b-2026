@@ -5,7 +5,16 @@
 FastAPI 애플리케이션 메인 파일
 
 이 파일이 FastAPI 앱의 시작점입니다.
+
+성능 최적화 (EC2 + RDS db.t4g.micro 환경):
+- 요청 타임아웃 미들웨어 (느린 요청 조기 종료)
+- GZip 압축 (응답 크기 감소)
+- 캐싱 헤더 (클라이언트 캐시 활용)
+- 느린 요청 로깅 (성능 모니터링)
 """
+import asyncio
+import time
+import logging
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,6 +24,8 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.core.config import settings
 from app.core.redis import get_redis_client, close_redis_client
+
+perf_logger = logging.getLogger("performance")
 
 # SQLAlchemy 관계(relationship) 초기화를 위해 모든 모델 import
 # 문자열로 참조된 모델 클래스들이 SQLAlchemy 레지스트리에 등록되도록 함
@@ -75,71 +86,111 @@ else:
     )
 
 
-# CORS 헤더를 명시적으로 추가하는 미들웨어 (에러 응답에도 적용)
-class CORSHeaderMiddleware(BaseHTTPMiddleware):
-    """모든 응답에 CORS 헤더를 명시적으로 추가하는 미들웨어"""
+# ===== 성능 최적화 상수 =====
+SLOW_REQUEST_THRESHOLD = 5.0  # 느린 요청 임계값 (초)
+REQUEST_TIMEOUT = 60.0        # 요청 타임아웃 (초)
+
+
+# 성능 모니터링 및 타임아웃 미들웨어
+class PerformanceMiddleware(BaseHTTPMiddleware):
+    """
+    성능 모니터링 미들웨어
+    
+    기능:
+    - 요청 처리 시간 측정
+    - 느린 요청 로깅 (> 5초)
+    - 요청 타임아웃 처리 (60초)
+    """
     
     async def dispatch(self, request: Request, call_next):
-        # Origin 헤더 확인
-        origin = request.headers.get("origin")
+        start_time = time.time()
+        path = request.url.path
+        method = request.method
         
-        # 허용된 출처인지 확인
-        allowed_origins = []
-        if settings.ALLOWED_ORIGINS:
-            allowed_origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",")]
+        # 정적 파일/메트릭 엔드포인트는 모니터링 스킵
+        if path in ["/metrics", "/health", "/docs", "/redoc", "/openapi.json"]:
+            return await call_next(request)
         
         try:
-            # 응답 처리
-            response = await call_next(request)
-        except Exception as e:
-            # 에러 발생 시에도 CORS 헤더가 포함된 응답 반환
-            from fastapi.responses import JSONResponse
-            response = JSONResponse(
-                status_code=500,
-                content={"detail": {"code": "INTERNAL_SERVER_ERROR", "message": str(e)}}
+            # 타임아웃 적용 (뉴스/검색은 더 긴 타임아웃)
+            timeout = REQUEST_TIMEOUT
+            if "/news" in path or "/search" in path:
+                timeout = 90.0  # 뉴스/검색은 90초
+            
+            response = await asyncio.wait_for(
+                call_next(request),
+                timeout=timeout
             )
-        
-        # CORS 헤더 추가 (에러 응답에도 적용)
-        if origin and origin in allowed_origins:
-            response.headers["Access-Control-Allow-Origin"] = origin
-            response.headers["Access-Control-Allow-Credentials"] = "true"
-        elif not settings.ALLOWED_ORIGINS:
-            # 개발 환경: 모든 출처 허용
-            response.headers["Access-Control-Allow-Origin"] = "*"
-        else:
-            # 기본적으로 첫 번째 허용된 출처 사용
-            if allowed_origins:
-                response.headers["Access-Control-Allow-Origin"] = allowed_origins[0]
-        
-        # 추가 CORS 헤더
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
-        response.headers["Access-Control-Expose-Headers"] = "*"
+            
+            # 처리 시간 측정
+            duration = time.time() - start_time
+            
+            # 느린 요청 로깅
+            if duration > SLOW_REQUEST_THRESHOLD:
+                perf_logger.warning(
+                    f"🐢 느린 요청: {method} {path} - {duration:.2f}초"
+                )
+            
+            # 응답 헤더에 처리 시간 추가 (디버깅용)
+            response.headers["X-Response-Time"] = f"{duration:.3f}s"
+            
+            return response
+            
+        except asyncio.TimeoutError:
+            duration = time.time() - start_time
+            perf_logger.error(
+                f"⏱️ 요청 타임아웃: {method} {path} - {duration:.2f}초 (제한: {timeout}초)"
+            )
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=504,
+                content={
+                    "detail": {
+                        "code": "GATEWAY_TIMEOUT",
+                        "message": f"요청 처리 시간이 초과되었습니다 ({timeout}초)"
+                    }
+                }
+            )
+        except Exception as e:
+            duration = time.time() - start_time
+            perf_logger.error(
+                f"❌ 요청 처리 오류: {method} {path} - {duration:.2f}초 - {e}"
+            )
+            raise
+
+
+# 캐싱 헤더를 추가하는 미들웨어
+class CacheHeaderMiddleware(BaseHTTPMiddleware):
+    """응답에 캐싱 헤더를 추가하는 미들웨어 (CORS는 CORSMiddleware에서 처리)"""
+    
+    async def dispatch(self, request: Request, call_next):
+        # 응답 처리
+        response = await call_next(request)
         
         # 캐싱 헤더 추가 (성능 최적화)
         # GET 요청에만 캐싱 적용
         if request.method == "GET":
             path = request.url.path
             
-            # API 경로별 캐싱 전략
+            # API 경로별 캐싱 전략 (TTL 증가)
             if "/apartments/" in path and "/detail" in path:
                 # 아파트 상세 정보: 30분 캐싱
                 response.headers["Cache-Control"] = "public, max-age=1800, s-maxage=1800"
             elif "/dashboard/" in path:
-                # 대시보드 데이터: 5분 캐싱
-                response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300"
-            elif "/search/" in path:
-                # 검색 결과: 3분 캐싱
-                response.headers["Cache-Control"] = "public, max-age=180, s-maxage=180"
-            elif "/news/" in path:
-                # 뉴스: 10분 캐싱
+                # 대시보드 데이터: 10분 캐싱 (5분 → 10분)
                 response.headers["Cache-Control"] = "public, max-age=600, s-maxage=600"
-            elif "/indicators/" in path:
-                # 지표: 1시간 캐싱
+            elif "/search/" in path:
+                # 검색 결과: 5분 캐싱 (3분 → 5분)
+                response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300"
+            elif "/news" in path:
+                # 뉴스: 30분 캐싱 (10분 → 30분)
+                response.headers["Cache-Control"] = "public, max-age=1800, s-maxage=1800"
+            elif "/indicators/" in path or "/interest-rates" in path:
+                # 지표/금리: 1시간 캐싱
                 response.headers["Cache-Control"] = "public, max-age=3600, s-maxage=3600"
             else:
-                # 기본: 1분 캐싱
-                response.headers["Cache-Control"] = "public, max-age=60, s-maxage=60"
+                # 기본: 2분 캐싱 (1분 → 2분)
+                response.headers["Cache-Control"] = "public, max-age=120, s-maxage=120"
             
             # ETag 지원 (조건부 요청)
             response.headers["Vary"] = "Accept-Encoding, Authorization"
@@ -149,8 +200,11 @@ class CORSHeaderMiddleware(BaseHTTPMiddleware):
         
         return response
 
-# CORS 헤더 미들웨어 추가 (CORSMiddleware 다음에 추가)
-app.add_middleware(CORSHeaderMiddleware)
+# 성능 모니터링 미들웨어 추가 (가장 먼저 실행되도록)
+app.add_middleware(PerformanceMiddleware)
+
+# 캐싱 헤더 미들웨어 추가
+app.add_middleware(CacheHeaderMiddleware)
 
 # ============================================================
 # 📊 Prometheus 메트릭 수집 설정
@@ -171,10 +225,10 @@ instrumentator = Instrumentator(
 instrumentator.instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 
-# 전역 예외 핸들러: 모든 에러 응답에 CORS 헤더 추가
+# 전역 예외 핸들러 (CORS는 CORSMiddleware에서 자동 처리됨)
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """전역 예외 핸들러 - 모든 에러에 CORS 헤더 추가"""
+    """전역 예외 핸들러 - CORSMiddleware가 CORS 헤더를 자동으로 추가함"""
     from fastapi.responses import JSONResponse
     import logging
     import traceback
@@ -187,15 +241,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     else:
         logger.error(f"예외 발생: {str(exc)}")
     
-    # Origin 헤더 확인
-    origin = request.headers.get("origin")
-    
-    # 허용된 출처인지 확인
-    allowed_origins = []
-    if settings.ALLOWED_ORIGINS:
-        allowed_origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",")]
-    
-    # 에러 응답 생성
+    # 에러 응답 생성 (CORSMiddleware가 CORS 헤더를 자동으로 추가함)
     response = JSONResponse(
         status_code=500,
         content={
@@ -205,18 +251,6 @@ async def global_exception_handler(request: Request, exc: Exception):
             }
         }
     )
-    
-    # CORS 헤더 추가
-    if origin and origin in allowed_origins:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-    elif not settings.ALLOWED_ORIGINS:
-        response.headers["Access-Control-Allow-Origin"] = "*"
-    elif allowed_origins:
-        response.headers["Access-Control-Allow-Origin"] = allowed_origins[0]
-    
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
     
     return response
 
