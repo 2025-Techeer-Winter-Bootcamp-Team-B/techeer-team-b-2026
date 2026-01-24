@@ -24,7 +24,8 @@ import {
   fetchApartmentDetail,
   setAuthToken,
   type MyProperty,
-  type FavoriteApartment
+  type FavoriteApartment,
+  type ApartmentSearchItem
 } from '../../services/api';
 
 
@@ -1063,31 +1064,38 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
       setIsSearching(true);
       try {
           const response = await searchApartments(query.trim(), 10);
-          if (response.success && response.data.results) {
-              // 가격 정보 가져오기
-              const aptIds = response.data.results.map(r => r.apt_id);
-              let priceMap = new Map<number, number>();
-              
-              if (aptIds.length > 0) {
-                  try {
-                      const compareRes = await fetchCompareApartments(aptIds.slice(0, 5));
-                      if (compareRes.apartments) {
-                          compareRes.apartments.forEach(apt => {
-                              if (apt.price) priceMap.set(apt.id, apt.price);
-                          });
-                      }
-                  } catch {
-                      // 가격 정보 없어도 진행
-                  }
-              }
-              
-              setSearchResults(response.data.results.map(r => ({
-                  apt_id: r.apt_id,
-                  apt_name: r.apt_name,
-                  address: r.address || undefined,
-                  price: priceMap.get(r.apt_id)
-              })));
-          }
+                    if (response.success && response.data.results) {
+                        // 가격 정보 가져오기
+                        const results = response.data.results;
+                        const aptIds = results
+                            .map(r => r.apt_id)
+                            .filter((id): id is number => typeof id === 'number') as number[];
+                        
+                        let priceMap = new Map<number, number>();
+                        
+                        if (aptIds.length > 0) {
+                            try {
+                                const compareRes = await fetchCompareApartments(aptIds.slice(0, 5));
+                                if (compareRes.apartments) {
+                                    compareRes.apartments.forEach(apt => {
+                                        if (apt.price) priceMap.set(apt.id, apt.price);
+                                    });
+                                }
+                            } catch {
+                                // 가격 정보 없어도 진행
+                            }
+                        }
+                        
+                        const mappedResults = results
+                            .filter((r): r is ApartmentSearchItem & { apt_id: number } => typeof r.apt_id === 'number')
+                            .map(r => ({
+                                apt_id: r.apt_id,
+                                apt_name: r.apt_name,
+                                address: r.address || undefined,
+                                price: priceMap.get(r.apt_id)
+                            }));
+                        setSearchResults(mappedResults);
+                    }
       } catch (error) {
           console.error('아파트 검색 실패:', error);
           setSearchResults([]);

@@ -1533,7 +1533,6 @@ export const Comparison: React.FC = () => {
                                     isAnimationActive={true}
                                     animationDuration={150}
                                     name="매매가"
-                                    baseValue={0}
                                     shape={(props: any) => renderBarShape(props, 'value')}
                                     fill="#94a3b8"
                                   >

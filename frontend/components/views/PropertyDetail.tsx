@@ -611,19 +611,20 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
           
           const pricePromises = otherApartments.map(async (apt) => {
             try {
-              const txRes = await fetchApartmentTransactions(apt.apt_id, transactionType, 1, 12);
+              const currentAptId = Number(apt.apt_id);
+              const txRes = await fetchApartmentTransactions(currentAptId, transactionType, 1, 12);
               const latestTx = txRes.data.recent_transactions?.[0];
               return {
                 name: apt.apt_name,
                 price: latestTx?.price || 0,
-                apt_id: apt.apt_id
+                apt_id: currentAptId
               };
             } catch (error) {
               console.error(`아파트 ${apt.apt_id} 거래 내역 로드 실패:`, error);
               return {
                 name: apt.apt_name,
                 price: 0,
-                apt_id: apt.apt_id
+                apt_id: Number(apt.apt_id)
               };
             }
           });
@@ -652,7 +653,8 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
               return {
                 name: item.name,
                 price: item.price,
-                diff: diff
+                diff: diff,
+                apt_id: Number(item.apt_id)
               };
             });
           
