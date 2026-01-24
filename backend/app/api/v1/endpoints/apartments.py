@@ -599,113 +599,142 @@ async def get_pyeong_prices(
     apt_id: int,
     db: AsyncSession = Depends(get_db)
 ):
-    cache_key = build_cache_key("apartment", "pyeong_prices", str(apt_id))
-    cached_data = await get_from_cache(cache_key)
-    if cached_data is not None:
-        return cached_data
+    import logging
+    logger = logging.getLogger(__name__)
     
-    apt_result = await db.execute(select(Apartment).where(Apartment.apt_id == apt_id))
-    apartment = apt_result.scalar_one_or_none()
-    if not apartment:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="아파트를 찾을 수 없습니다")
-    
-    sales_stmt = (
-        select(
-            Sale.trans_price,
-            Sale.exclusive_area,
-            Sale.contract_date
-        )
-        .where(
-            Sale.apt_id == apt_id,
-            Sale.is_canceled == False,
-            (Sale.is_deleted == False) | (Sale.is_deleted.is_(None)),
-            Sale.trans_price.isnot(None),
-            Sale.exclusive_area.isnot(None),
-            Sale.exclusive_area > 0,
-            Sale.contract_date.isnot(None)
-        )
-        .order_by(Sale.contract_date.desc())
-        .limit(200)
-    )
-    
-    rents_stmt = (
-        select(
-            Rent.deposit_price,
-            Rent.exclusive_area,
-            Rent.deal_date
-        )
-        .where(
-            Rent.apt_id == apt_id,
-            or_(Rent.monthly_rent == 0, Rent.monthly_rent.is_(None)),
-            (Rent.is_deleted == False) | (Rent.is_deleted.is_(None)),
-            Rent.deposit_price.isnot(None),
-            Rent.exclusive_area.isnot(None),
-            Rent.exclusive_area > 0,
-            Rent.deal_date.isnot(None)
-        )
-        .order_by(Rent.deal_date.desc())
-        .limit(200)
-    )
-    
-    sales_result = await db.execute(sales_stmt)
-    rents_result = await db.execute(rents_stmt)
-    
-    pyeong_groups: dict[str, dict] = {}
-    
-    for row in sales_result.all():
-        pyeong = round(float(row.exclusive_area) / 3.3058)
-        pyeong_type = f"{pyeong}평형"
-        if pyeong_type not in pyeong_groups:
-            pyeong_groups[pyeong_type] = {
-                "area": float(row.exclusive_area),
-                "sale": None,
-                "jeonse": None
-            }
-        if pyeong_groups[pyeong_type]["sale"] is None:
-            price = float(row.trans_price)
-            pyeong_groups[pyeong_type]["sale"] = PyeongRecentPrice(
-                price=round(price / 10000, 2),
-                date=row.contract_date.isoformat(),
-                price_per_pyeong=round(price / float(row.exclusive_area) * 3.3 / 10000, 2)
+    try:
+        cache_key = build_cache_key("apartment", "pyeong_prices", str(apt_id))
+        cached_data = await get_from_cache(cache_key)
+        if cached_data is not None:
+            return cached_data
+        
+        apt_result = await db.execute(select(Apartment).where(Apartment.apt_id == apt_id))
+        apartment = apt_result.scalar_one_or_none()
+        if not apartment:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="아파트를 찾을 수 없습니다")
+        
+        sales_stmt = (
+            select(
+                Sale.trans_price,
+                Sale.exclusive_area,
+                Sale.contract_date
             )
-    
-    for row in rents_result.all():
-        pyeong = round(float(row.exclusive_area) / 3.3058)
-        pyeong_type = f"{pyeong}평형"
-        if pyeong_type not in pyeong_groups:
-            pyeong_groups[pyeong_type] = {
-                "area": float(row.exclusive_area),
-                "sale": None,
-                "jeonse": None
-            }
-        if pyeong_groups[pyeong_type]["jeonse"] is None:
-            price = float(row.deposit_price)
-            pyeong_groups[pyeong_type]["jeonse"] = PyeongRecentPrice(
-                price=round(price / 10000, 2),
-                date=row.deal_date.isoformat(),
-                price_per_pyeong=round(price / float(row.exclusive_area) * 3.3 / 10000, 2)
+            .where(
+                Sale.apt_id == apt_id,
+                Sale.is_canceled == False,
+                (Sale.is_deleted == False) | (Sale.is_deleted.is_(None)),
+                Sale.trans_price.isnot(None),
+                Sale.exclusive_area.isnot(None),
+                Sale.exclusive_area > 0,
+                Sale.contract_date.isnot(None)
             )
-    
-    pyeong_options: List[PyeongOption] = []
-    for pyeong_type, data in sorted(pyeong_groups.items(), key=lambda x: int(re.sub(r"[^0-9]", "", x[0]) or 0)):
-        pyeong_options.append(
-            PyeongOption(
+            .order_by(Sale.contract_date.desc())
+            .limit(200)
+        )
+        
+        rents_stmt = (
+            select(
+                Rent.deposit_price,
+                Rent.exclusive_area,
+                Rent.deal_date
+            )
+            .where(
+                Rent.apt_id == apt_id,
+                or_(Rent.monthly_rent == 0, Rent.monthly_rent.is_(None)),
+                (Rent.is_deleted == False) | (Rent.is_deleted.is_(None)),
+                Rent.deposit_price.isnot(None),
+                Rent.exclusive_area.isnot(None),
+                Rent.exclusive_area > 0,
+                Rent.deal_date.isnot(None)
+            )
+            .order_by(Rent.deal_date.desc())
+            .limit(200)
+        )
+        
+        sales_result = await db.execute(sales_stmt)
+        rents_result = await db.execute(rents_stmt)
+        
+        pyeong_groups: dict[str, dict] = {}
+        
+        for row in sales_result.all():
+            try:
+                area = float(row.exclusive_area) if row.exclusive_area else 0
+                if area <= 0:
+                    continue
+                pyeong = round(area / 3.3058)
+                pyeong_type = f"{pyeong}평형"
+                if pyeong_type not in pyeong_groups:
+                    pyeong_groups[pyeong_type] = {
+                        "area": area,
+                        "sale": None,
+                        "jeonse": None
+                    }
+                if pyeong_groups[pyeong_type]["sale"] is None and row.trans_price and row.contract_date:
+                    price = float(row.trans_price)
+                    date_str = row.contract_date.isoformat() if hasattr(row.contract_date, 'isoformat') else str(row.contract_date)
+                    pyeong_groups[pyeong_type]["sale"] = PyeongRecentPrice(
+                        price=round(price / 10000, 2),
+                        date=date_str,
+                        price_per_pyeong=round(price / area * 3.3 / 10000, 2)
+                    )
+            except Exception as e:
+                logger.warning(f"[pyeong-prices] 매매 데이터 처리 오류 (apt_id={apt_id}): {e}")
+                continue
+        
+        for row in rents_result.all():
+            try:
+                area = float(row.exclusive_area) if row.exclusive_area else 0
+                if area <= 0:
+                    continue
+                pyeong = round(area / 3.3058)
+                pyeong_type = f"{pyeong}평형"
+                if pyeong_type not in pyeong_groups:
+                    pyeong_groups[pyeong_type] = {
+                        "area": area,
+                        "sale": None,
+                        "jeonse": None
+                    }
+                if pyeong_groups[pyeong_type]["jeonse"] is None and row.deposit_price and row.deal_date:
+                    price = float(row.deposit_price)
+                    date_str = row.deal_date.isoformat() if hasattr(row.deal_date, 'isoformat') else str(row.deal_date)
+                    pyeong_groups[pyeong_type]["jeonse"] = PyeongRecentPrice(
+                        price=round(price / 10000, 2),
+                        date=date_str,
+                        price_per_pyeong=round(price / area * 3.3 / 10000, 2)
+                    )
+            except Exception as e:
+                logger.warning(f"[pyeong-prices] 전세 데이터 처리 오류 (apt_id={apt_id}): {e}")
+                continue
+        
+        pyeong_options_data: List[dict] = []
+        for pyeong_type, data in sorted(pyeong_groups.items(), key=lambda x: int(re.sub(r"[^0-9]", "", x[0]) or 0)):
+            option = PyeongOption(
                 pyeong_type=pyeong_type,
                 area_m2=round(data["area"], 2),
                 recent_sale=data["sale"],
                 recent_jeonse=data["jeonse"]
             )
+            # Pydantic 모델을 dict로 변환 (JSON 직렬화 가능하도록)
+            pyeong_options_data.append(option.model_dump())
+        
+        response_data = {
+            "apartment_id": apartment.apt_id,
+            "apartment_name": apartment.apt_name,
+            "pyeong_options": pyeong_options_data
+        }
+        
+        await set_to_cache(cache_key, response_data, ttl=600)
+        
+        return response_data
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[pyeong-prices] 예상치 못한 오류 (apt_id={apt_id}): {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"평형별 가격 조회 중 오류가 발생했습니다: {str(e)}"
         )
-    
-    response_data = {
-        "apartment_id": apartment.apt_id,
-        "apartment_name": apartment.apt_name,
-        "pyeong_options": pyeong_options
-    }
-    
-    await set_to_cache(cache_key, response_data, ttl=600)
-    
-    return response_data
 
 
 @router.get(
