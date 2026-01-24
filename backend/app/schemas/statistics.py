@@ -126,49 +126,6 @@ class CorrelationAnalysisResponse(BaseModel):
 # 주택 수요 페이지용 새로운 스키마
 # ============================================================
 
-class TransactionVolumeDataPoint(BaseModel):
-    """거래량 데이터 포인트 (월별/년도별)"""
-    period: str = Field(..., description="기간 (예: '2020' 또는 '1월')")
-    value: Optional[int] = Field(None, description="거래량 (년도별일 때 사용)")
-    # 동적 키는 Dict[str, Any]로 처리 (예: {period: "1월", 2023: 140, 2024: 150})
-
-
-class TransactionVolumeResponse(BaseModel):
-    """거래량 응답 스키마"""
-    success: bool = Field(..., description="성공 여부")
-    data: List[Dict[str, Any]] = Field(..., description="거래량 데이터 리스트 (동적 키 포함 가능)")
-    years: Optional[List[int]] = Field(None, description="년도 목록 (월별일 때만)")
-    region_type: str = Field(..., description="지역 유형 (전국, 수도권, 지방5대광역시)")
-    period_type: str = Field(..., description="기간 유형 (monthly, yearly)")
-    year_range: Optional[int] = Field(None, description="년도 범위 (월별일 때만)")
-    start_year: Optional[int] = Field(None, description="시작 연도 (년도별일 때만)")
-    end_year: Optional[int] = Field(None, description="종료 연도 (년도별일 때만)")
-
-
-class MarketPhaseDataPoint(BaseModel):
-    """시장 국면 분석 데이터 포인트"""
-    region_id: int = Field(..., description="지역 ID")
-    region_name: str = Field(..., description="지역명 (예: '서울 강남')")
-    city_name: str = Field(..., description="시도명 (예: '서울특별시')")
-    phase: str = Field(..., description="시장 국면 (상승기, 회복기, 침체기, 후퇴기)")
-    trend: str = Field(..., description="추세 (up, down)")
-    change: str = Field(..., description="변화율 문자열 (예: '+1.5%')")
-    price_change_rate: float = Field(..., description="가격 변화율 (%)")
-    volume_change_rate: float = Field(..., description="거래량 변화율 (%)")
-    recent_price: Optional[float] = Field(None, description="최근 평균 가격 (평당가, 만원)")
-    previous_price: Optional[float] = Field(None, description="이전 평균 가격 (평당가, 만원)")
-    recent_volume: Optional[int] = Field(None, description="최근 거래량")
-    previous_volume: Optional[int] = Field(None, description="이전 거래량")
-
-
-class MarketPhaseResponse(BaseModel):
-    """시장 국면 분석 응답 스키마"""
-    success: bool = Field(..., description="성공 여부")
-    data: List[MarketPhaseDataPoint] = Field(..., description="시장 국면 분석 데이터 리스트")
-    region_type: str = Field(..., description="지역 유형")
-    period_months: int = Field(..., description="비교 기간 (개월)")
-
-
 class HPIRegionTypeDataPoint(BaseModel):
     """지역 유형별 주택 가격 지수 데이터 포인트"""
     id: Optional[str] = Field(None, description="지역 ID (선택사항, 프론트엔드 좌표 매칭용)")
@@ -186,21 +143,70 @@ class HPIRegionTypeResponse(BaseModel):
     base_ym: str = Field(..., description="기준 년월 (YYYYMM)")
 
 
-class PopulationMovementRegionTypeDataPoint(BaseModel):
-    """지역 유형별 인구 순이동 데이터 포인트"""
-    name: str = Field(..., description="지역명 (정규화된 형식, 예: '서울')")
-    value: int = Field(..., description="순이동 인구 수 (양수: 순유입, 음수: 순유출)")
-    label: str = Field(..., description="라벨 ('순유입' 또는 '순유출')")
-    in_migration: int = Field(..., description="전입 인구 수 (명)")
-    out_migration: int = Field(..., description="전출 인구 수 (명)")
-    net_migration: int = Field(..., description="순이동 인구 수 (명)")
+# ============================================================
+# 거래량 API 스키마 (하이브리드 방식 - 통합)
+# ============================================================
+
+class TransactionVolumeDataPoint(BaseModel):
+    """월별 거래량 데이터 포인트"""
+    year: int = Field(..., description="연도")
+    month: int = Field(..., description="월 (1~12)")
+    volume: int = Field(..., description="거래량")
+    city_name: Optional[str] = Field(None, description="시도명 (지방5대광역시일 때만 포함)")
 
 
-class PopulationMovementRegionTypeResponse(BaseModel):
-    """지역 유형별 인구 순이동 응답 스키마"""
+class TransactionVolumeResponse(BaseModel):
+    """거래량 응답 스키마 (통합)"""
     success: bool = Field(..., description="성공 여부")
-    data: List[PopulationMovementRegionTypeDataPoint] = Field(..., description="지역별 인구 순이동 데이터 리스트")
+    data: List[TransactionVolumeDataPoint] = Field(..., description="월별 거래량 데이터 리스트")
     region_type: str = Field(..., description="지역 유형")
-    start_ym: str = Field(..., description="시작 년월 (YYYYMM)")
-    end_ym: str = Field(..., description="종료 년월 (YYYYMM)")
-    period_months: int = Field(..., description="기간 (개월)")
+    period: str = Field(..., description="기간 설명 (예: '2018-01 ~ 2024-12')")
+    max_years: int = Field(..., description="조회한 최대 연도 수")
+
+
+# ============================================================
+# 시장 국면 지표 API 스키마
+# ============================================================
+
+class MarketPhaseDataPoint(BaseModel):
+    """시장 국면 지표 데이터 포인트"""
+    region: Optional[str] = Field(None, description="지역명 (지방5대광역시일 때)")
+    volume_change_rate: Optional[float] = Field(None, description="거래량 변동률 (%)")
+    price_change_rate: Optional[float] = Field(None, description="가격 변동률 (%)")
+    phase: Optional[int] = Field(None, description="국면 번호 (1~6, None이면 데이터 부족)")
+    phase_label: str = Field(..., description="국면 라벨")
+    description: str = Field(..., description="국면 설명")
+    current_month_volume: int = Field(..., description="현재 월 거래량")
+    min_required_volume: Optional[int] = Field(None, description="최소 요구 거래량 (데이터 부족 시에만 포함)")
+
+
+class MarketPhaseCalculationMethod(BaseModel):
+    """계산 방법 정보"""
+    volume_method: str = Field(..., description="거래량 계산 방법 (average, month_over_month)")
+    average_period_months: Optional[int] = Field(None, description="평균 계산 기간 (개월)")
+    price_method: str = Field(..., description="가격 계산 방법 (moving_average_3months)")
+
+
+class MarketPhaseThresholds(BaseModel):
+    """임계값 정보"""
+    volume_threshold: float = Field(..., description="거래량 변동 임계값 (%)")
+    price_threshold: float = Field(..., description="가격 변동 임계값 (%)")
+
+
+class MarketPhaseResponse(BaseModel):
+    """시장 국면 지표 응답 스키마 (전국/수도권)"""
+    success: bool = Field(..., description="성공 여부")
+    data: MarketPhaseDataPoint = Field(..., description="시장 국면 지표 데이터")
+    calculation_method: MarketPhaseCalculationMethod = Field(..., description="계산 방법 정보")
+    thresholds: MarketPhaseThresholds = Field(..., description="사용된 임계값 정보")
+
+
+class MarketPhaseListResponse(BaseModel):
+    """시장 국면 지표 응답 스키마 (지방5대광역시)"""
+    success: bool = Field(..., description="성공 여부")
+    data: List[MarketPhaseDataPoint] = Field(..., description="지역별 시장 국면 지표 데이터 리스트")
+    region_type: str = Field(..., description="지역 유형")
+    calculation_method: MarketPhaseCalculationMethod = Field(..., description="계산 방법 정보")
+    thresholds: MarketPhaseThresholds = Field(..., description="사용된 임계값 정보")
+
+

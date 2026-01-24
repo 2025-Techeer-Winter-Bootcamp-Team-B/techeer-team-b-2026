@@ -1,26 +1,57 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Card } from '../ui/Card';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, ReferenceLine, Cell } from 'recharts';
 import { ChevronDown } from 'lucide-react';
-import { MigrationSankey } from '../ui/MigrationSankey';
+import Highcharts from 'highcharts';
+// @ts-ignore - highcharts stock 모듈
+import HighchartsStock from 'highcharts/modules/stock';
+// @ts-ignore - highcharts-react-official 타입 선언이 없지만 패키지는 설치되어 있음
+import HighchartsReact from 'highcharts-react-official';
 import { KoreaHexMap, RegionType } from '../ui/KoreaHexMap';
+import { MigrationSankey } from '../ui/MigrationSankey';
 import { ToggleButtonGroup } from '../ui/ToggleButtonGroup';
+
+// Highcharts Stock 모듈 초기화
+// @ts-ignore
+if (typeof HighchartsStock === 'function') {
+  // @ts-ignore
+  HighchartsStock(Highcharts);
+}
 import {
-  fetchTransactionVolume,
-  fetchMarketPhase,
   fetchHPIByRegionType,
-  fetchPopulationMovementsByRegionType,
-  TransactionVolumeDataPoint,
-  MarketPhaseDataPoint,
   HPIRegionTypeDataPoint,
-  PopulationMovementRegionTypeDataPoint
+  fetchTransactionVolume,
+  TransactionVolumeDataPoint as ApiTransactionVolumeDataPoint
 } from '../../services/api';
 
+
+// 거래량 데이터 타입
+interface TransactionVolumeDataPoint {
+  period: string;
+  value: number;
+  [key: string]: string | number; // 년도별 데이터를 위한 동적 키
+}
+
+// 시장 국면 데이터 타입
+interface MarketPhaseDataPoint {
+  region_id: string;
+  region_name: string;
+  phase: string;
+  change: string;
+  trend: 'up' | 'down';
+}
+
+// 인구 순이동 데이터 타입
+interface PopulationMovementDataPoint {
+  name: string;
+  value: number;
+  label: string;
+}
+
 const getYearColor = (year: number, totalYears: number) => {
-    const currentYear = 2025;
-    const yearIndex = currentYear - year;
-    const opacity = 0.3 + ((totalYears - 1 - yearIndex) / (totalYears - 1)) * 0.7;
-    return `rgba(49, 130, 246, ${opacity})`;
+  const currentYear = 2025;
+  const yearIndex = currentYear - year;
+  const opacity = 0.3 + ((totalYears - 1 - yearIndex) / (totalYears - 1)) * 0.7;
+  return `rgba(49, 130, 246, ${opacity})`;
 };
 
 export const HousingDemand: React.FC = () => {
@@ -31,12 +62,14 @@ export const HousingDemand: React.FC = () => {
   const regionDropdownRef = useRef<HTMLDivElement>(null);
   
   // API 데이터 상태
+  const [hpiData, setHpiData] = useState<HPIRegionTypeDataPoint[]>([]);
   const [transactionData, setTransactionData] = useState<TransactionVolumeDataPoint[]>([]);
   const [monthlyYears, setMonthlyYears] = useState<number[]>([]);
+  const [rawTransactionData, setRawTransactionData] = useState<ApiTransactionVolumeDataPoint[]>([]);
   const [marketPhases, setMarketPhases] = useState<MarketPhaseDataPoint[]>([]);
-  const [hpiData, setHpiData] = useState<HPIRegionTypeDataPoint[]>([]);
-  const [migrationData, setMigrationData] = useState<PopulationMovementRegionTypeDataPoint[]>([]);
+  const [migrationData, setMigrationData] = useState<PopulationMovementDataPoint[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isTransactionLoading, setIsTransactionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
   // 주택 가격 지수 기준 년월 상태 (기본값: 2025년 12월)
@@ -95,98 +128,534 @@ export const HousingDemand: React.FC = () => {
     return null;
   };
 
-  // API 데이터 로딩
+  // 지역 타입 변환 헬퍼 함수
+  const getBackendRegionType = (region: RegionType): '전국' | '수도권' | '지방5대광역시' => {
+    const regionTypeMap: Record<RegionType, '전국' | '수도권' | '지방5대광역시'> = {
+      '전국': '전국',
+      '수도권': '수도권',
+      '지방 5대광역시': '지방5대광역시'
+    };
+    return regionTypeMap[region];
+  };
+
+  // 날짜를 timestamp로 변환하는 헬퍼 함수
+  const getTimestamp = (period: string, viewMode: 'yearly' | 'monthly'): number => {
+    if (viewMode === 'yearly') {
+      // "2020년" 형식을 timestamp로 변환
+      const year = parseInt(period.replace('년', ''));
+      return new Date(year, 0, 1).getTime();
+    } else {
+      // "1월" 형식은 현재 연도 기준으로 변환 (실제로는 rawTransactionData에서 연도 정보 필요)
+      // 임시로 현재 연도 사용
+      const currentYear = new Date().getFullYear();
+      const month = parseInt(period.replace('월', ''));
+      return new Date(currentYear, month - 1, 1).getTime();
+    }
+  };
+
+  // Stock Chart 사용 여부 확인
+  const useStockChart = useMemo(() => {
+    if (transactionData.length === 0) return false;
+    const backendRegionType = getBackendRegionType(selectedRegion);
+    const isLocalRegion = backendRegionType === '지방5대광역시';
+    return viewMode === 'yearly' && !isLocalRegion; // 전국/수도권 연도별만 Stock Chart 사용
+  }, [transactionData, viewMode, selectedRegion]);
+
+  // Highcharts 옵션 생성
+  const getHighchartsOptions = useMemo(() => {
+    if (transactionData.length === 0) {
+      return null;
+    }
+
+    const backendRegionType = getBackendRegionType(selectedRegion);
+    const isLocalRegion = backendRegionType === '지방5대광역시';
+
+    if (useStockChart) {
+      // Highcharts Stock Chart 옵션 (전국/수도권 연도별)
+      // rawTransactionData에서 연도별 데이터를 timestamp 형식으로 변환
+      const yearlyMap = new Map<number, number>();
+      rawTransactionData.forEach(item => {
+        const year = item.year;
+        const currentVolume = yearlyMap.get(year) || 0;
+        yearlyMap.set(year, currentVolume + item.volume);
+      });
+
+      const stockData = Array.from(yearlyMap.entries())
+        .sort(([a], [b]) => a - b)
+        .map(([year, volume]) => [new Date(year, 0, 1).getTime(), volume] as [number, number]);
+
+      // 디버깅: 데이터 포인트 수 확인
+      console.log('Stock Chart 데이터:', {
+        데이터포인트수: stockData.length,
+        연도범위: stockData.length > 0 ? `${new Date(stockData[0][0]).getFullYear()} ~ ${new Date(stockData[stockData.length - 1][0]).getFullYear()}` : '없음'
+      });
+
+      return {
+        rangeSelector: {
+          selected: 1, // 기본 선택: 전체
+          buttons: [
+            { type: 'year', count: 2, text: '2년' },
+            { type: 'year', count: 3, text: '3년' },
+            { type: 'year', count: 5, text: '5년' },
+            { type: 'all', text: '전체' }
+          ],
+          buttonTheme: {
+            style: {
+              fontSize: '12px',
+              fontWeight: 'bold',
+              color: '#64748b'
+            },
+            states: {
+              select: {
+                fill: '#3182F6',
+                style: {
+                  color: '#fff'
+                }
+              }
+            }
+          }
+        },
+        navigator: {
+          enabled: true,
+          height: 50,
+          margin: 10,
+          adaptToUpdatedData: false,
+          outlineWidth: 1,
+          outlineColor: '#3182F6',
+          handles: {
+            backgroundColor: '#3182F6',
+            borderColor: '#fff',
+            width: 8,
+            height: 20
+          },
+          maskFill: 'rgba(49, 130, 246, 0.2)',
+          maskInside: true,
+          series: {
+            color: '#3182F6',
+            lineWidth: 1,
+            type: 'line'
+          }
+        },
+        scrollbar: {
+          enabled: true,
+          barBackgroundColor: '#e2e8f0',
+          barBorderRadius: 0,
+          barBorderWidth: 0,
+          buttonBackgroundColor: '#cbd5e1',
+          buttonBorderColor: '#94a3b8',
+          buttonBorderRadius: 0,
+          buttonBorderWidth: 1,
+          rifleColor: '#64748b',
+          trackBackgroundColor: '#f1f5f9',
+          trackBorderColor: '#e2e8f0',
+          trackBorderRadius: 0,
+          trackBorderWidth: 1
+        },
+        title: {
+          text: undefined
+        },
+        credits: {
+          enabled: false
+        },
+        xAxis: {
+          type: 'datetime',
+          overscroll: 10
+        },
+        yAxis: {
+          title: {
+            text: undefined
+          },
+          labels: {
+            style: {
+              fontSize: '12px',
+              fontWeight: 'bold',
+              color: '#94a3b8'
+            },
+            formatter: function() {
+              return this.value.toLocaleString();
+            }
+          }
+        },
+        tooltip: {
+          backgroundColor: 'white',
+          borderColor: '#e2e8f0',
+          borderRadius: 12,
+          borderWidth: 1,
+          shadow: {
+            color: 'rgba(0, 0, 0, 0.1)',
+            offsetX: 0,
+            offsetY: 4,
+            opacity: 0.1,
+            width: 4
+          },
+          style: {
+            fontSize: '13px',
+            fontWeight: 'bold',
+            color: '#334155'
+          },
+          formatter: function() {
+            const date = new Date(this.x as number);
+            const year = date.getFullYear();
+            return `<b>${year}년</b><br/>거래량: <b>${this.y.toLocaleString()}건</b>`;
+          }
+        },
+        series: [{
+          name: '거래량',
+          type: 'line',
+          data: stockData,
+          color: '#3182F6',
+          tooltip: {
+            valueDecimals: 0
+          },
+          lastPrice: {
+            enabled: true,
+            color: 'transparent',
+            label: {
+              enabled: true,
+              backgroundColor: '#ffffff',
+              borderColor: '#3182F6',
+              borderWidth: 1,
+              style: {
+                color: '#000000',
+                fontWeight: 'bold'
+              }
+            }
+          }
+        }] as any
+      };
+    }
+
+    // 기본 옵션 (월별 또는 지방5대광역시)
+    const baseOptions: Highcharts.Options = {
+      chart: {
+        type: 'line',
+        height: 400,
+        backgroundColor: 'transparent',
+        spacing: [20, 20, 20, 20]
+      },
+      title: {
+        text: undefined
+      },
+      credits: {
+        enabled: false
+      },
+      legend: {
+        enabled: viewMode === 'monthly',
+        align: 'center',
+        verticalAlign: 'bottom',
+        itemStyle: {
+          fontSize: '12px',
+          fontWeight: 'bold',
+          color: '#64748b'
+        },
+        itemHoverStyle: {
+          color: '#334155'
+        }
+      },
+      xAxis: {
+        categories: transactionData.map(item => item.period),
+        labels: {
+          style: {
+            fontSize: '12px',
+            fontWeight: 'bold',
+            color: '#94a3b8'
+          }
+        },
+        lineWidth: 0,
+        tickWidth: 0,
+        gridLineWidth: 0
+      },
+      yAxis: {
+        title: {
+          text: undefined
+        },
+        labels: {
+          style: {
+            fontSize: '12px',
+            fontWeight: 'bold',
+            color: '#94a3b8'
+          },
+          formatter: function() {
+            return this.value.toLocaleString();
+          }
+        },
+        gridLineColor: '#f1f5f9',
+        gridLineDashStyle: 'Dash',
+        lineWidth: 0
+      },
+      tooltip: {
+        backgroundColor: 'white',
+        borderColor: '#e2e8f0',
+        borderRadius: 12,
+        borderWidth: 1,
+        shadow: {
+          color: 'rgba(0, 0, 0, 0.1)',
+          offsetX: 0,
+          offsetY: 4,
+          opacity: 0.1,
+          width: 4
+        },
+        style: {
+          fontSize: '13px',
+          fontWeight: 'bold',
+          color: '#334155'
+        },
+        formatter: function() {
+          if (viewMode === 'monthly') {
+            return `<b>${this.x}</b><br/>${this.series.name}: <b>${this.y.toLocaleString()}건</b>`;
+          }
+          return `<b>${this.x}</b><br/>거래량: <b>${this.y.toLocaleString()}건</b>`;
+        }
+      },
+      plotOptions: {
+        line: {
+          marker: {
+            radius: 3,
+            lineWidth: 2,
+            lineColor: '#fff',
+            fillColor: '#fff'
+          },
+          lineWidth: 2,
+          states: {
+            hover: {
+              lineWidth: 3
+            }
+          }
+        }
+      }
+    };
+
+    if (viewMode === 'yearly') {
+      // 연도별: Single line series
+      return {
+        ...baseOptions,
+        series: [{
+          name: '거래량',
+          type: 'line',
+          data: transactionData.map(item => item.value),
+          color: '#3182F6'
+        }] as Highcharts.SeriesOptionsType[]
+      };
+    } else {
+      // 월별
+      if (isLocalRegion) {
+        // 지방5대광역시: Compare multiple series (도시별)
+        const cities = new Set<string>();
+        transactionData.forEach(item => {
+          Object.keys(item).forEach(key => {
+            if (key !== 'period' && key !== 'value' && typeof item[key] === 'number') {
+              cities.add(key);
+            }
+          });
+        });
+
+        const cityColors: Record<string, string> = {};
+        const cityList = Array.from(cities).sort();
+        cityList.forEach((city, index) => {
+          const totalCities = cityList.length;
+          const opacity = 0.3 + ((totalCities - 1 - index) / (totalCities - 1)) * 0.7;
+          cityColors[city] = `rgba(49, 130, 246, ${opacity})`;
+        });
+
+        return {
+          ...baseOptions,
+          series: cityList.map(city => ({
+            name: city,
+            type: 'line',
+            data: transactionData.map(item => (item[city] as number) || 0),
+            color: cityColors[city]
+          })) as Highcharts.SeriesOptionsType[]
+        };
+      } else {
+        // 전국/수도권: Compare multiple series (연도별)
+        const seriesData = monthlyYears.map(year => {
+          const color = getYearColor(year, monthlyYears.length);
+          return {
+            name: `${year}년`,
+            type: 'line',
+            data: transactionData.map(item => (item[String(year)] as number) || 0),
+            color: color
+          };
+        });
+
+        return {
+          ...baseOptions,
+          series: seriesData as Highcharts.SeriesOptionsType[]
+        };
+      }
+    }
+  }, [transactionData, viewMode, selectedRegion, monthlyYears]);
+
+  // 거래량 데이터 변환 로직
+  useEffect(() => {
+    if (rawTransactionData.length === 0) {
+      setTransactionData([]);
+      setMonthlyYears([]);
+      return;
+    }
+
+    const backendRegionType = getBackendRegionType(selectedRegion);
+    const isLocalRegion = backendRegionType === '지방5대광역시';
+
+    if (viewMode === 'yearly') {
+      // 연도별: 월별 데이터를 연도별로 집계
+      const yearlyMap = new Map<number, number>();
+      
+      rawTransactionData.forEach(item => {
+        const year = item.year;
+        const currentVolume = yearlyMap.get(year) || 0;
+        yearlyMap.set(year, currentVolume + item.volume);
+      });
+
+      const yearlyData: TransactionVolumeDataPoint[] = Array.from(yearlyMap.entries())
+        .sort(([a], [b]) => a - b)
+        .map(([year, volume]) => ({
+          period: `${year}년`,
+          value: volume
+        }));
+
+      setTransactionData(yearlyData);
+      setMonthlyYears([]);
+    } else {
+      // 월별: 선택된 연도 범위에 맞게 필터링
+      const currentYear = new Date().getFullYear();
+      const startYear = currentYear - yearRange + 1;
+      
+      // 필터링된 데이터
+      const filteredData = rawTransactionData.filter(item => item.year >= startYear);
+      
+      if (isLocalRegion) {
+        // 지방5대광역시: city_name별로 시리즈 분리
+        const cityMap = new Map<string, Map<string, number>>(); // city_name -> "YYYY-MM" -> volume
+        
+        filteredData.forEach(item => {
+          if (!item.city_name) return;
+          const monthKey = `${item.year}-${String(item.month).padStart(2, '0')}`;
+          
+          if (!cityMap.has(item.city_name)) {
+            cityMap.set(item.city_name, new Map());
+          }
+          const cityData = cityMap.get(item.city_name)!;
+          cityData.set(monthKey, (cityData.get(monthKey) || 0) + item.volume);
+        });
+
+        // 연도별로 그룹화하여 레이블 추가 (같은 월이 여러 연도에 있을 수 있으므로)
+        const finalData: TransactionVolumeDataPoint[] = [];
+        filteredData.forEach(item => {
+          const existingIndex = finalData.findIndex(d => d.period === `${item.month}월`);
+          
+          if (existingIndex === -1) {
+            const dataPoint: TransactionVolumeDataPoint = {
+              period: `${item.month}월`,
+              value: 0
+            };
+            if (item.city_name) {
+              dataPoint[item.city_name] = item.volume;
+            }
+            finalData.push(dataPoint);
+          } else {
+            if (item.city_name) {
+              const currentValue = finalData[existingIndex][item.city_name] as number || 0;
+              finalData[existingIndex][item.city_name] = currentValue + item.volume;
+            }
+          }
+        });
+
+        setTransactionData(finalData);
+        
+        // 연도 목록 설정 (필터링된 연도들)
+        const years = Array.from(new Set(filteredData.map(item => item.year))).sort((a, b) => b - a);
+        setMonthlyYears(years);
+      } else {
+        // 전국/수도권: 연도별로 시리즈 분리
+        const yearMap = new Map<number, Map<number, number>>(); // year -> month -> volume
+        
+        filteredData.forEach(item => {
+          if (!yearMap.has(item.year)) {
+            yearMap.set(item.year, new Map());
+          }
+          const yearData = yearMap.get(item.year)!;
+          yearData.set(item.month, (yearData.get(item.month) || 0) + item.volume);
+        });
+
+        // 모든 월 생성 (1~12월)
+        const monthlyData: TransactionVolumeDataPoint[] = [];
+        for (let month = 1; month <= 12; month++) {
+          const dataPoint: TransactionVolumeDataPoint = {
+            period: `${month}월`,
+            value: 0
+          };
+
+          // 각 연도별 데이터 추가
+          yearMap.forEach((yearData, year) => {
+            dataPoint[String(year)] = yearData.get(month) || 0;
+          });
+
+          monthlyData.push(dataPoint);
+        }
+
+        setTransactionData(monthlyData);
+        
+        // 연도 목록 설정
+        const years = Array.from(yearMap.keys()).sort((a, b) => b - a);
+        setMonthlyYears(years);
+      }
+    }
+  }, [rawTransactionData, viewMode, yearRange, selectedRegion]);
+
+  // 거래량 API 호출
+  useEffect(() => {
+    const loadTransactionData = async () => {
+      setIsTransactionLoading(true);
+      
+      try {
+        const backendRegionType = getBackendRegionType(selectedRegion);
+        const res = await fetchTransactionVolume(backendRegionType, 'sale', 10);
+        
+        if (res.success) {
+          setRawTransactionData(res.data);
+        } else {
+          setRawTransactionData([]);
+        }
+      } catch (err) {
+        console.error('거래량 데이터 로딩 실패:', err);
+        setRawTransactionData([]);
+      } finally {
+        setIsTransactionLoading(false);
+      }
+    };
+
+    loadTransactionData();
+  }, [selectedRegion]);
+
+  // API 데이터 로딩 (HPI)
   useEffect(() => {
     const loadData = async () => {
       setIsLoading(true);
       setError(null);
-      // 데이터 초기화
-      setTransactionData([]);
-      setMonthlyYears([]);
       
       try {
-        // 지역 타입 변환 (프론트엔드: "지방 5대광역시" -> 백엔드: "지방5대광역시")
-        const regionTypeMap: Record<RegionType, string> = {
-          '전국': '전국',
-          '수도권': '수도권',
-          '지방 5대광역시': '지방5대광역시'
-        };
-        const backendRegionType = regionTypeMap[selectedRegion];
+        const backendRegionType = getBackendRegionType(selectedRegion);
 
-        // 병렬로 모든 API 호출
-        const [transactionRes, marketPhaseRes, hpiRes, migrationRes] = await Promise.all([
-          fetchTransactionVolume(
-            backendRegionType,
-            viewMode,
-            viewMode === 'monthly' ? yearRange : undefined,
-            viewMode === 'yearly' ? new Date().getFullYear() - 5 : undefined,
-            viewMode === 'yearly' ? new Date().getFullYear() : undefined
-          ),
-          fetchMarketPhase(backendRegionType, 2),
-          fetchHPIByRegionType(backendRegionType, 'APT', getHpiBaseYm() || undefined),
-          fetchPopulationMovementsByRegionType(backendRegionType)
-        ]);
-
-        // 거래량 데이터 설정
-        if (transactionRes.success) {
-          if (transactionRes.data && transactionRes.data.length > 0) {
-            setTransactionData(transactionRes.data);
-            if (transactionRes.years) {
-              setMonthlyYears(transactionRes.years);
-            } else {
-              // 년도별인 경우 years 배열 생성
-              const years: number[] = [];
-              if (transactionRes.start_year && transactionRes.end_year) {
-                for (let y = transactionRes.start_year; y <= transactionRes.end_year; y++) {
-                  years.push(y);
-                }
-              }
-              setMonthlyYears(years);
-            }
-          } else {
-            console.warn('거래량 데이터가 비어있습니다:', transactionRes);
-            setTransactionData([]);
-            setMonthlyYears([]);
-          }
-        } else {
-          console.error('거래량 API 호출 실패:', transactionRes);
-          setError('거래량 데이터를 불러오는데 실패했습니다.');
-          setTransactionData([]);
-          setMonthlyYears([]);
-        }
-
-        // 시장 국면 분석 데이터 설정
-        if (marketPhaseRes.success) {
-          setMarketPhases(marketPhaseRes.data);
-        }
+        // HPI API 호출
+        const hpiRes = await fetchHPIByRegionType(backendRegionType, 'APT', getHpiBaseYm() || undefined);
 
         // HPI 데이터 설정
         if (hpiRes.success) {
           setHpiData(hpiRes.data);
         }
 
-        // 인구 순이동 데이터 설정
-        if (migrationRes.success) {
-          setMigrationData(migrationRes.data);
-        }
-
       } catch (err) {
         console.error('데이터 로딩 실패:', err);
         setError('데이터를 불러오는 중 오류가 발생했습니다.');
-        // 에러 발생 시 데이터 초기화
-        setTransactionData([]);
-        setMonthlyYears([]);
       } finally {
         setIsLoading(false);
       }
     };
 
     loadData();
-  }, [selectedRegion, viewMode, yearRange, hpiSelectedYear, hpiSelectedMonth]);
+  }, [selectedRegion, hpiSelectedYear, hpiSelectedMonth]);
   
-  // 실제 API 데이터만 사용
-  const currentData = transactionData;
-  const displayMonthlyYears = monthlyYears;
 
   return (
     <div className="space-y-8 pb-32 animate-fade-in px-4 md:px-0 pt-10">
@@ -245,167 +714,114 @@ export const HousingDemand: React.FC = () => {
           </div>
       </div>
 
-      {/* 거래량 Chart & 시장 국면 분석 - 나란히 배치 (8:2 비율) */}
+      {/* 거래량 차트 & 시장 국면 차트 - 8:2 비율 (lg:col-span-8:2) */}
       <div className="grid grid-cols-1 lg:grid-cols-10 gap-8">
-          {/* 거래량 Chart */}
-          <Card className="p-0 overflow-hidden border border-slate-200 shadow-soft bg-white lg:col-span-8 flex flex-col">
-              <div className="p-6 border-b border-slate-100">
-                  <div className="flex items-center justify-between mb-4">
-                      <div>
-                          <h3 className="font-black text-slate-900 text-[17px]">거래량</h3>
-                          <p className="text-[13px] text-slate-500 font-medium mt-1">
-                              {viewMode === 'yearly' ? '연도별 거래량 추이' : '월별 거래량 추이'}
-                          </p>
-                      </div>
-                      <div className="flex items-center gap-3">
-                          
-                          {viewMode === 'monthly' && (
-                            <ToggleButtonGroup
-                            options={['2년', '3년', '5년']}
-                            value={`${yearRange}년`}
-                            onChange={(value) => setYearRange(parseInt(value.replace('년', '')) as 2 | 3 | 5)}
-                            />
-                          )}
-                          <ToggleButtonGroup
-                              options={['연도별', '월별']}
-                              value={viewMode === 'yearly' ? '연도별' : '월별'}
-                              onChange={(value) => setViewMode(value === '연도별' ? 'yearly' : 'monthly')}
-                          />
-                      </div>
-                  </div>
+        {/* 거래량 차트 */}
+        <Card className="p-0 overflow-hidden border border-slate-200 shadow-soft bg-white lg:col-span-8 flex flex-col">
+          <div className="p-6 border-b border-slate-100">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="font-black text-slate-900 text-[17px]">거래량</h3>
+                <p className="text-[13px] text-slate-500 mt-1 font-medium">
+                  {viewMode === 'yearly' ? '연도별 거래량 추이' : '월별 거래량 추이'}
+                </p>
               </div>
-              <div className="p-6 bg-gradient-to-b from-white to-slate-50/20 flex-1 flex flex-col min-h-0">
-                  <div className="flex-1 w-full min-h-0">
-                    {isLoading ? (
-                      <div className="flex items-center justify-center h-full">
-                        <p className="text-slate-400 text-[14px] font-bold">데이터를 불러오는 중...</p>
-                      </div>
-                    ) : currentData.length === 0 ? (
-                      <div className="flex items-center justify-center h-full">
-                        <p className="text-slate-400 text-[14px] font-bold">표시할 데이터가 없습니다.</p>
-                      </div>
-                    ) : (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={currentData}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                          <XAxis 
-                            dataKey="period" 
-                            axisLine={false} 
-                            tickLine={false} 
-                            tick={{ fontSize: 12, fill: '#94a3b8', fontWeight: 'bold' }} 
-                            dy={10} 
-                          />
-                          <YAxis 
-                            axisLine={false}
-                            tickLine={false}
-                            tick={{ fontSize: 12, fill: '#94a3b8', fontWeight: 'bold' }}
-                            domain={['auto', 'auto']}
-                            tickFormatter={(value) => `${value.toLocaleString()}`}
-                          />
-                          <Tooltip 
-                            contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
-                            itemStyle={{ fontSize: '13px', fontWeight: 'bold', color: '#334155' }}
-                            labelStyle={{ fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}
-                            formatter={(value: number, name: string) => {
-                              if (viewMode === 'monthly') {
-                                return [`${value.toLocaleString()}건`, `${name}년`];
-                              }
-                              return [`${value.toLocaleString()}건`, '거래량'];
-                            }}
-                          />
-                          {viewMode === 'yearly' ? (
-                            <Line 
-                              type="monotone" 
-                              dataKey="value" 
-                              stroke="#3182F6" 
-                              strokeWidth={2} 
-                              dot={{r: 3, strokeWidth: 2, fill: '#fff', stroke: '#3182F6'}} 
-                              activeDot={{r: 5, fill: '#3182F6', stroke: '#fff', strokeWidth: 2}} 
-                            />
-                          ) : (
-                            displayMonthlyYears.map((year) => {
-                              const color = getYearColor(year, displayMonthlyYears.length);
-                              // 데이터 키는 문자열이므로 문자열로 변환
-                              return (
-                                <Line 
-                                  key={year}
-                                  type="monotone" 
-                                  dataKey={String(year)} 
-                                  stroke={color}
-                                  strokeWidth={2}
-                                  dot={{r: 3, strokeWidth: 2, fill: '#fff', stroke: color}} 
-                                  activeDot={{r: 5, fill: color, stroke: '#fff', strokeWidth: 2}}
-                                  name={`${year}`}
-                                />
-                              );
-                            })
-                          )}
-                        </LineChart>
-                      </ResponsiveContainer>
-                    )}
-                  </div>
-                  {viewMode === 'monthly' && displayMonthlyYears.length > 0 && (
-                    <div className="flex items-center justify-center gap-4 mt-4">
-                      {displayMonthlyYears.map((year) => {
-                        const color = getYearColor(year, displayMonthlyYears.length);
-                        return (
-                          <div key={year} className="flex items-center gap-2">
-                            <div 
-                              className="w-6 h-0.5 rounded"
-                              style={{ backgroundColor: color }}
-                            />
-                            <span className="text-[12px] font-bold text-slate-600">{year}년</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+              <div className="flex items-center gap-3">
+                {viewMode === 'monthly' && (
+                  <ToggleButtonGroup
+                    options={['2년', '3년', '5년']}
+                    value={`${yearRange}년`}
+                    onChange={(value) => setYearRange(parseInt(value.replace('년', '')) as 2 | 3 | 5)}
+                  />
+                )}
+                <ToggleButtonGroup
+                  options={['연도별', '월별']}
+                  value={viewMode === 'yearly' ? '연도별' : '월별'}
+                  onChange={(value) => setViewMode(value === '연도별' ? 'yearly' : 'monthly')}
+                />
               </div>
-          </Card>
-
-          {/* 시장 국면 분석 */}
-          <Card className="p-0 overflow-hidden border border-slate-200 shadow-soft bg-white lg:col-span-2 flex flex-col">
-               <div className="p-6 border-b border-slate-100">
-                  <h3 className="font-black text-slate-900 text-[17px]">시장 국면 분석</h3>
-                  <p className="text-[13px] text-slate-500 font-medium mt-1">가격/거래량 데이터를 기반으로 한 지역별 시장 단계</p>
-              </div>
-              <div className="p-6 grid grid-cols-1 gap-4 flex-1 overflow-y-auto">
-              {isLoading ? (
-                <div className="text-center py-8 text-slate-500 text-[14px]">로딩 중...</div>
-              ) : marketPhases.length > 0 ? (
-                marketPhases.slice(0, 10).map((item) => {
-                  const phaseColors: Record<string, { bg: string; color: string }> = {
-                    '상승기': { bg: 'bg-red-50', color: 'text-brand-red' },
-                    '회복기': { bg: 'bg-orange-50', color: 'text-orange-600' },
-                    '침체기': { bg: 'bg-blue-50', color: 'text-brand-blue' },
-                    '후퇴기': { bg: 'bg-slate-100', color: 'text-slate-500' }
-                  };
-                  const phaseStyle = phaseColors[item.phase] || { bg: 'bg-slate-100', color: 'text-slate-500' };
-                  
+            </div>
+          </div>
+          <div className="p-6 bg-gradient-to-b from-white to-slate-50/20 flex-1 flex flex-col min-h-[400px]">
+            <div className="flex-1 w-full min-h-[400px]">
+              {isLoading || isTransactionLoading ? (
+                <div className="flex items-center justify-center h-full min-h-[400px]">
+                  <p className="text-slate-400 text-[14px] font-bold">데이터를 불러오는 중...</p>
+                </div>
+              ) : transactionData.length === 0 || !getHighchartsOptions ? (
+                <div className="flex items-center justify-center h-full min-h-[400px]">
+                  <p className="text-slate-400 text-[14px] font-bold">데이터가 없습니다.</p>
+                </div>
+              ) : (
+                <HighchartsReact
+                  highcharts={Highcharts}
+                  constructorType={useStockChart ? 'stockChart' : 'chart'}
+                  options={getHighchartsOptions}
+                />
+              )}
+            </div>
+            {viewMode === 'monthly' && monthlyYears.length > 0 && getBackendRegionType(selectedRegion) !== '지방5대광역시' && (
+              <div className="flex items-center justify-center gap-4 mt-4">
+                {monthlyYears.map((year) => {
+                  const color = getYearColor(year, monthlyYears.length);
                   return (
-                    <div key={item.region_id} className="flex items-center justify-between p-4 rounded-xl hover:shadow-sm transition-all bg-white">
-                        <div className="flex items-center gap-3">
-                            <div className={`w-9 h-9 rounded-lg flex items-center justify-center font-black text-[12px] ${phaseStyle.bg} ${phaseStyle.color}`}>
-                                {item.phase.slice(0, 2)}
-                            </div>
-                            <div>
-                                <p className="font-bold text-slate-900 text-[15px]">{item.region_name}</p>
-                            </div>
-                        </div>
-                        <div className="text-right">
-                            <div className={`px-2.5 py-1 rounded text-[12px] font-bold ${phaseStyle.bg} ${phaseStyle.color}`}>
-                                {item.phase}
-                            </div>
-                            <p className={`text-[12px] font-bold mt-1 tabular-nums ${item.trend === 'up' ? 'text-brand-red' : 'text-brand-blue'}`}>{item.change}</p>
-                        </div>
+                    <div key={year} className="flex items-center gap-2">
+                      <div 
+                        className="w-6 h-0.5 rounded"
+                        style={{ backgroundColor: color }}
+                      />
+                      <span className="text-[12px] font-bold text-slate-600">{year}년</span>
                     </div>
                   );
-                })
-              ) : (
-                <div className="text-center py-8 text-slate-500 text-[14px]">데이터가 없습니다.</div>
-              )}
+                })}
+              </div>
+            )}
           </div>
-      </Card>
+        </Card>
+
+        {/* 시장 국면 차트 */}
+        <Card className="p-0 overflow-hidden border border-slate-200 shadow-soft bg-white lg:col-span-2 flex flex-col">
+          <div className="p-6 border-b border-slate-100">
+            <h3 className="font-black text-slate-900 text-[17px]">시장 국면 지표</h3>
+            <p className="text-[13px] text-slate-500 mt-1 font-medium">거래량 추이를 기반으로 한 시장 국면 분석</p>
+          </div>
+          <div className="p-6 grid grid-cols-1 gap-4 flex-1 overflow-y-auto">
+            {isLoading ? (
+              <div className="text-center py-8 text-slate-500 text-[14px]">로딩 중...</div>
+            ) : marketPhases.length > 0 ? (
+              marketPhases.slice(0, 10).map((item) => {
+                const phaseColors: Record<string, { bg: string; color: string }> = {
+                  '과열': { bg: 'bg-red-50', color: 'text-brand-red' },
+                  '안정': { bg: 'bg-orange-50', color: 'text-orange-600' },
+                  '하락': { bg: 'bg-blue-50', color: 'text-brand-blue' },
+                  '보통': { bg: 'bg-slate-100', color: 'text-slate-500' }
+                };
+                const phaseStyle = phaseColors[item.phase] || { bg: 'bg-slate-100', color: 'text-slate-500' };
+                
+                return (
+                  <div key={item.region_id} className="flex items-center justify-between p-4 rounded-xl hover:shadow-sm transition-all bg-white">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-9 h-9 rounded-lg flex items-center justify-center font-black text-[12px] ${phaseStyle.bg} ${phaseStyle.color}`}>
+                        {item.phase.slice(0, 2)}
+                      </div>
+                      <div>
+                        <p className="font-bold text-slate-900 text-[15px]">{item.region_name}</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className={`px-2.5 py-1 rounded text-[12px] font-bold ${phaseStyle.bg} ${phaseStyle.color}`}>
+                        {item.phase}
+                      </div>
+                      <p className={`text-[12px] font-bold mt-1 tabular-nums ${item.trend === 'up' ? 'text-brand-red' : 'text-brand-blue'}`}>{item.change}</p>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="text-center py-8 text-slate-500 text-[14px]">데이터가 없습니다.</div>
+            )}
+          </div>
+        </Card>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -523,25 +939,25 @@ export const HousingDemand: React.FC = () => {
               </div>
           </Card>
 
-          {/* Migration */}
+          {/* 인구 순이동 차트 */}
           <Card className="p-0 overflow-hidden border border-slate-200 shadow-soft bg-white">
-               <div className="p-6 border-b border-slate-100">
-                  <h3 className="font-black text-slate-900 text-[17px]">인구 순이동</h3>
-                  <p className="text-[13px] text-slate-500 mt-1 font-medium">최근 3개월 지역별 인구 전입/전출</p>
-              </div>
-              <div className="p-6 h-[400px]">
-                  {isLoading ? (
-                    <div className="text-center py-8 text-slate-500 text-[14px]">로딩 중...</div>
-                  ) : migrationData.length > 0 ? (
-                    <MigrationSankey data={migrationData.map(item => ({
-                      name: item.name,
-                      value: item.value,
-                      label: item.label
-                    }))} />
-                  ) : (
-                    <div className="text-center py-8 text-slate-500 text-[14px]">데이터가 없습니다.</div>
-                  )}
-              </div>
+            <div className="p-6 border-b border-slate-100">
+              <h3 className="font-black text-slate-900 text-[17px]">인구 순이동</h3>
+              <p className="text-[13px] text-slate-500 mt-1 font-medium">최근 3개월간 지역별 인구 순이동 추이 (0~100)</p>
+            </div>
+            <div className="p-6 h-[400px]">
+              {isLoading ? (
+                <div className="text-center py-8 text-slate-500 text-[14px]">로딩 중...</div>
+              ) : migrationData.length > 0 ? (
+                <MigrationSankey data={migrationData.map(item => ({
+                  name: item.name,
+                  value: item.value,
+                  label: item.label
+                }))} />
+              ) : (
+                <div className="text-center py-8 text-slate-500 text-[14px]">데이터가 없습니다.</div>
+              )}
+            </div>
           </Card>
       </div>
     </div>
