@@ -1363,7 +1363,7 @@ async def get_quadrant(
                     Sale.contract_date.isnot(None),
                     Sale.contract_date >= previous_start,
                     Sale.contract_date < previous_end,
-                    or_(Sale.remarks != "더미", Sale.remarks.is_(None))
+                    #or_(Sale.remarks != "더미", Sale.remarks.is_(None))
                 )
             )
             .group_by(extract('year', Sale.contract_date), extract('month', Sale.contract_date))
@@ -1383,7 +1383,7 @@ async def get_quadrant(
                     Sale.contract_date.isnot(None),
                     Sale.contract_date >= recent_start,
                     Sale.contract_date < recent_end,  # 현재 달 제외 (미만으로 변경)
-                    or_(Sale.remarks != "더미", Sale.remarks.is_(None))
+                    #or_(Sale.remarks != "더미", Sale.remarks.is_(None))
                 )
             )
             .group_by(extract('year', Sale.contract_date), extract('month', Sale.contract_date))
@@ -1402,7 +1402,7 @@ async def get_quadrant(
                     Rent.deal_date.isnot(None),
                     Rent.deal_date >= previous_start,
                     Rent.deal_date < previous_end,
-                    or_(Rent.remarks != "더미", Rent.remarks.is_(None))
+                    #or_(Rent.remarks != "더미", Rent.remarks.is_(None))
                 )
             )
             .group_by(extract('year', Rent.deal_date), extract('month', Rent.deal_date))
@@ -1421,7 +1421,7 @@ async def get_quadrant(
                     Rent.deal_date.isnot(None),
                     Rent.deal_date >= recent_start,
                     Rent.deal_date < recent_end,  # 현재 달 제외 (미만으로 변경)
-                    or_(Rent.remarks != "더미", Rent.remarks.is_(None))
+                    #or_(Rent.remarks != "더미", Rent.remarks.is_(None))
                 )
             )
             .group_by(extract('year', Rent.deal_date), extract('month', Rent.deal_date))
