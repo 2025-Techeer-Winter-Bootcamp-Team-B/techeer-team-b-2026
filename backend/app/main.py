@@ -225,10 +225,33 @@ instrumentator = Instrumentator(
 instrumentator.instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 
-# 전역 예외 핸들러 (CORS는 CORSMiddleware에서 자동 처리됨)
+# HTTPException 핸들러 (CORS 헤더 명시적 추가)
+from fastapi import HTTPException
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """HTTPException 핸들러 - CORS 헤더를 명시적으로 추가"""
+    from fastapi.responses import JSONResponse
+    
+    origin = request.headers.get("origin", "*")
+    
+    response = JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail}
+    )
+    
+    # CORS 헤더 명시적 추가
+    response.headers["Access-Control-Allow-Origin"] = origin
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    
+    return response
+
+
+# 전역 예외 핸들러 (CORS 헤더 명시적 추가)
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """전역 예외 핸들러 - CORSMiddleware가 CORS 헤더를 자동으로 추가함"""
+    """전역 예외 핸들러 - CORS 헤더를 명시적으로 추가"""
     from fastapi.responses import JSONResponse
     import logging
     import traceback
@@ -241,7 +264,10 @@ async def global_exception_handler(request: Request, exc: Exception):
     else:
         logger.error(f"예외 발생: {str(exc)}")
     
-    # 에러 응답 생성 (CORSMiddleware가 CORS 헤더를 자동으로 추가함)
+    # Origin 헤더 확인
+    origin = request.headers.get("origin", "*")
+    
+    # 에러 응답 생성 (CORS 헤더 명시적 추가)
     response = JSONResponse(
         status_code=500,
         content={
@@ -251,6 +277,12 @@ async def global_exception_handler(request: Request, exc: Exception):
             }
         }
     )
+    
+    # CORS 헤더 명시적 추가 (에러 응답에도 적용)
+    response.headers["Access-Control-Allow-Origin"] = origin
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
     
     return response
 
