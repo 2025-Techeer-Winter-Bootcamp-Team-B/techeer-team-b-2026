@@ -14,8 +14,10 @@ import {
   addFavoriteApartment,
   removeFavoriteApartment,
   createMyProperty,
+  updateMyProperty,
   deleteMyProperty,
   fetchApartmentExclusiveAreas,
+  fetchMyPropertyDetail,
   fetchNews,
   fetchApartmentsByRegion,
   fetchNearbyComparison,
@@ -680,7 +682,7 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
     loadNeighbors();
   }, [aptId, chartType, detailData.currentPrice, detailData.jeonsePrice, selectedArea]);
   
-  // 모달이 열릴 때 전용면적 목록 다시 로드
+  // 모달이 열릴 때 전용면적 목록 다시 로드 (추가 모드에서만 첫 번째 면적을 기본값으로 설정)
   useEffect(() => {
     if (isMyPropertyModalOpen && aptId) {
       const loadExclusiveAreas = async () => {
@@ -689,11 +691,12 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
           const response = await fetchApartmentExclusiveAreas(aptId);
           if (response.success && response.data.exclusive_areas.length > 0) {
             setExclusiveAreaOptions(response.data.exclusive_areas);
-            // 첫 번째 전용면적을 기본값으로 설정
-            setMyPropertyForm(prev => ({
-              ...prev,
-              exclusive_area: response.data.exclusive_areas[0]
-            }));
+            if (!isMyProperty || !myPropertyId) {
+              setMyPropertyForm(prev => ({
+                ...prev,
+                exclusive_area: response.data.exclusive_areas[0]
+              }));
+            }
           } else {
             setExclusiveAreaOptions([59, 84, 102, 114]);
           }
@@ -707,7 +710,32 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
       
       loadExclusiveAreas();
     }
-  }, [isMyPropertyModalOpen, aptId]);
+  }, [isMyPropertyModalOpen, aptId, isMyProperty, myPropertyId]);
+  
+  // 수정 모드: 모달이 열릴 때 기존 자산 데이터 로드 후 폼에 반영
+  useEffect(() => {
+    if (isMyPropertyModalOpen && isMyProperty && myPropertyId) {
+      const loadExistingProperty = async () => {
+        try {
+          const response = await fetchMyPropertyDetail(myPropertyId);
+          if (response.success && response.data) {
+            const p = response.data;
+            setMyPropertyForm({
+              nickname: p.nickname || '',
+              exclusive_area: p.exclusive_area ?? 84,
+              purchase_price: p.purchase_price != null ? String(p.purchase_price) : '',
+              loan_amount: p.loan_amount != null ? String(p.loan_amount) : '',
+              purchase_date: p.purchase_date || '',
+              memo: p.memo || ''
+            });
+          }
+        } catch (error) {
+          console.error('내 자산 상세 로드 실패:', error);
+        }
+      };
+      loadExistingProperty();
+    }
+  }, [isMyPropertyModalOpen, isMyProperty, myPropertyId]);
   
   // 전용면적별 가격 계산 (거래 내역 기반)
   const getPriceForArea = useMemo(() => {
@@ -742,7 +770,7 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
     }
   }, [myPropertyForm.exclusive_area, isMyPropertyModalOpen, getPriceForArea]);
   
-  // 내 자산 추가 제출
+  // 내 자산 추가/수정 제출
   const handleMyPropertySubmit = async () => {
     if (!isSignedIn) {
       alert('로그인이 필요합니다.');
@@ -754,39 +782,57 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
       const token = await getToken();
       if (token) setAuthToken(token);
       
-      // 전용면적에 맞는 현재 시세 계산
       const priceForArea = getPriceForArea(myPropertyForm.exclusive_area);
       const currentMarketPrice = priceForArea ? Math.round(priceForArea / 10000) : undefined;
       
-      const data = {
-        apt_id: aptId,
-        nickname: myPropertyForm.nickname || detailData.name,
-        exclusive_area: myPropertyForm.exclusive_area,
-        current_market_price: currentMarketPrice,
-        purchase_price: myPropertyForm.purchase_price ? parseInt(myPropertyForm.purchase_price) : undefined,
-        loan_amount: myPropertyForm.loan_amount ? parseInt(myPropertyForm.loan_amount) : undefined,
-        purchase_date: myPropertyForm.purchase_date || undefined,
-        memo: myPropertyForm.memo || undefined
-      };
-      
-      const response = await createMyProperty(data);
-      if (response.success) {
-        setIsMyProperty(true);
-        setMyPropertyId(response.data.property_id);
-        setIsMyPropertyModalOpen(false);
-        alert('내 자산에 추가되었습니다.');
-        // 폼 초기화
-        setMyPropertyForm({
-          nickname: '',
-          exclusive_area: exclusiveAreaOptions[0] || 84,
-          purchase_price: '',
-          loan_amount: '',
-          purchase_date: '',
-          memo: ''
-        });
+      if (isMyProperty && myPropertyId) {
+        // 수정 모드: updateMyProperty 호출
+        const updateData = {
+          nickname: myPropertyForm.nickname || detailData.name,
+          exclusive_area: myPropertyForm.exclusive_area,
+          current_market_price: currentMarketPrice,
+          purchase_price: myPropertyForm.purchase_price ? parseInt(myPropertyForm.purchase_price, 10) : undefined,
+          loan_amount: myPropertyForm.loan_amount ? parseInt(myPropertyForm.loan_amount, 10) : undefined,
+          purchase_date: myPropertyForm.purchase_date || undefined,
+          memo: myPropertyForm.memo || undefined
+        };
+        const response = await updateMyProperty(myPropertyId, updateData);
+        if (response.success) {
+          setMyPropertyExclusiveArea(myPropertyForm.exclusive_area);
+          setIsMyPropertyModalOpen(false);
+          alert('내 자산 정보가 수정되었습니다.');
+        }
+      } else {
+        // 추가 모드: createMyProperty 호출
+        const data = {
+          apt_id: aptId,
+          nickname: myPropertyForm.nickname || detailData.name,
+          exclusive_area: myPropertyForm.exclusive_area,
+          current_market_price: currentMarketPrice,
+          purchase_price: myPropertyForm.purchase_price ? parseInt(myPropertyForm.purchase_price, 10) : undefined,
+          loan_amount: myPropertyForm.loan_amount ? parseInt(myPropertyForm.loan_amount, 10) : undefined,
+          purchase_date: myPropertyForm.purchase_date || undefined,
+          memo: myPropertyForm.memo || undefined
+        };
+        const response = await createMyProperty(data);
+        if (response.success) {
+          setIsMyProperty(true);
+          setMyPropertyId(response.data.property_id);
+          setMyPropertyExclusiveArea(myPropertyForm.exclusive_area);
+          setIsMyPropertyModalOpen(false);
+          alert('내 자산에 추가되었습니다.');
+          setMyPropertyForm({
+            nickname: '',
+            exclusive_area: exclusiveAreaOptions[0] || 84,
+            purchase_price: '',
+            loan_amount: '',
+            purchase_date: '',
+            memo: ''
+          });
+        }
       }
     } catch (error) {
-      console.error('내 자산 추가 실패:', error);
+      console.error(isMyProperty && myPropertyId ? '내 자산 수정 실패:' : '내 자산 추가 실패:', error);
       alert('처리 중 오류가 발생했습니다.');
     } finally {
       setIsSubmitting(false);
@@ -1562,7 +1608,9 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
                                 주소
                                 <MapPin className={`${isSidebar ? 'w-3.5 h-3.5' : 'w-3 h-3'} text-slate-300`} />
                             </span>
-                            <span className={`${isSidebar ? 'text-[17px]' : 'text-[15px]'} font-bold text-slate-700 truncate`}>
+                            <span
+                                className={`${isSidebar ? 'text-[17px]' : 'text-[15px]'} font-bold text-slate-700 line-clamp-2 break-words`}
+                            >
                                 {detailData.location}
                             </span>
                         </div>
