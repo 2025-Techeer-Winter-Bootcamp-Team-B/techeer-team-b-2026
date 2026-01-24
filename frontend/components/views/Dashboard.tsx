@@ -14,6 +14,7 @@ import {
   fetchMyProperties, 
   fetchFavoriteApartments, 
   createMyProperty,
+  updateMyProperty,
   deleteMyProperty,
   addFavoriteApartment,
   removeFavoriteApartment,
@@ -24,7 +25,8 @@ import {
   fetchApartmentDetail,
   setAuthToken,
   type MyProperty,
-  type FavoriteApartment
+  type FavoriteApartment,
+  type ApartmentSearchItem
 } from '../../services/api';
 
 
@@ -1105,7 +1107,9 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
               }
               
               setSearchResults(response.data.results
-                  .filter((r): r is ApartmentSearchItem & { apt_id: number } => typeof r.apt_id === 'number')
+                  .filter((r): r is ApartmentSearchItem & { apt_id: number } => {
+                      return typeof r.apt_id === 'number';
+                  })
                   .map(r => ({
                       apt_id: r.apt_id,
                       apt_name: r.apt_name,
@@ -1156,14 +1160,22 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                       setMyPropertyForm(prev => ({
                           ...prev,
                           exclusive_area: areasRes.data.exclusive_areas[0],
-                          nickname: aptName
+                          nickname: aptName,
+                          purchase_price: prev.purchase_price,
+                          current_market_price: prev.current_market_price,
+                          purchase_date: prev.purchase_date,
+                          memo: prev.memo
                       }));
                   } else {
                       setExclusiveAreaOptions([59, 84, 102, 114]);
                       setMyPropertyForm(prev => ({
                           ...prev,
                           exclusive_area: 84,
-                          nickname: aptName
+                          nickname: aptName,
+                          purchase_price: prev.purchase_price,
+                          current_market_price: prev.current_market_price,
+                          purchase_date: prev.purchase_date,
+                          memo: prev.memo
                       }));
                   }
               } catch (error) {
@@ -1172,7 +1184,11 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                   setMyPropertyForm(prev => ({
                       ...prev,
                       exclusive_area: 84,
-                      nickname: aptName
+                      nickname: aptName,
+                      purchase_price: prev.purchase_price,
+                      current_market_price: prev.current_market_price,
+                      purchase_date: prev.purchase_date,
+                      memo: prev.memo
                   }));
               }
           } else if (activeGroupId === 'favorites') {
@@ -1281,6 +1297,9 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
               setMyPropertyForm({
                   nickname: '',
                   exclusive_area: 84,
+                  purchase_price: '',
+                  current_market_price: '',
+                  purchase_date: '',
                   memo: ''
               });
               alert('내 자산에 추가되었습니다.');
