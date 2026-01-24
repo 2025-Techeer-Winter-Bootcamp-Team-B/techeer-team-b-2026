@@ -454,7 +454,7 @@ export const HousingDemand: React.FC = () => {
     const loadQuadrantData = async () => {
       setIsQuadrantLoading(true);
       try {
-        const res = await fetchQuadrant(8);
+        const res = await fetchQuadrant(6);
         if (res.success) {
           setQuadrantData(res.data);
           // summary 추가
