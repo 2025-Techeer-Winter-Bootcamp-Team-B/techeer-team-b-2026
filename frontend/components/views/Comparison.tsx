@@ -313,7 +313,7 @@ const SearchAndSelectApart: React.FC<SearchAndSelectApartProps> = ({
         const response = await searchApartments(query, limit);
         const results = response.data.results;
         // Filter out non-numeric IDs (places) as comparison API only supports apartments
-        const aptIds = results
+        const aptIds: number[] = results
             .map((item) => item.apt_id)
             .filter((id): id is number => typeof id === 'number');
             
@@ -321,7 +321,7 @@ const SearchAndSelectApart: React.FC<SearchAndSelectApartProps> = ({
         
         // API 호출 시 에러 처리 강화
         for (let i = 0; i < aptIds.length; i += MAX_COMPARE) {
-            const chunk = aptIds.slice(i, i + MAX_COMPARE);
+            const chunk: number[] = aptIds.slice(i, i + MAX_COMPARE);
             if (!chunk.length) continue;
             try {
                 const compare = await fetchCompareApartments(chunk);
@@ -863,7 +863,7 @@ export const Comparison: React.FC = () => {
   const loadInitialAssets = async () => {
     try {
       const trending = await fetchTrendingApartments(MAX_COMPARE);
-      const aptIds = trending.data.apartments.map((apt) => apt.apt_id);
+      const aptIds: number[] = trending.data.apartments.map((apt) => apt.apt_id);
       if (!aptIds.length) {
         setMultiAssets([]);
         setOneToOneAssets([]);
@@ -1540,7 +1540,6 @@ export const Comparison: React.FC = () => {
                                     isAnimationActive={true}
                                     animationDuration={150}
                                     name="매매가"
-                                    baseValue={0}
                                     shape={(props: any) => renderBarShape(props, 'value')}
                                     fill="#94a3b8"
                                   >
