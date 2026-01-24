@@ -191,7 +191,19 @@ export const HousingDemand: React.FC = () => {
           formatter: function() { return this.value.toLocaleString(); }
         },
         gridLineColor: '#f1f5f9',
-        gridLineDashStyle: 'Dash'
+        gridLineDashStyle: 'Dash',
+        crosshair: {
+          width: 1,
+          color: '#cbd5e1',
+          dashStyle: 'Dash'
+        }
+      },
+      xAxis: {
+        crosshair: {
+          width: 1,
+          color: '#cbd5e1',
+          dashStyle: 'Dash'
+        }
       },
       tooltip: {
         backgroundColor: 'white',
@@ -199,8 +211,7 @@ export const HousingDemand: React.FC = () => {
         borderRadius: 12,
         shadow: { color: 'rgba(0,0,0,0.1)', width: 4, offsetX:0, offsetY:4 },
         style: { fontSize: '13px', fontWeight: 'bold', color: '#334155' },
-        shared: true,
-        crosshairs: true
+        shared: true
       },
       plotOptions: {
         area: {
