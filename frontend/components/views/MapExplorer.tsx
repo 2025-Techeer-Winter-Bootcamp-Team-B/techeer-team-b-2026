@@ -1126,12 +1126,13 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
     }
     
     // 가격 정보 가져오기
-    const priceMap = await fetchCompareMap([apt.apt_id]);
-    const priceValue = priceMap.get(apt.apt_id) ?? null;
+    const aptId = typeof apt.apt_id === 'number' ? apt.apt_id : Number(apt.apt_id);
+    const priceMap = await fetchCompareMap([aptId]);
+    const priceValue = priceMap.get(aptId) ?? null;
     
     const newApt: MapApartment = {
       id: String(apt.apt_id),
-      aptId: apt.apt_id,
+      aptId: aptId,
       name: apt.apt_name,
       priceLabel: formatPriceLabel(priceValue),
       priceValue,
