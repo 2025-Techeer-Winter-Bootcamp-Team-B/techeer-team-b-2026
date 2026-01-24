@@ -1,12 +1,10 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Trophy, TrendingUp, TrendingDown, Activity, ChevronRight, ArrowUpDown, Coins, CircleDollarSign, Banknote } from 'lucide-react';
+import { TrendingUp, TrendingDown, ArrowUpDown, Trophy, Activity, Banknote, CircleDollarSign } from 'lucide-react';
 import { ViewProps } from '../../types';
 import { Card } from '../ui/Card';
 import { ApartmentRow } from '../ui/ApartmentRow';
 import {
-  fetchApartmentRankings,
   fetchDashboardRankings,
-  type ApartmentRankingItem,
   type DashboardRankingItem
 } from '../../services/api';
 
@@ -151,7 +149,7 @@ export const Ranking: React.FC<ViewProps> = ({ onPropertyClick }) => {
   const rankingTypes = [
     { id: 'price', title: '가격 랭킹', icon: Trophy },
     { id: 'change', title: '변동률 랭킹', icon: ArrowUpDown },
-    { id: 'mostTraded', title: '거래량 많은 아파트', icon: Activity },
+    { id: 'mostTraded', title: '거래량 랭킹', icon: Activity },
   ];
 
   const handleFilterSelect = (filterId: string) => {
@@ -166,29 +164,6 @@ export const Ranking: React.FC<ViewProps> = ({ onPropertyClick }) => {
       return type === 'mostIncreased' || type === 'leastIncreased';
     }
     return selectedFilter === type;
-  };
-
-  // API 데이터를 RankingItem 형식으로 변환
-  const convertApartmentRankingItem = (
-    item: ApartmentRankingItem,
-    type: string
-  ): RankingItem => {
-    const avgPrice = item.avg_price;
-    const avgPricePerPyeong = item.avg_price_per_pyeong;
-    
-    // 평당가를 기준으로 평균 면적(84㎡)을 곱하여 가격 추정
-    const estimatedPrice = avgPrice || (avgPricePerPyeong ? avgPricePerPyeong * (84 / 3.3) : 0);
-    
-    return {
-      id: `${type}-${item.apt_id}`,
-      rank: item.rank,
-      name: item.apt_name,
-      location: item.region,
-      area: 84, // 기본값 (실제로는 API에서 가져와야 함)
-      price: Math.round(estimatedPrice),
-      changeRate: item.change_rate,
-      transactionCount: item.transaction_count,
-    };
   };
 
   // Dashboard 랭킹 데이터를 RankingItem 형식으로 변환
@@ -215,52 +190,6 @@ export const Ranking: React.FC<ViewProps> = ({ onPropertyClick }) => {
   // API 데이터 로딩
   useEffect(() => {
     const loadRankingData = async () => {
-      try {
-        // 가격 랭킹 (가장 비싼/싼)
-        setIsLoading(prev => ({ ...prev, priceHighest: true, priceLowest: true }));
-        setErrors(prev => ({ ...prev, priceHighest: null, priceLowest: null }));
-        
-        const [highestRes, lowestRes] = await Promise.all([
-          fetchApartmentRankings('price_highest', { priceMonths: 12, limit: 10 }),
-          fetchApartmentRankings('price_lowest', { priceMonths: 12, limit: 10 })
-        ]);
-        
-        if (highestRes.success) {
-          setPriceHighestData(highestRes.data.apartments.map(item => convertApartmentRankingItem(item, 'highest')));
-        }
-        if (lowestRes.success) {
-          setPriceLowestData(lowestRes.data.apartments.map(item => convertApartmentRankingItem(item, 'lowest')));
-        }
-        
-        setIsLoading(prev => ({ ...prev, priceHighest: false, priceLowest: false }));
-      } catch (error) {
-        console.error('가격 랭킹 데이터 로딩 실패:', error);
-        setErrors(prev => ({ 
-          ...prev, 
-          priceHighest: '데이터를 불러오는데 실패했습니다.',
-          priceLowest: '데이터를 불러오는데 실패했습니다.'
-        }));
-        setIsLoading(prev => ({ ...prev, priceHighest: false, priceLowest: false }));
-      }
-
-      try {
-        // 거래량 랭킹 (3개월)
-        setIsLoading(prev => ({ ...prev, volume: true }));
-        setErrors(prev => ({ ...prev, volume: null }));
-        
-        const volumeRes = await fetchApartmentRankings('volume', { volumeMonths: 3, limit: 10 });
-        
-        if (volumeRes.success) {
-          setVolumeData(volumeRes.data.apartments.map(item => convertApartmentRankingItem(item, 'volume')));
-        }
-        
-        setIsLoading(prev => ({ ...prev, volume: false }));
-      } catch (error) {
-        console.error('거래량 랭킹 데이터 로딩 실패:', error);
-        setErrors(prev => ({ ...prev, volume: '데이터를 불러오는데 실패했습니다.' }));
-        setIsLoading(prev => ({ ...prev, volume: false }));
-      }
-
       try {
         // 변동률 랭킹 (6개월) - 대시보드 API 사용
         setIsLoading(prev => ({ ...prev, changeUp: true, changeDown: true }));
@@ -389,10 +318,10 @@ export const Ranking: React.FC<ViewProps> = ({ onPropertyClick }) => {
           </div>
         )}
 
-        {/* 거래량 많은 아파트 */}
+        {/* 거래량 랭킹 */}
         {shouldShowRanking('mostTraded') && (
           <RankingSection
-            title="거래량 많은 아파트"
+            title="거래량 랭킹"
             icon={Activity}
             type="mostTraded"
             periods={[]}

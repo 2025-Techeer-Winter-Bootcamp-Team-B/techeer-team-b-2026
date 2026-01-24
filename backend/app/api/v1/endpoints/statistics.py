@@ -13,8 +13,9 @@
 import logging
 import sys
 import asyncio
+from collections import defaultdict
 from datetime import date, datetime, timedelta
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_, case, desc, text, extract
@@ -42,15 +43,17 @@ from app.schemas.statistics import (
     PopulationMovementSankeyResponse,
     PopulationMovementSankeyDataPoint,
     CorrelationAnalysisResponse,
-    TransactionVolumeResponse,
-    MarketPhaseResponse,
-    MarketPhaseDataPoint,
     HPIRegionTypeResponse,
     HPIRegionTypeDataPoint,
-    PopulationMovementRegionTypeResponse,
-    PopulationMovementRegionTypeDataPoint
+    TransactionVolumeResponse,
+    TransactionVolumeDataPoint,
+    MarketPhaseResponse,
+    MarketPhaseListResponse,
+    MarketPhaseDataPoint,
+    MarketPhaseCalculationMethod,
+    MarketPhaseThresholds
 )
-from app.utils.cache import get_from_cache, set_to_cache, build_cache_key
+from app.utils.cache import get_from_cache, set_to_cache, build_cache_key, delete_cache_pattern
 
 # 로거 설정 (Docker 로그에 출력되도록)
 logger = logging.getLogger(__name__)
@@ -334,51 +337,6 @@ def get_region_type_filter(region_type: str):
         raise ValueError(f"유효하지 않은 region_type: {region_type}")
 
 
-def calculate_market_phase(price_change_rate: float, volume_change_rate: float) -> tuple[str, str, str]:
-    """
-    가격 변화율과 거래량 변화율을 기반으로 시장 국면 분류
-    
-    Args:
-        price_change_rate: 가격 변화율 (%)
-        volume_change_rate: 거래량 변화율 (%)
-    
-    Returns:
-        (phase, trend, change) 튜플
-        - phase: "상승기", "회복기", "침체기", "후퇴기"
-        - trend: "up", "down"
-        - change: 변화율 문자열 (예: "+1.5%")
-    """
-    if price_change_rate > 0 and volume_change_rate > 0:
-        phase = "상승기"
-        trend = "up"
-    elif price_change_rate > 0 and volume_change_rate < 0:
-        phase = "회복기"
-        trend = "up"
-    elif price_change_rate < 0 and volume_change_rate < 0:
-        phase = "침체기"
-        trend = "down"
-    elif price_change_rate < 0 and volume_change_rate > 0:
-        phase = "후퇴기"
-        trend = "down"
-    else:
-        # 변화율이 0인 경우는 중립으로 처리
-        if price_change_rate == 0 and volume_change_rate == 0:
-            phase = "중립"
-            trend = "up"
-        elif price_change_rate == 0:
-            phase = "회복기" if volume_change_rate > 0 else "침체기"
-            trend = "up" if volume_change_rate > 0 else "down"
-        else:
-            phase = "상승기" if price_change_rate > 0 else "후퇴기"
-            trend = "up" if price_change_rate > 0 else "down"
-    
-    # 변화율 문자열 생성 (가격 변화율 기준)
-    change_sign = "+" if price_change_rate >= 0 else ""
-    change_str = f"{change_sign}{price_change_rate:.1f}%"
-    
-    return (phase, trend, change_str)
-
-
 def calculate_quadrant(sale_change_rate: float, rent_change_rate: float) -> tuple[int, str]:
     """
     4분면 분류 계산
@@ -406,6 +364,721 @@ def calculate_quadrant(sale_change_rate: float, rent_change_rate: float) -> tupl
             return (2 if rent_change_rate > 0 else 3, "임대 선호/관망" if rent_change_rate > 0 else "시장 위축")
         else:
             return (1 if sale_change_rate > 0 else 3, "매수 전환" if sale_change_rate > 0 else "시장 위축")
+
+
+# ============================================================
+# 시장 국면 지표 헬퍼 함수
+# ============================================================
+
+def get_region_filters(region_type: str, city_name: Optional[str] = None) -> list:
+    """
+    지역 유형에 따른 필터 조건 반환
+    
+    Args:
+        region_type: 지역 유형 ("전국", "수도권", "지방5대광역시")
+        city_name: 특정 시도명 (지방5대광역시일 때 특정 지역 필터링)
+    
+    Returns:
+        SQLAlchemy 필터 조건 리스트
+    """
+    if region_type == "전국":
+        filters = []
+        logger.debug(f"지역 필터: 전국 (필터 없음)")
+        return filters
+    elif region_type == "수도권":
+        filters = [State.city_name.in_(['서울특별시', '경기도', '인천광역시'])]
+        logger.debug(f"지역 필터: 수도권 - 서울특별시, 경기도, 인천광역시")
+        return filters
+    elif region_type == "지방5대광역시":
+        if city_name:
+            filters = [State.city_name == city_name]
+            logger.debug(f"지역 필터: 지방5대광역시 - {city_name}")
+            return filters
+        filters = [State.city_name.in_(['부산광역시', '대구광역시', '광주광역시', '대전광역시', '울산광역시'])]
+        logger.debug(f"지역 필터: 지방5대광역시 - 부산광역시, 대구광역시, 광주광역시, 대전광역시, 울산광역시")
+        return filters
+    else:
+        logger.warning(f"알 수 없는 region_type: {region_type}")
+        return []
+
+
+async def get_thresholds(
+    db: AsyncSession,
+    region_type: str,
+    region_name: Optional[str] = None,
+    volume_threshold: Optional[float] = None,
+    price_threshold: Optional[float] = None
+) -> tuple[float, float]:
+    """
+    임계값 조회 (API 파라미터 우선, 없으면 기본값)
+    
+    우선순위:
+    1. API 파라미터
+    2. 지역별 설정값 테이블 (향후 구현)
+    3. 기본값
+    
+    Args:
+        db: 데이터베이스 세션
+        region_type: 지역 유형 ("전국", "수도권", "지방5대광역시")
+        region_name: 지역명 (지방5대광역시일 때)
+        volume_threshold: API 파라미터로 전달된 거래량 임계값
+        price_threshold: API 파라미터로 전달된 가격 임계값
+    
+    Returns:
+        (volume_threshold, price_threshold) 튜플
+    """
+    # 1. API 파라미터가 있으면 우선 사용
+    if volume_threshold is not None and price_threshold is not None:
+        return volume_threshold, price_threshold
+    
+    # 2. 지역별 설정값 테이블에서 조회 (향후 구현)
+    # TODO: market_phase_thresholds 테이블 조회
+    # if db:
+    #     threshold_record = await db.query(MarketPhaseThreshold).filter(
+    #         MarketPhaseThreshold.region_type == region_type,
+    #         MarketPhaseThreshold.region_name == region_name if region_name else None
+    #     ).first()
+    #     
+    #     if threshold_record:
+    #         return (
+    #             volume_threshold or threshold_record.volume_threshold,
+    #             price_threshold or threshold_record.price_threshold
+    #         )
+    
+    # 3. 지역별 기본값 사용
+    # API 파라미터가 없으면 지역별 기본값 적용
+    if region_type == "전국":
+        default_vol_threshold = 2.0
+        default_price_threshold = 0.5
+    elif region_type == "수도권":
+        default_vol_threshold = 2.5
+        default_price_threshold = 0.6
+    elif region_type == "지방5대광역시":
+        default_vol_threshold = 1.7
+        default_price_threshold = 0.4
+    else:
+        default_vol_threshold = 2.0
+        default_price_threshold = 0.5
+    
+    final_vol_threshold = volume_threshold if volume_threshold is not None else default_vol_threshold
+    final_price_threshold = price_threshold if price_threshold is not None else default_price_threshold
+    
+    logger.info(
+        f"[Thresholds] Threshold lookup - "
+        f"region_type: {region_type}, region_name: {region_name}, "
+        f"API params: vol={volume_threshold}, price={price_threshold}, "
+        f"Final values: vol={final_vol_threshold}, price={final_price_threshold}"
+    )
+    
+    return final_vol_threshold, final_price_threshold
+
+
+def calculate_market_phase(
+    volume_change_rate: Optional[float],
+    price_change_rate: Optional[float],
+    current_month_volume: int,
+    min_transaction_count: int = 5,
+    volume_threshold: float = 2.0,
+    price_threshold: float = 0.5
+) -> dict:
+    """
+    벌집 순환 모형에 따른 시장 국면 판별
+    
+    6개 국면:
+    1. 회복 (Recovery): 거래량 증가 ↑ / 가격 하락 혹은 보합 →
+    2. 상승 (Expansion): 거래량 증가 ↑ / 가격 상승 ↑
+    3. 둔화 (Slowdown): 거래량 감소 ↓ / 가격 상승 ↑
+    4. 후퇴 (Recession): 거래량 감소 ↓ / 가격 하락 ↓
+    5. 침체 (Depression): 거래량 급감 ↓ / 가격 하락세 지속 ↓
+    6. 천착 (Trough): 거래량 미세 증가 ↑ / 가격 하락 ↓
+    
+    Args:
+        volume_change_rate: 거래량 변동률 (%)
+        price_change_rate: 가격 변동률 (%)
+        current_month_volume: 현재 월 거래량
+        min_transaction_count: 최소 거래 건수 (기본값: 5)
+        volume_threshold: 거래량 변동 임계값 (%)
+        price_threshold: 가격 변동 임계값 (%)
+    
+    Returns:
+        {
+            "phase": int | None,
+            "phase_label": str,
+            "description": str,
+            "current_month_volume": int,
+            "min_required_volume": int
+        } 딕셔너리
+    """
+    # 예외 처리: 거래량이 너무 적은 경우
+    if current_month_volume < min_transaction_count:
+        return {
+            "phase": None,
+            "phase_label": "데이터 부족",
+            "description": f"데이터 부족으로 판별 불가 (현재 월 거래량: {current_month_volume}건, 최소 요구량: {min_transaction_count}건)",
+            "current_month_volume": current_month_volume,
+            "min_required_volume": min_transaction_count
+        }
+    
+    # 데이터 부족 체크
+    if volume_change_rate is None or price_change_rate is None:
+        return {
+            "phase": None,
+            "phase_label": "데이터 부족",
+            "description": "가격 또는 거래량 데이터 부족으로 판별 불가",
+            "current_month_volume": current_month_volume,
+            "min_required_volume": min_transaction_count
+        }
+    
+    # 임계값 기반 판별
+    volume_up = volume_change_rate > volume_threshold
+    volume_down = volume_change_rate < -volume_threshold
+    price_up = price_change_rate > price_threshold
+    price_down = price_change_rate < -price_threshold
+    price_stable = -price_threshold <= price_change_rate <= price_threshold
+    
+    # 1. 회복 (Recovery): 거래량 증가 ↑ / 가격 하락 혹은 보합 →
+    if volume_up and (price_down or price_stable):
+        return {
+            "phase": 1,
+            "phase_label": "회복",
+            "description": "거래량 증가와 가격 하락/보합이 동반되는 바닥 다지기 단계입니다.",
+            "current_month_volume": current_month_volume,
+            "min_required_volume": min_transaction_count
+        }
+    
+    # 2. 상승 (Expansion): 거래량 증가 ↑ / 가격 상승 ↑
+    if volume_up and price_up:
+        return {
+            "phase": 2,
+            "phase_label": "상승",
+            "description": "거래량 증가와 가격 상승이 동반되는 활황기입니다.",
+            "current_month_volume": current_month_volume,
+            "min_required_volume": min_transaction_count
+        }
+    
+    # 3. 둔화 (Slowdown): 거래량 감소 ↓ / 가격 상승 ↑
+    if volume_down and price_up:
+        return {
+            "phase": 3,
+            "phase_label": "둔화",
+            "description": "거래량 감소와 가격 상승이 동반되는 에너지 고갈 단계입니다.",
+            "current_month_volume": current_month_volume,
+            "min_required_volume": min_transaction_count
+        }
+    
+    # 4. 후퇴 (Recession): 거래량 감소 ↓ / 가격 하락 ↓
+    if volume_down and price_down:
+        return {
+            "phase": 4,
+            "phase_label": "후퇴",
+            "description": "거래량 감소와 가격 하락이 동반되는 본격 하락 단계입니다.",
+            "current_month_volume": current_month_volume,
+            "min_required_volume": min_transaction_count
+        }
+    
+    # 5. 침체 (Depression): 거래량 급감 ↓ / 가격 하락세 지속 ↓
+    if volume_change_rate < -5.0 and price_change_rate < -1.0:
+        return {
+            "phase": 5,
+            "phase_label": "침체",
+            "description": "거래량 급감과 가격 하락세 지속이 동반되는 침체기입니다.",
+            "current_month_volume": current_month_volume,
+            "min_required_volume": min_transaction_count
+        }
+    
+    # 6. 천착 (Trough): 거래량 미세 증가 ↑ / 가격 하락 ↓
+    if 0 < volume_change_rate <= volume_threshold and price_down:
+        return {
+            "phase": 6,
+            "phase_label": "천착",
+            "description": "거래량 미세 증가와 가격 하락이 동반되는 반등 준비 단계입니다.",
+            "current_month_volume": current_month_volume,
+            "min_required_volume": min_transaction_count
+        }
+    
+    # 기본값: 중립
+    return {
+        "phase": 0,
+        "phase_label": "중립",
+        "description": "시장이 중립 상태입니다.",
+        "current_month_volume": current_month_volume,
+        "min_required_volume": min_transaction_count
+    }
+
+
+async def calculate_volume_change_rate_average(
+    db: AsyncSession,
+    region_type: str,
+    city_name: Optional[str] = None,
+    average_period_months: int = 6
+) -> tuple[Optional[float], int]:
+    """
+    과거 평균 대비 거래량 변동률 계산
+    
+    Args:
+        db: 데이터베이스 세션
+        region_type: 지역 유형
+        city_name: 특정 시도명 (지방5대광역시일 때)
+        average_period_months: 평균 계산 기간 (개월)
+    
+    Returns:
+        (volume_change_rate, current_month_volume) 튜플
+    """
+    # 현재 날짜 기준으로 기간 계산
+    # 가이드 문서에 따르면 "이전 달" 데이터를 조회 (완전히 집계된 데이터)
+    now = datetime.now()
+    current_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    
+    # 이전 달 계산 (더 안전한 방법)
+    if current_month_start.month == 1:
+        previous_month_start = current_month_start.replace(year=current_month_start.year - 1, month=12)
+    else:
+        previous_month_start = current_month_start.replace(month=current_month_start.month - 1)
+    
+    # 지역 필터
+    region_filters = get_region_filters(region_type, city_name)
+    
+    # 현재 월 거래량 (이전 달 완전히 집계된 데이터)
+    # 가이드 문서: contract_date >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '1 month'
+    #            AND contract_date < DATE_TRUNC('month', CURRENT_DATE)
+    current_volume_query = select(func.count(Sale.trans_id)).select_from(
+        Sale.__table__.join(
+            Apartment.__table__,
+            Sale.apt_id == Apartment.apt_id
+        ).join(
+            State.__table__,
+            Apartment.region_id == State.region_id
+        )
+    ).where(
+        and_(
+            Sale.is_canceled == False,
+            or_(Sale.is_deleted == False, Sale.is_deleted.is_(None)),
+            Sale.contract_date.isnot(None),
+            # TODO: 실제 데이터 사용 시 아래 주석 해제
+            # or_(Sale.remarks != '더미', Sale.remarks.is_(None)),
+            Sale.contract_date >= previous_month_start,
+            Sale.contract_date < current_month_start,
+            *region_filters
+        )
+    )
+    
+    current_volume_result = await db.execute(current_volume_query)
+    current_month_volume = current_volume_result.scalar() or 0
+    
+    # 디버깅: 쿼리 결과 상세 로깅
+    if current_month_volume == 0:
+        logger.warning(
+            f"거래량 변동률 계산: 현재 월 거래량 0 - "
+            f"region_type: {region_type}, city_name: {city_name}, "
+            f"조회 기간: {previous_month_start.date()} ~ {current_month_start.date()}, "
+            f"필터 조건: {region_filters}"
+        )
+        
+        # 디버깅: 필터 없이 전체 거래량 확인
+        debug_query = select(func.count(Sale.trans_id)).select_from(
+            Sale.__table__.join(
+                Apartment.__table__,
+                Sale.apt_id == Apartment.apt_id
+            ).join(
+                State.__table__,
+                Apartment.region_id == State.region_id
+            )
+        ).where(
+            and_(
+                Sale.is_canceled == False,
+                or_(Sale.is_deleted == False, Sale.is_deleted.is_(None)),
+                Sale.contract_date.isnot(None),
+                Sale.contract_date >= previous_month_start,
+                Sale.contract_date < current_month_start,
+                *region_filters
+            )
+        )
+        debug_result = await db.execute(debug_query)
+        debug_count = debug_result.scalar() or 0
+        logger.info(f"디버깅: 필터 적용 거래량 = {debug_count}")
+        
+        # 디버깅: 해당 지역의 전체 거래량 확인 (필터 없이)
+        if city_name:
+            city_only_query = select(func.count(Sale.trans_id)).select_from(
+                Sale.__table__.join(
+                    Apartment.__table__,
+                    Sale.apt_id == Apartment.apt_id
+                ).join(
+                    State.__table__,
+                    Apartment.region_id == State.region_id
+                )
+            ).where(
+                and_(
+                    Sale.is_canceled == False,
+                    or_(Sale.is_deleted == False, Sale.is_deleted.is_(None)),
+                    Sale.contract_date.isnot(None),
+                    Sale.contract_date >= previous_month_start,
+                    Sale.contract_date < current_month_start,
+                    State.city_name == city_name
+                )
+            )
+            city_result = await db.execute(city_only_query)
+            city_count = city_result.scalar() or 0
+            logger.info(
+                f"🔍 디버깅: {city_name} 지역 전체 거래량 (필터 없이) = {city_count}, "
+                f"조회 기간: {previous_month_start.date()} ~ {current_month_start.date()}"
+            )
+            
+            # 디버깅: 해당 지역의 아파트 수 확인
+            apt_count_query = select(func.count(Apartment.apt_id)).select_from(
+                Apartment.__table__.join(
+                    State.__table__,
+                    Apartment.region_id == State.region_id
+                )
+            ).where(
+                State.city_name == city_name
+            )
+            apt_result = await db.execute(apt_count_query)
+            apt_count = apt_result.scalar() or 0
+            logger.info(f"🔍 디버깅: {city_name} 지역 아파트 수 = {apt_count}")
+            
+            # 디버깅: 해당 지역의 전체 거래 수 확인 (기간 제한 없이)
+            all_time_query = select(func.count(Sale.trans_id)).select_from(
+                Sale.__table__.join(
+                    Apartment.__table__,
+                    Sale.apt_id == Apartment.apt_id
+                ).join(
+                    State.__table__,
+                    Apartment.region_id == State.region_id
+                )
+            ).where(
+                and_(
+                    Sale.is_canceled == False,
+                    or_(Sale.is_deleted == False, Sale.is_deleted.is_(None)),
+                    Sale.contract_date.isnot(None),
+                    State.city_name == city_name
+                )
+            )
+            all_time_result = await db.execute(all_time_query)
+            all_time_count = all_time_result.scalar() or 0
+            logger.info(f"🔍 디버깅: {city_name} 지역 전체 기간 거래량 = {all_time_count}")
+        
+        return None, 0
+    
+    # 과거 평균 거래량 계산 (N개월 평균)
+    # 월별 거래량을 구한 후 평균 계산
+    avg_start_date = previous_month_start - timedelta(days=30 * average_period_months)
+    
+    # 월별 거래량 조회
+    monthly_volumes_query = select(
+        extract('year', Sale.contract_date).label('year'),
+        extract('month', Sale.contract_date).label('month'),
+        func.count(Sale.trans_id).label('volume')
+    ).select_from(
+        Sale.__table__.join(
+            Apartment.__table__,
+            Sale.apt_id == Apartment.apt_id
+        ).join(
+            State.__table__,
+            Apartment.region_id == State.region_id
+        )
+    ).where(
+        and_(
+            Sale.is_canceled == False,
+            or_(Sale.is_deleted == False, Sale.is_deleted.is_(None)),
+            Sale.contract_date.isnot(None),
+            # TODO: 실제 데이터 사용 시 아래 주석 해제
+            # or_(Sale.remarks != '더미', Sale.remarks.is_(None)),
+            Sale.contract_date >= avg_start_date,
+            Sale.contract_date < previous_month_start,
+            *region_filters
+        )
+    ).group_by(
+        extract('year', Sale.contract_date),
+        extract('month', Sale.contract_date)
+    )
+    
+    monthly_volumes_result = await db.execute(monthly_volumes_query)
+    monthly_volumes = [row.volume for row in monthly_volumes_result.fetchall()]
+    
+    if not monthly_volumes:
+        logger.warning(
+            f"거래량 변동률 계산: 과거 평균 데이터 없음 - "
+            f"region_type: {region_type}, city_name: {city_name}, "
+            f"기간: {average_period_months}개월"
+        )
+        return None, current_month_volume
+    
+    avg_volume = sum(monthly_volumes) / len(monthly_volumes)
+    
+    if avg_volume == 0:
+        logger.warning(
+            f"거래량 변동률 계산: 과거 평균 거래량 0 - "
+            f"region_type: {region_type}, city_name: {city_name}"
+        )
+        return None, current_month_volume
+    
+    volume_change_rate = ((current_month_volume - avg_volume) / avg_volume) * 100
+    return volume_change_rate, current_month_volume
+
+
+async def calculate_volume_change_rate_mom(
+    db: AsyncSession,
+    region_type: str,
+    city_name: Optional[str] = None
+) -> tuple[Optional[float], int]:
+    """
+    전월 대비 거래량 변동률 계산
+    
+    Args:
+        db: 데이터베이스 세션
+        region_type: 지역 유형
+        city_name: 특정 시도명 (지방5대광역시일 때)
+    
+    Returns:
+        (volume_change_rate, current_month_volume) 튜플
+    """
+    # 현재 날짜 기준으로 기간 계산
+    now = datetime.now()
+    current_month_start = now.replace(day=1)
+    previous_month_start = (current_month_start - timedelta(days=1)).replace(day=1)
+    two_months_ago_start = (previous_month_start - timedelta(days=1)).replace(day=1)
+    
+    # 지역 필터
+    region_filters = get_region_filters(region_type, city_name)
+    logger.debug(
+        f"거래량 변동률 계산 (mom) - "
+        f"region_type: {region_type}, city_name: {city_name}, "
+        f"필터 개수: {len(region_filters)}"
+    )
+    
+    # 최근 2개월 거래량 조회
+    monthly_volumes_query = select(
+        extract('year', Sale.contract_date).label('year'),
+        extract('month', Sale.contract_date).label('month'),
+        func.count(Sale.trans_id).label('volume')
+    ).select_from(
+        Sale.__table__.join(
+            Apartment.__table__,
+            Sale.apt_id == Apartment.apt_id
+        ).join(
+            State.__table__,
+            Apartment.region_id == State.region_id
+        )
+    ).where(
+        and_(
+            Sale.is_canceled == False,
+            or_(Sale.is_deleted == False, Sale.is_deleted.is_(None)),
+            Sale.contract_date.isnot(None),
+            # TODO: 실제 데이터 사용 시 아래 주석 해제
+            # or_(Sale.remarks != '더미', Sale.remarks.is_(None)),
+            Sale.contract_date >= two_months_ago_start,
+            Sale.contract_date < current_month_start,
+            *region_filters
+        )
+    ).group_by(
+        extract('year', Sale.contract_date),
+        extract('month', Sale.contract_date)
+    ).order_by(
+        desc(extract('year', Sale.contract_date)),
+        desc(extract('month', Sale.contract_date))
+    ).limit(2)
+    
+    monthly_volumes_result = await db.execute(monthly_volumes_query)
+    monthly_data = monthly_volumes_result.fetchall()
+    
+    if len(monthly_data) < 2:
+        logger.warning(
+            f"거래량 변동률 계산 (전월 대비): 데이터 부족 - "
+            f"필요: 2개월, 실제: {len(monthly_data)}개월, "
+            f"region_type: {region_type}, city_name: {city_name}"
+        )
+        return None, 0
+    
+    current_volume = monthly_data[0].volume
+    previous_volume = monthly_data[1].volume
+    
+    if previous_volume == 0:
+        logger.warning(
+            f"거래량 변동률 계산 (전월 대비): 전월 거래량 0 - "
+            f"region_type: {region_type}, city_name: {city_name}"
+        )
+        return None, current_volume
+    
+    volume_change_rate = ((current_volume - previous_volume) / previous_volume) * 100
+    return volume_change_rate, current_volume
+
+
+async def calculate_price_change_rate_moving_average(
+    db: AsyncSession,
+    region_type: str,
+    city_name: Optional[str] = None
+) -> Optional[float]:
+    """
+    최근 3개월 이동평균 변동률 계산
+    
+    최근 3개월 평균 vs 이전 3개월 평균 비교
+    
+    Args:
+        db: 데이터베이스 세션
+        region_type: 지역 유형
+        city_name: 특정 시도명 (지방5대광역시일 때)
+    
+    Returns:
+        가격 변동률 (%) 또는 None
+    """
+    # 최근 6개월 HPI 데이터 조회 필요
+    # base_ym은 YYYYMM 형식 문자열 (CHAR(6))
+    now = datetime.now()
+    current_year_month = now.strftime('%Y%m')  # 문자열로 유지
+    
+    # 6개월 전 base_ym 계산
+    six_months_ago = now - timedelta(days=180)
+    start_base_ym = six_months_ago.strftime('%Y%m')  # 문자열로 유지
+    
+    # 지역 필터
+    region_filters = get_region_filters(region_type, city_name)
+    logger.debug(
+        f"가격 변동률 계산 - "
+        f"region_type: {region_type}, city_name: {city_name}, "
+        f"필터 개수: {len(region_filters)}"
+    )
+    
+    # HPI 데이터 조회 (최근 6개월)
+    # base_ym은 문자열이므로 문자열 비교 사용
+    hpi_query = select(
+        HouseScore.base_ym,
+        HouseScore.index_value,
+        State.city_name,
+        State.region_id
+    ).join(
+        State, HouseScore.region_id == State.region_id
+    ).where(
+        and_(
+            HouseScore.is_deleted == False,
+            State.is_deleted == False,
+            HouseScore.index_type == 'APT',
+            HouseScore.base_ym >= start_base_ym,
+            HouseScore.base_ym <= current_year_month,
+            *region_filters
+        )
+    ).order_by(
+        desc(HouseScore.base_ym)
+    )
+    
+    hpi_result = await db.execute(hpi_query)
+    hpi_data = hpi_result.fetchall()
+    
+    if len(hpi_data) < 6:
+        # 최소 6개월 데이터 필요
+        logger.warning(
+            f"가격 변동률 계산: 데이터 부족 - "
+            f"필요: 6개월, 실제: {len(hpi_data)}개월"
+        )
+        return None
+    
+    # 전국/수도권: 전체 평균 계산
+    if region_type in ["전국", "수도권"]:
+        # base_ym별로 평균 index_value 계산
+        hpi_by_month = defaultdict(list)
+        for row in hpi_data:
+            hpi_by_month[row.base_ym].append(row.index_value)
+        
+        # 월별 평균 계산
+        monthly_avg = {
+            base_ym: sum(values) / len(values)
+            for base_ym, values in hpi_by_month.items()
+        }
+        
+        # base_ym 순서대로 정렬 (최신순)
+        # base_ym은 YYYYMM 형식 문자열이므로 정수로 변환하여 정렬
+        sorted_months = sorted(
+            monthly_avg.keys(), 
+            key=lambda x: int(x) if isinstance(x, str) and x.isdigit() else int(x) if isinstance(x, (int, float)) else 0,
+            reverse=True
+        )
+        
+        if len(sorted_months) < 6:
+            logger.warning(
+                f"가격 변동률 계산: 데이터 부족 - "
+                f"필요: 6개월, 실제: {len(sorted_months)}개월 (region_type: {region_type})"
+            )
+            return None
+        
+        # 최근 3개월 평균
+        recent_3months_values = [monthly_avg[m] for m in sorted_months[:3]]
+        current_avg = sum(recent_3months_values) / len(recent_3months_values)
+        
+        # 이전 3개월 평균 (4~6개월 전)
+        previous_3months_values = [monthly_avg[m] for m in sorted_months[3:6]]
+        previous_avg = sum(previous_3months_values) / len(previous_3months_values)
+        
+        if previous_avg == 0:
+            logger.warning(
+                f"가격 변동률 계산: 이전 평균이 0 - region_type: {region_type}"
+            )
+            return None
+        
+        price_change_rate = ((current_avg - previous_avg) / previous_avg) * 100
+        return price_change_rate
+    
+    # 지방5대광역시: 특정 지역별 계산
+    else:
+        if not city_name:
+            if not hpi_data:
+                logger.warning(
+                    f"가격 변동률 계산: 데이터 없음 - region_type: {region_type}"
+                )
+                return None
+            # city_name이 없으면 첫 번째 지역 사용
+            city_name = hpi_data[0].city_name
+        
+        # 해당 지역의 데이터만 필터링
+        region_hpi = [row for row in hpi_data if row.city_name == city_name]
+        
+        if len(region_hpi) < 6:
+            logger.warning(
+                f"가격 변동률 계산: 데이터 부족 - "
+                f"필요: 6개월, 실제: {len(region_hpi)}개월 (지역: {city_name})"
+            )
+            return None
+        
+        # base_ym별로 그룹화하여 평균 계산 (같은 base_ym에 여러 데이터가 있을 수 있음)
+        hpi_by_month = defaultdict(list)
+        for row in region_hpi:
+            hpi_by_month[row.base_ym].append(float(row.index_value))
+        
+        # 월별 평균 계산
+        monthly_avg = {
+            base_ym: sum(values) / len(values)
+            for base_ym, values in hpi_by_month.items()
+        }
+        
+        # base_ym 순서대로 정렬 (최신순)
+        sorted_months = sorted(
+            monthly_avg.keys(), 
+            key=lambda x: int(x) if isinstance(x, str) and x.isdigit() else int(x) if isinstance(x, (int, float)) else 0,
+            reverse=True
+        )
+        
+        if len(sorted_months) < 6:
+            logger.warning(
+                f"가격 변동률 계산: 데이터 부족 - "
+                f"필요: 6개월, 실제: {len(sorted_months)}개월 (지역: {city_name})"
+            )
+            return None
+        
+        # 최근 3개월 평균
+        recent_3months_values = [monthly_avg[m] for m in sorted_months[:3]]
+        current_avg = sum(recent_3months_values) / len(recent_3months_values)
+        
+        # 이전 3개월 평균 (4~6개월 전)
+        previous_3months_values = [monthly_avg[m] for m in sorted_months[3:6]]
+        previous_avg = sum(previous_3months_values) / len(previous_3months_values)
+        
+        if previous_avg == 0:
+            logger.warning(
+                f"가격 변동률 계산: 이전 평균이 0 - 지역: {city_name}"
+            )
+            return None
+        
+        price_change_rate = ((current_avg - previous_avg) / previous_avg) * 100
+        return price_change_rate
 
 
 @router.get(
@@ -1387,492 +2060,6 @@ async def get_population_movements(
 # ============================================================
 
 @router.get(
-    "/transaction-volume",
-    response_model=TransactionVolumeResponse,
-    status_code=status.HTTP_200_OK,
-    tags=["📊 Statistics (통계)"],
-    summary="지역별 월별/년도별 거래량 조회",
-    description="""
-    지역 유형별로 월별 또는 년도별 거래량을 조회합니다.
-    
-    ### 지역 유형
-    - **전국**: 모든 지역
-    - **수도권**: 서울특별시 + 경기도 + 인천광역시
-    - **지방5대광역시**: 부산광역시, 대구광역시, 광주광역시, 대전광역시, 울산광역시
-    
-    ### Query Parameters
-    - `region_type`: 지역 유형 (required)
-    - `period_type`: 기간 유형 (required, "monthly" | "yearly")
-    - `year_range`: 년도 범위 (optional, monthly일 때만, 2 | 3 | 5)
-    - `start_year`: 시작 연도 (optional, yearly일 때만)
-    - `end_year`: 종료 연도 (optional, yearly일 때만)
-    - `transaction_type`: 거래 유형 (optional, "sale" | "rent", 기본값: "sale")
-    """
-)
-async def get_transaction_volume(
-    region_type: str = Query(..., description="지역 유형: 전국, 수도권, 지방5대광역시"),
-    period_type: str = Query(..., description="기간 유형: monthly(월별), yearly(년도별)"),
-    year_range: Optional[int] = Query(None, ge=2, le=5, description="년도 범위 (월별일 때만, 2 | 3 | 5)"),
-    start_year: Optional[int] = Query(None, ge=2000, le=2100, description="시작 연도 (년도별일 때만)"),
-    end_year: Optional[int] = Query(None, ge=2000, le=2100, description="종료 연도 (년도별일 때만)"),
-    transaction_type: str = Query("sale", description="거래 유형: sale(매매), rent(전월세)"),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    지역별 월별/년도별 거래량 조회
-    """
-    # 유효성 검증
-    valid_region_types = ["전국", "수도권", "지방5대광역시"]
-    if region_type not in valid_region_types:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"유효하지 않은 region_type입니다. 가능한 값: {', '.join(valid_region_types)}"
-        )
-    
-    valid_period_types = ["monthly", "yearly"]
-    if period_type not in valid_period_types:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"유효하지 않은 period_type입니다. 가능한 값: {', '.join(valid_period_types)}"
-        )
-    
-    if period_type == "monthly" and year_range is None:
-        year_range = 3  # 기본값
-    if period_type == "yearly" and (start_year is None or end_year is None):
-        # 기본값: 최근 5년
-        current_year = date.today().year
-        end_year = current_year
-        start_year = current_year - 5
-    
-    cache_key = build_cache_key(
-        "statistics", "transaction-volume", region_type, period_type,
-        str(year_range) if year_range else "",
-        str(start_year) if start_year else "",
-        str(end_year) if end_year else "",
-        transaction_type
-    )
-    
-    # 캐시에서 조회 시도
-    cached_data = await get_from_cache(cache_key)
-    if cached_data is not None:
-        logger.info(f"✅ [Statistics Transaction Volume] 캐시에서 반환")
-        return cached_data
-    
-    try:
-        logger.info(
-            f"🔍 [Statistics Transaction Volume] 거래량 데이터 조회 시작 - "
-            f"region_type: {region_type}, period_type: {period_type}, "
-            f"year_range: {year_range}, transaction_type: {transaction_type}"
-        )
-        
-        # 거래 유형에 따른 테이블 및 필드 선택
-        if transaction_type == "sale":
-            trans_table = Sale
-            date_field = Sale.contract_date
-            base_filter = and_(
-                Sale.is_canceled == False,
-                (Sale.is_deleted == False) | (Sale.is_deleted.is_(None)),
-                Sale.contract_date.isnot(None),
-                or_(Sale.remarks != "더미", Sale.remarks.is_(None))
-            )
-        else:  # rent
-            trans_table = Rent
-            date_field = Rent.deal_date
-            base_filter = and_(
-                (Rent.is_deleted == False) | (Rent.is_deleted.is_(None)),
-                Rent.deal_date.isnot(None),
-                or_(Rent.remarks != "더미", Rent.remarks.is_(None))
-            )
-        
-        # 지역 필터 조건
-        region_filter = get_region_type_filter(region_type)
-        
-        # 날짜 범위 계산
-        today = date.today()
-        current_year = today.year
-        current_month = today.month
-        
-        if period_type == "monthly":
-            # 월별: 최근 year_range년 데이터
-            start_date = date(current_year - year_range, 1, 1)
-            end_date = date(current_year, current_month, 1)  # 현재 달 제외
-        else:  # yearly
-            # 년도별: start_year ~ end_year
-            start_date = date(start_year, 1, 1)
-            end_date = date(end_year, 12, 31)
-        
-        # 쿼리 구성
-        query = (
-            select(
-                extract('year', date_field).label('year'),
-                extract('month', date_field).label('month'),
-                func.count(trans_table.trans_id).label('count')
-            )
-            .join(Apartment, trans_table.apt_id == Apartment.apt_id)
-            .join(State, Apartment.region_id == State.region_id)
-            .where(
-                and_(
-                    base_filter,
-                    date_field >= start_date,
-                    date_field <= end_date,
-                    (Apartment.is_deleted == False) | (Apartment.is_deleted.is_(None)),
-                    (State.is_deleted == False) | (State.is_deleted.is_(None))
-                )
-            )
-        )
-        
-        # 지역 필터 적용
-        if region_filter is not None:
-            query = query.where(region_filter)
-        
-        # 그룹화
-        if period_type == "monthly":
-            query = query.group_by(
-                extract('year', date_field),
-                extract('month', date_field)
-            ).order_by(
-                extract('year', date_field),
-                extract('month', date_field)
-            )
-        else:  # yearly
-            query = query.group_by(
-                extract('year', date_field)
-            ).order_by(
-                extract('year', date_field)
-            )
-        
-        result = await db.execute(query)
-        rows = result.fetchall()
-        
-        # 응답 데이터 생성
-        if period_type == "monthly":
-            # 월별: 동적 키 형식으로 변환
-            monthly_data_map: Dict[str, Dict[str, Any]] = {}
-            years_set = set()
-            
-            for row in rows:
-                year = int(row.year)
-                month = int(row.month)
-                count = row.count or 0
-                
-                years_set.add(year)
-                month_key = f"{month}월"
-                
-                if month_key not in monthly_data_map:
-                    monthly_data_map[month_key] = {"period": month_key}
-                
-                # JSON 키는 문자열이어야 하므로 년도를 문자열로 변환
-                monthly_data_map[month_key][str(year)] = count
-            
-            data = list(monthly_data_map.values())
-            years = sorted(years_set)
-            
-            response_data = TransactionVolumeResponse(
-                success=True,
-                data=data,
-                years=years,
-                region_type=region_type,
-                period_type=period_type,
-                year_range=year_range,
-                start_year=None,
-                end_year=None
-            )
-        else:  # yearly
-            # 년도별: {period, value} 형식
-            data = []
-            for row in rows:
-                year = int(row.year)
-                count = row.count or 0
-                data.append({
-                    "period": str(year),
-                    "value": count
-                })
-            
-            response_data = TransactionVolumeResponse(
-                success=True,
-                data=data,
-                years=None,
-                region_type=region_type,
-                period_type=period_type,
-                year_range=None,
-                start_year=start_year,
-                end_year=end_year
-            )
-        
-        # 캐시에 저장
-        if len(data) > 0:
-            await set_to_cache(cache_key, response_data.dict(), ttl=STATISTICS_CACHE_TTL)
-        
-        logger.info(f"✅ [Statistics Transaction Volume] 거래량 데이터 생성 완료 - 데이터 포인트 수: {len(data)}")
-        
-        return response_data
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ [Statistics Transaction Volume] 거래량 데이터 조회 실패: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"거래량 데이터 조회 중 오류가 발생했습니다: {str(e)}"
-        )
-
-
-@router.get(
-    "/market-phase",
-    response_model=MarketPhaseResponse,
-    status_code=status.HTTP_200_OK,
-    tags=["📊 Statistics (통계)"],
-    summary="지역별 시장 국면 분석",
-    description="""
-    가격 변화율과 거래량 변화율을 기반으로 지역별 시장 국면을 분석합니다.
-    
-    ### 시장 국면 분류
-    - **상승기**: 가격↑ + 거래량↑
-    - **회복기**: 가격↑ + 거래량↓
-    - **침체기**: 가격↓ + 거래량↓
-    - **후퇴기**: 가격↓ + 거래량↑
-    
-    ### Query Parameters
-    - `region_type`: 지역 유형 (required)
-    - `region_id`: 특정 지역 ID (optional)
-    - `period_months`: 비교 기간 (optional, 기본값: 2)
-    - `transaction_type`: 거래 유형 (optional, 기본값: "sale")
-    """
-)
-async def get_market_phase(
-    region_type: str = Query(..., description="지역 유형: 전국, 수도권, 지방5대광역시"),
-    region_id: Optional[int] = Query(None, description="특정 지역 ID (지정 시 해당 지역만 조회)"),
-    period_months: int = Query(2, ge=1, le=12, description="비교 기간 (개월)"),
-    transaction_type: str = Query("sale", description="거래 유형: sale(매매), rent(전월세)"),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    지역별 시장 국면 분석
-    """
-    # 유효성 검증
-    valid_region_types = ["전국", "수도권", "지방5대광역시"]
-    if region_type not in valid_region_types:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"유효하지 않은 region_type입니다. 가능한 값: {', '.join(valid_region_types)}"
-        )
-    
-    cache_key = build_cache_key(
-        "statistics", "market-phase", region_type,
-        str(region_id) if region_id else "all",
-        str(period_months),
-        transaction_type
-    )
-    
-    # 캐시에서 조회 시도
-    cached_data = await get_from_cache(cache_key)
-    if cached_data is not None:
-        logger.info(f"✅ [Statistics Market Phase] 캐시에서 반환")
-        return cached_data
-    
-    try:
-        logger.info(
-            f"🔍 [Statistics Market Phase] 시장 국면 분석 시작 - "
-            f"region_type: {region_type}, region_id: {region_id}, "
-            f"period_months: {period_months}, transaction_type: {transaction_type}"
-        )
-        
-        # 거래 유형에 따른 테이블 및 필드 선택
-        if transaction_type == "sale":
-            trans_table = Sale
-            price_field = Sale.trans_price
-            date_field = Sale.contract_date
-            area_field = Sale.exclusive_area
-            base_filter = and_(
-                Sale.is_canceled == False,
-                (Sale.is_deleted == False) | (Sale.is_deleted.is_(None)),
-                Sale.contract_date.isnot(None),
-                Sale.trans_price.isnot(None),
-                Sale.exclusive_area.isnot(None),
-                Sale.exclusive_area > 0,
-                or_(Sale.remarks != "더미", Sale.remarks.is_(None))
-            )
-        else:  # rent
-            trans_table = Rent
-            price_field = Rent.deposit_price
-            date_field = Rent.deal_date
-            area_field = Rent.exclusive_area
-            base_filter = and_(
-                or_(Rent.monthly_rent == 0, Rent.monthly_rent.is_(None)),  # 전세만
-                (Rent.is_deleted == False) | (Rent.is_deleted.is_(None)),
-                Rent.deal_date.isnot(None),
-                Rent.deposit_price.isnot(None),
-                Rent.exclusive_area.isnot(None),
-                Rent.exclusive_area > 0,
-                or_(Rent.remarks != "더미", Rent.remarks.is_(None))
-            )
-        
-        # 날짜 범위 계산
-        today = date.today()
-        current_month_start = date(today.year, today.month, 1)
-        
-        recent_start = current_month_start - timedelta(days=period_months * 30)
-        recent_end = current_month_start  # 현재 달 제외
-        
-        previous_start = recent_start - timedelta(days=period_months * 30)
-        previous_end = recent_start
-        
-        # 지역 필터 조건
-        region_filter = get_region_type_filter(region_type)
-        
-        # 시군구 레벨로 그룹화 (region_id, region_name 사용)
-        # 최근 기간 평균 가격 및 거래량
-        recent_stmt = (
-            select(
-                State.region_id,
-                State.city_name,
-                State.region_name,
-                func.avg(price_field / area_field * 3.3).label('avg_price_per_pyeong'),
-                func.count(trans_table.trans_id).label('volume')
-            )
-            .join(Apartment, trans_table.apt_id == Apartment.apt_id)
-            .join(State, Apartment.region_id == State.region_id)
-            .where(
-                and_(
-                    base_filter,
-                    date_field >= recent_start,
-                    date_field < recent_end,
-                    (Apartment.is_deleted == False) | (Apartment.is_deleted.is_(None)),
-                    (State.is_deleted == False) | (State.is_deleted.is_(None))
-                )
-            )
-            .group_by(State.region_id, State.city_name, State.region_name)
-            .having(func.count(trans_table.trans_id) >= 5)  # 최소 5건 이상
-        )
-        
-        # 이전 기간 평균 가격 및 거래량
-        previous_stmt = (
-            select(
-                State.region_id,
-                State.city_name,
-                State.region_name,
-                func.avg(price_field / area_field * 3.3).label('avg_price_per_pyeong'),
-                func.count(trans_table.trans_id).label('volume')
-            )
-            .join(Apartment, trans_table.apt_id == Apartment.apt_id)
-            .join(State, Apartment.region_id == State.region_id)
-            .where(
-                and_(
-                    base_filter,
-                    date_field >= previous_start,
-                    date_field < previous_end,
-                    (Apartment.is_deleted == False) | (Apartment.is_deleted.is_(None)),
-                    (State.is_deleted == False) | (State.is_deleted.is_(None))
-                )
-            )
-            .group_by(State.region_id, State.city_name, State.region_name)
-            .having(func.count(trans_table.trans_id) >= 5)  # 최소 5건 이상
-        )
-        
-        # 지역 필터 적용
-        if region_filter is not None:
-            recent_stmt = recent_stmt.where(region_filter)
-            previous_stmt = previous_stmt.where(region_filter)
-        
-        # 특정 지역 필터 적용
-        if region_id is not None:
-            recent_stmt = recent_stmt.where(State.region_id == region_id)
-            previous_stmt = previous_stmt.where(State.region_id == region_id)
-        
-        # 병렬 실행
-        recent_result, previous_result = await asyncio.gather(
-            db.execute(recent_stmt),
-            db.execute(previous_stmt)
-        )
-        
-        recent_rows = recent_result.fetchall()
-        previous_rows = previous_result.fetchall()
-        
-        # 이전 기간 데이터를 딕셔너리로 변환
-        previous_data_map: Dict[int, Dict[str, Any]] = {}
-        for row in previous_rows:
-            previous_data_map[row.region_id] = {
-                "avg_price": float(row.avg_price_per_pyeong or 0),
-                "volume": row.volume or 0
-            }
-        
-        # 시장 국면 분석 데이터 생성
-        market_phases = []
-        for row in recent_rows:
-            region_id_val = row.region_id
-            city_name = row.city_name
-            region_name = row.region_name
-            
-            # 이전 기간 데이터가 없으면 스킵
-            if region_id_val not in previous_data_map:
-                continue
-            
-            recent_price = float(row.avg_price_per_pyeong or 0)
-            recent_volume = row.volume or 0
-            previous_price = previous_data_map[region_id_val]["avg_price"]
-            previous_volume = previous_data_map[region_id_val]["volume"]
-            
-            # 변화율 계산
-            if previous_price > 0:
-                price_change_rate = ((recent_price - previous_price) / previous_price) * 100
-            else:
-                price_change_rate = 0.0
-            
-            if previous_volume > 0:
-                volume_change_rate = ((recent_volume - previous_volume) / previous_volume) * 100
-            else:
-                volume_change_rate = 0.0
-            
-            # 시장 국면 분류
-            phase, trend, change_str = calculate_market_phase(price_change_rate, volume_change_rate)
-            
-            # 지역명 생성 (시도 + 시군구)
-            full_region_name = f"{city_name} {region_name}" if region_name else city_name
-            
-            market_phases.append(MarketPhaseDataPoint(
-                region_id=region_id_val,
-                region_name=full_region_name,
-                city_name=city_name,
-                phase=phase,
-                trend=trend,
-                change=change_str,
-                price_change_rate=round(price_change_rate, 2),
-                volume_change_rate=round(volume_change_rate, 2),
-                recent_price=round(recent_price, 1),
-                previous_price=round(previous_price, 1),
-                recent_volume=recent_volume,
-                previous_volume=previous_volume
-            ))
-        
-        # 정렬 (시도 → 시군구)
-        market_phases.sort(key=lambda x: (x.city_name, x.region_name))
-        
-        response_data = MarketPhaseResponse(
-            success=True,
-            data=market_phases,
-            region_type=region_type,
-            period_months=period_months
-        )
-        
-        # 캐시에 저장
-        if len(market_phases) > 0:
-            await set_to_cache(cache_key, response_data.dict(), ttl=STATISTICS_CACHE_TTL)
-        
-        logger.info(f"✅ [Statistics Market Phase] 시장 국면 분석 완료 - 데이터 포인트 수: {len(market_phases)}")
-        
-        return response_data
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ [Statistics Market Phase] 시장 국면 분석 실패: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"시장 국면 분석 중 오류가 발생했습니다: {str(e)}"
-        )
-
-
-@router.get(
     "/hpi/by-region-type",
     response_model=HPIRegionTypeResponse,
     status_code=status.HTTP_200_OK,
@@ -2182,170 +2369,737 @@ async def get_hpi_by_region_type(
 
 
 @router.get(
-    "/population-movements/by-region-type",
-    response_model=PopulationMovementRegionTypeResponse,
+    "/transaction-volume",
+    response_model=TransactionVolumeResponse,
     status_code=status.HTTP_200_OK,
     tags=["📊 Statistics (통계)"],
-    summary="지역 유형별 인구 순이동 조회",
+    summary="거래량 조회 (월별 데이터)",
     description="""
-    지역 유형별로 인구 순이동 데이터를 조회합니다.
+    전국, 수도권, 지방5대광역시의 월별 거래량을 조회합니다.
+    
+    ### 지역 유형
+    - **전국**: 전체 지역
+    - **수도권**: 서울특별시, 경기도, 인천광역시
+    - **지방5대광역시**: 부산광역시, 대구광역시, 광주광역시, 대전광역시, 울산광역시
+    
+    ### 데이터 형식
+    - 월별 데이터를 반환합니다 (연도, 월, 거래량)
+    - 지방5대광역시의 경우 `city_name` 필드가 포함됩니다
+    - 프론트엔드에서 연도별 집계 또는 월별 뷰로 변환하여 사용합니다
     
     ### Query Parameters
-    - `region_type`: 지역 유형 (required)
-    - `start_ym`: 시작 년월 (optional, 기본값: 최근 3개월 전)
-    - `end_ym`: 종료 년월 (optional, 기본값: 최신)
-    - `aggregate`: 집계 방식 (optional, "sum" | "avg", 기본값: "sum")
+    - `region_type`: 지역 유형 (필수) - "전국", "수도권", "지방5대광역시"
+    - `transaction_type`: 거래 유형 (선택) - "sale"(매매), "rent"(전월세), 기본값: "sale"
+    - `max_years`: 최대 연도 수 (선택) - 1~10, 기본값: 10
     """
 )
-async def get_population_movements_by_region_type(
+async def get_transaction_volume(
     region_type: str = Query(..., description="지역 유형: 전국, 수도권, 지방5대광역시"),
-    start_ym: Optional[str] = Query(None, description="시작 년월 (YYYYMM)"),
-    end_ym: Optional[str] = Query(None, description="종료 년월 (YYYYMM)"),
-    aggregate: str = Query("sum", description="집계 방식: sum(합계), avg(평균)"),
+    transaction_type: str = Query("sale", description="거래 유형: sale(매매), rent(전월세)"),
+    max_years: int = Query(10, ge=1, le=10, description="최대 연도 수 (1~10)"),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    지역 유형별 인구 순이동 조회
+    거래량 조회 (월별 데이터)
+    
+    최근 N년치 월별 거래량 데이터를 반환합니다.
+    프론트엔드에서 연도별 집계 또는 월별 뷰로 변환하여 사용합니다.
     """
-    # 유효성 검증
-    valid_region_types = ["전국", "수도권", "지방5대광역시"]
-    if region_type not in valid_region_types:
+    # 파라미터 검증
+    if region_type not in ["전국", "수도권", "지방5대광역시"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"유효하지 않은 region_type입니다. 가능한 값: {', '.join(valid_region_types)}"
+            detail=f"유효하지 않은 region_type: {region_type}. 허용 값: 전국, 수도권, 지방5대광역시"
         )
     
-    valid_aggregates = ["sum", "avg"]
-    if aggregate not in valid_aggregates:
+    if transaction_type not in ["sale", "rent"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"유효하지 않은 aggregate입니다. 가능한 값: {', '.join(valid_aggregates)}"
+            detail=f"유효하지 않은 transaction_type: {transaction_type}. 허용 값: sale, rent"
         )
     
-    # 기본 기간 설정
-    if not end_ym:
-        end_date = datetime.now()
-        end_ym = end_date.strftime("%Y%m")
-    
-    if not start_ym:
-        # 최근 3개월 전
-        start_date = datetime.now() - timedelta(days=90)
-        start_ym = start_date.strftime("%Y%m")
-    
-    # 기간 개월 수 계산
-    start_year = int(start_ym[:4])
-    start_month = int(start_ym[4:])
-    end_year = int(end_ym[:4])
-    end_month = int(end_ym[4:])
-    period_months = (end_year - start_year) * 12 + (end_month - start_month) + 1
-    
+    # 캐시 키 생성
     cache_key = build_cache_key(
-        "statistics", "population-movements-by-region-type", region_type,
-        start_ym, end_ym, aggregate
+        "statistics", "volume", region_type, transaction_type, str(max_years)
     )
     
-    # 캐시에서 조회 시도
+    # 캐시에서 조회 시도 (일시적으로 비활성화하여 DB 직접 조회)
+    # TODO: 원인 파악 후 재활성화
     cached_data = await get_from_cache(cache_key)
     if cached_data is not None:
-        logger.info(f"✅ [Statistics Population Movement Region Type] 캐시에서 반환")
-        return cached_data
+        # 캐시된 데이터의 연도 범위 확인 (디버깅용)
+        if cached_data.get("data"):
+            cached_years = sorted(set(int(item.get("year", 0)) for item in cached_data.get("data", [])), reverse=True)
+            cached_data_count = len(cached_data.get("data", []))
+            logger.warning(
+                f"⚠️ [Statistics Transaction Volume] 캐시 발견 (무시하고 DB 조회) - "
+                f"region_type: {region_type}, "
+                f"데이터 포인트 수: {cached_data_count}, "
+                f"연도 범위: {cached_years[0] if cached_years else 'N/A'} ~ {cached_years[-1] if cached_years else 'N/A'}, "
+                f"캐시 키: {cache_key}"
+            )
+            # 캐시 무시하고 DB에서 직접 조회 (디버깅용)
+            # return cached_data
+        else:
+            logger.info(f"✅ [Statistics Transaction Volume] 캐시에서 반환 (데이터 없음) - region_type: {region_type}, 캐시 키: {cache_key}")
+            return cached_data
     
     try:
         logger.info(
-            f"🔍 [Statistics Population Movement Region Type] 인구 순이동 데이터 조회 시작 - "
-            f"region_type: {region_type}, start_ym: {start_ym}, end_ym: {end_ym}, aggregate: {aggregate}"
+            f"🔍 [Statistics Transaction Volume] 거래량 데이터 조회 시작 - "
+            f"region_type: {region_type}, transaction_type: {transaction_type}, max_years: {max_years}"
         )
         
-        # 지역 필터 조건
+        # 현재 날짜 기준으로 연도 범위 계산
+        current_date = date.today()
+        start_year = current_date.year - max_years + 1
+        start_date = date(start_year, 1, 1)
+        end_date = current_date
+        
+        logger.info(
+            f"📅 [Statistics Transaction Volume] 날짜 범위 설정 - "
+            f"start_date: {start_date}, end_date: {end_date}, "
+            f"start_year: {start_year}, max_years: {max_years}"
+        )
+        
+        # 거래 유형에 따른 테이블 및 필드 선택
+        if transaction_type == "sale":
+            trans_table = Sale
+            date_field = Sale.contract_date
+            base_filter = and_(
+                Sale.is_canceled == False,
+                (Sale.is_deleted == False) | (Sale.is_deleted.is_(None)),
+                Sale.contract_date.isnot(None),
+                # remarks 필터: 테스트 데이터가 모두 '더미'이므로 일단 제거
+                # TODO: 실제 운영 데이터에서 더미 데이터 제외 필요 시 재활성화
+                # or_(Sale.remarks != "더미", Sale.remarks.is_(None)),
+                Sale.contract_date >= start_date,
+                Sale.contract_date <= end_date
+            )
+        else:  # rent
+            trans_table = Rent
+            date_field = Rent.deal_date
+            base_filter = and_(
+                (Rent.is_deleted == False) | (Rent.is_deleted.is_(None)),
+                Rent.deal_date.isnot(None),
+                # remarks 필터: 테스트 데이터가 모두 '더미'이므로 일단 제거
+                # TODO: 실제 운영 데이터에서 더미 데이터 제외 필요 시 재활성화
+                # or_(Rent.remarks != "더미", Rent.remarks.is_(None)),
+                Rent.deal_date >= start_date,
+                Rent.deal_date <= end_date
+            )
+        
+        # 디버깅: 실제 DB에 존재하는 최신 데이터 연도 확인 (필터 전)
+        max_date_query_all = select(
+            func.max(date_field).label('max_date'),
+            func.min(date_field).label('min_date'),
+            func.count().label('total_count')
+        ).select_from(trans_table).where(
+            and_(
+                trans_table.is_canceled == False if transaction_type == "sale" else True,
+                (trans_table.is_deleted == False) | (trans_table.is_deleted.is_(None)),
+                date_field.isnot(None)
+            )
+        )
+        max_date_result_all = await db.execute(max_date_query_all)
+        max_date_row_all = max_date_result_all.first()
+        
+        # 디버깅: remarks 값 분포 확인
+        remarks_dist_query = select(
+            trans_table.remarks,
+            func.count().label('count')
+        ).select_from(trans_table).where(
+            and_(
+                trans_table.is_canceled == False if transaction_type == "sale" else True,
+                (trans_table.is_deleted == False) | (trans_table.is_deleted.is_(None)),
+                date_field.isnot(None),
+                date_field >= start_date,
+                date_field <= end_date
+            )
+        ).group_by(trans_table.remarks).limit(10)
+        remarks_dist_result = await db.execute(remarks_dist_query)
+        remarks_dist_rows = remarks_dist_result.all()
+        remarks_dist = {row.remarks or 'NULL': row.count for row in remarks_dist_rows}
+        logger.info(
+            f"🔍 [Statistics Transaction Volume] remarks 값 분포 확인 - "
+            f"{remarks_dist}"
+        )
+        
+        # 디버깅: 필터 적용 후 데이터 확인 (remarks 필터 제외)
+        max_date_query_no_remarks = select(
+            func.max(date_field).label('max_date'),
+            func.min(date_field).label('min_date'),
+            func.count().label('total_count')
+        ).select_from(trans_table).where(
+            and_(
+                trans_table.is_canceled == False if transaction_type == "sale" else True,
+                (trans_table.is_deleted == False) | (trans_table.is_deleted.is_(None)),
+                date_field.isnot(None),
+                date_field >= start_date,
+                date_field <= end_date
+            )
+        )
+        max_date_result_no_remarks = await db.execute(max_date_query_no_remarks)
+        max_date_row_no_remarks = max_date_result_no_remarks.first()
+        
+        # 디버깅: base_filter 적용 후 데이터 확인 (remarks 필터 제거됨)
+        max_date_query = select(
+            func.max(date_field).label('max_date'),
+            func.min(date_field).label('min_date'),
+            func.count().label('total_count')
+        ).select_from(trans_table).where(
+            and_(
+                trans_table.is_canceled == False if transaction_type == "sale" else True,
+                (trans_table.is_deleted == False) | (trans_table.is_deleted.is_(None)),
+                date_field.isnot(None),
+                # remarks 필터 제거됨 (테스트 데이터가 모두 '더미')
+                date_field >= start_date,
+                date_field <= end_date
+            )
+        )
+        max_date_result = await db.execute(max_date_query)
+        max_date_row = max_date_result.first()
+        
+        if max_date_row_all:
+            logger.info(
+                f"🔍 [Statistics Transaction Volume] DB 전체 데이터 범위 (필터 전) - "
+                f"최신 날짜: {max_date_row_all.max_date}, "
+                f"최 old 날짜: {max_date_row_all.min_date}, "
+                f"전체 거래 수: {max_date_row_all.total_count}"
+            )
+        
+        if max_date_row_no_remarks:
+            logger.info(
+                f"🔍 [Statistics Transaction Volume] DB 데이터 범위 (remarks 필터 제외) - "
+                f"최신 날짜: {max_date_row_no_remarks.max_date}, "
+                f"최 old 날짜: {max_date_row_no_remarks.min_date}, "
+                f"거래 수: {max_date_row_no_remarks.total_count}"
+            )
+        
+        if max_date_row and max_date_row.max_date:
+            logger.info(
+                f"🔍 [Statistics Transaction Volume] DB 실제 데이터 범위 (base_filter 적용) - "
+                f"최신 날짜: {max_date_row.max_date}, "
+                f"최 old 날짜: {max_date_row.min_date}, "
+                f"필터링된 거래 수: {max_date_row.total_count}, "
+                f"날짜 범위: {start_date} ~ {end_date}"
+            )
+            
+            # 날짜 범위와 실제 데이터 범위 비교
+            if max_date_row.min_date and max_date_row.min_date > start_date:
+                logger.warning(
+                    f"⚠️ [Statistics Transaction Volume] 날짜 범위 불일치 - "
+                    f"요청한 시작 날짜: {start_date}, "
+                    f"실제 데이터 최소 날짜: {max_date_row.min_date}, "
+                    f"차이: {(max_date_row.min_date - start_date).days}일"
+                )
+        
+        # 지역 필터링 조건 가져오기
         region_filter = get_region_type_filter(region_type)
         
-        # 집계 함수 선택
-        if aggregate == "sum":
-            net_migration_func = func.sum(PopulationMovement.net_migration)
-            in_migration_func = func.sum(PopulationMovement.in_migration)
-            out_migration_func = func.sum(PopulationMovement.out_migration)
-        else:  # avg
-            net_migration_func = func.avg(PopulationMovement.net_migration)
-            in_migration_func = func.avg(PopulationMovement.in_migration)
-            out_migration_func = func.avg(PopulationMovement.out_migration)
-        
-        # 쿼리 구성: 시도 레벨로 그룹화
-        query = (
-            select(
-                State.city_name,
-                net_migration_func.label('net_migration'),
-                in_migration_func.label('in_migration'),
-                out_migration_func.label('out_migration')
+        # 디버깅: 실제 데이터 존재 여부 확인 (수도권, 지방5대광역시)
+        if region_type in ["수도권", "지방5대광역시"]:
+            debug_query = select(
+                extract('year', date_field).label('year'),
+                func.count().label('count')
+            ).select_from(
+                trans_table
+            ).join(
+                Apartment, trans_table.apt_id == Apartment.apt_id
+            ).join(
+                State, Apartment.region_id == State.region_id
+            ).where(
+                and_(base_filter, region_filter)
+            ).group_by(
+                extract('year', date_field)
+            ).order_by(
+                desc(extract('year', date_field))
             )
-            .join(State, PopulationMovement.region_id == State.region_id)
-            .where(
-                and_(
-                    PopulationMovement.base_ym >= start_ym,
-                    PopulationMovement.base_ym <= end_ym,
-                    PopulationMovement.is_deleted == False,
-                    State.is_deleted == False
+            debug_result = await db.execute(debug_query)
+            debug_rows = debug_result.all()
+            debug_years = [int(row.year) for row in debug_rows[:10]]  # 최신 10개 연도
+            logger.info(
+                f"🔍 [Statistics Transaction Volume] {region_type} 실제 데이터 연도 확인 - "
+                f"최신 연도: {debug_years[0] if debug_years else 'N/A'}, "
+                f"연도 목록: {debug_years}, "
+                f"총 {len(debug_rows)}개 연도 데이터 존재"
+            )
+            
+            # JOIN 전 데이터 확인 (디버깅용) - 항상 실행
+            # JOIN 없이 거래 데이터만 확인
+            no_join_query = select(
+                extract('year', date_field).label('year'),
+                func.count().label('count')
+            ).select_from(
+                trans_table
+            ).where(
+                base_filter
+            ).group_by(
+                extract('year', date_field)
+            ).order_by(
+                desc(extract('year', date_field))
+            )
+            no_join_result = await db.execute(no_join_query)
+            no_join_rows = no_join_result.all()
+            no_join_years = [int(row.year) for row in no_join_rows[:10]]
+            
+            if len(debug_rows) == 0 and len(no_join_rows) > 0:
+                logger.warning(
+                    f"⚠️ [Statistics Transaction Volume] {region_type} JOIN으로 인한 데이터 손실 확인 - "
+                    f"JOIN 전: {len(no_join_rows)}개 연도 (최신: {no_join_years[0] if no_join_years else 'N/A'}), "
+                    f"JOIN 후: 0개 연도 (JOIN 조건 문제 가능성)"
                 )
+            elif len(debug_rows) > 0:
+                logger.info(
+                    f"✅ [Statistics Transaction Volume] {region_type} JOIN 전/후 데이터 비교 - "
+                    f"JOIN 전: {len(no_join_rows)}개 연도, JOIN 후: {len(debug_rows)}개 연도"
+                )
+        
+        # 쿼리 구성
+        if region_type == "전국":
+            # 전국: JOIN 없이 거래 테이블만 사용
+            # 디버깅: 전국 쿼리 전에 base_filter 적용 결과 확인
+            debug_national_query = select(
+                extract('year', date_field).label('year'),
+                func.count().label('count')
+            ).select_from(
+                trans_table
+            ).where(
+                base_filter
+            ).group_by(
+                extract('year', date_field)
+            ).order_by(
+                desc(extract('year', date_field))
             )
-            .group_by(State.city_name)
+            debug_national_result = await db.execute(debug_national_query)
+            debug_national_rows = debug_national_result.all()
+            debug_national_years = [int(row.year) for row in debug_national_rows]
+            logger.info(
+                f"🔍 [Statistics Transaction Volume] 전국 base_filter 적용 후 연도 확인 - "
+                f"연도 목록: {debug_national_years[:10]}, "
+                f"총 {len(debug_national_rows)}개 연도"
+            )
+            
+            query = select(
+                extract('year', date_field).label('year'),
+                extract('month', date_field).label('month'),
+                func.count().label('volume')
+            ).select_from(
+                trans_table
+            ).where(
+                base_filter
+            ).group_by(
+                extract('year', date_field),
+                extract('month', date_field)
+            ).order_by(
+                desc(extract('year', date_field)),
+                extract('month', date_field)
+            )
+        elif region_type == "지방5대광역시":
+            # 지방5대광역시: city_name 포함하여 그룹화
+            # 디버깅: 지방5대광역시 JOIN 전 데이터 확인
+            debug_local_before_join = select(
+                extract('year', date_field).label('year'),
+                func.count().label('count')
+            ).select_from(
+                trans_table
+            ).where(
+                base_filter
+            ).group_by(
+                extract('year', date_field)
+            ).order_by(
+                desc(extract('year', date_field))
+            )
+            debug_local_before_result = await db.execute(debug_local_before_join)
+            debug_local_before_rows = debug_local_before_result.all()
+            debug_local_before_years = [int(row.year) for row in debug_local_before_rows]
+            logger.info(
+                f"🔍 [Statistics Transaction Volume] 지방5대광역시 JOIN 전 연도 확인 - "
+                f"연도 목록: {debug_local_before_years[:10]}, "
+                f"총 {len(debug_local_before_rows)}개 연도"
+            )
+            
+            query = select(
+                extract('year', date_field).label('year'),
+                extract('month', date_field).label('month'),
+                State.city_name.label('city_name'),
+                func.count().label('volume')
+            ).select_from(
+                trans_table
+            ).join(
+                Apartment, trans_table.apt_id == Apartment.apt_id
+            ).join(
+                State, Apartment.region_id == State.region_id
+            ).where(
+                and_(base_filter, region_filter)
+            ).group_by(
+                extract('year', date_field),
+                extract('month', date_field),
+                State.city_name
+            ).order_by(
+                desc(extract('year', date_field)),
+                extract('month', date_field),
+                State.city_name
+            )
+        else:  # 수도권
+            # 수도권: JOIN 사용하지만 city_name은 그룹화하지 않음
+            query = select(
+                extract('year', date_field).label('year'),
+                extract('month', date_field).label('month'),
+                func.count().label('volume')
+            ).select_from(
+                trans_table
+            ).join(
+                Apartment, trans_table.apt_id == Apartment.apt_id
+            ).join(
+                State, Apartment.region_id == State.region_id
+            ).where(
+                and_(base_filter, region_filter)
+            ).group_by(
+                extract('year', date_field),
+                extract('month', date_field)
+            ).order_by(
+                desc(extract('year', date_field)),
+                extract('month', date_field)
+            )
+        
+        # 쿼리 실행
+        result = await db.execute(query)
+        rows = result.all()
+        
+        logger.info(
+            f"📊 [Statistics Transaction Volume] 쿼리 결과 - "
+            f"총 {len(rows)}개 행 반환, region_type: {region_type}"
         )
         
-        # 지역 필터 적용
-        if region_filter is not None:
-            query = query.where(region_filter)
+        # 데이터가 없을 때 상세 디버깅 정보 출력
+        if len(rows) == 0 and region_type in ["수도권", "지방5대광역시"]:
+            # JOIN 없이 전체 거래 데이터 확인
+            total_count_query = select(func.count()).select_from(trans_table).where(base_filter)
+            total_result = await db.execute(total_count_query)
+            total_count = total_result.scalar() or 0
+            
+            logger.warning(
+                f"⚠️ [Statistics Transaction Volume] {region_type} 데이터 없음 - "
+                f"base_filter 적용 후 전체 거래 수: {total_count}, "
+                f"JOIN 후 데이터: 0개 (JOIN 조건 문제 가능성 높음)"
+            )
         
-        query = query.order_by(desc(net_migration_func))  # 순이동 큰 순서대로
+        # 연도별 데이터 존재 여부 확인 (디버깅용)
+        if rows:
+            years = sorted(set(int(row.year) for row in rows), reverse=True)
+            logger.info(
+                f"📊 [Statistics Transaction Volume] DB 쿼리 결과 - "
+                f"region_type: {region_type}, "
+                f"데이터 행 수: {len(rows)}, "
+                f"연도 범위: {years[0] if years else 'N/A'} ~ {years[-1] if years else 'N/A'}, "
+                f"전체 연도: {years[:10] if len(years) <= 10 else years[:10] + ['...']}, "
+                f"캐시 키: {cache_key}"
+            )
         
-        result = await db.execute(query)
-        rows = result.fetchall()
-        
-        # 응답 데이터 생성
-        migration_data = []
+        # 데이터 포인트 생성
+        data_points = []
         for row in rows:
-            city_name = row.city_name
-            normalized_name = normalize_city_name(city_name)
-            net_migration = int(row.net_migration or 0) if aggregate == "sum" else float(row.net_migration or 0)
-            in_migration = int(row.in_migration or 0) if aggregate == "sum" else float(row.in_migration or 0)
-            out_migration = int(row.out_migration or 0) if aggregate == "sum" else float(row.out_migration or 0)
-            
-            # 정수로 변환 (평균인 경우 반올림)
-            if aggregate == "avg":
-                net_migration = int(round(net_migration))
-                in_migration = int(round(in_migration))
-                out_migration = int(round(out_migration))
-            
-            label = "순유입" if net_migration > 0 else "순유출"
-            
-            migration_data.append(PopulationMovementRegionTypeDataPoint(
-                name=normalized_name,
-                value=net_migration,
-                label=label,
-                in_migration=in_migration,
-                out_migration=out_migration,
-                net_migration=net_migration
-            ))
+            data_point = TransactionVolumeDataPoint(
+                year=int(row.year),
+                month=int(row.month),
+                volume=int(row.volume),
+                city_name=row.city_name if hasattr(row, 'city_name') and row.city_name else None
+            )
+            data_points.append(data_point)
         
-        response_data = PopulationMovementRegionTypeResponse(
+        # 기간 문자열 생성
+        period_str = f"{start_date.strftime('%Y-%m')} ~ {end_date.strftime('%Y-%m')}"
+        
+        # 응답 생성
+        response_data = TransactionVolumeResponse(
             success=True,
-            data=migration_data,
+            data=data_points,
             region_type=region_type,
-            start_ym=start_ym,
-            end_ym=end_ym,
-            period_months=period_months
+            period=period_str,
+            max_years=max_years
         )
         
         # 캐시에 저장
-        if len(migration_data) > 0:
+        if len(data_points) > 0:
             await set_to_cache(cache_key, response_data.dict(), ttl=STATISTICS_CACHE_TTL)
+            logger.info(
+                f"💾 [Statistics Transaction Volume] 캐시 저장 완료 - "
+                f"region_type: {region_type}, "
+                f"연도 범위: {years[0] if years else 'N/A'} ~ {years[-1] if years else 'N/A'}"
+            )
         
-        logger.info(f"✅ [Statistics Population Movement Region Type] 인구 순이동 데이터 생성 완료 - 데이터 포인트 수: {len(migration_data)}")
+        logger.info(
+            f"✅ [Statistics Transaction Volume] 거래량 데이터 생성 완료 - "
+            f"데이터 포인트 수: {len(data_points)}, 기간: {period_str}"
+        )
         
         return response_data
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ [Statistics Population Movement Region Type] 인구 순이동 데이터 조회 실패: {e}", exc_info=True)
+        logger.error(
+            f"❌ [Statistics Transaction Volume] 거래량 데이터 조회 실패: {e}",
+            exc_info=True
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"인구 순이동 데이터 조회 중 오류가 발생했습니다: {str(e)}"
+            detail=f"거래량 데이터 조회 중 오류가 발생했습니다: {str(e)}"
+        )
+
+
+# ============================================================
+# 시장 국면 지표 API
+# ============================================================
+
+@router.get(
+    "/market-phase",
+    response_model=Union[MarketPhaseResponse, MarketPhaseListResponse],
+    summary="시장 국면 지표 조회",
+    description="벌집 순환 모형(Honeycomb Cycle) 기반으로 시장 국면을 판별합니다."
+)
+async def get_market_phase(
+    region_type: str = Query(..., description="지역 유형 (전국, 수도권, 지방5대광역시)"),
+    volume_calculation_method: str = Query("average", description="거래량 계산 방법 (average, month_over_month)"),
+    average_period_months: int = Query(6, ge=1, le=12, description="평균 계산 기간 (개월)"),
+    volume_threshold: Optional[float] = Query(None, description="거래량 변동 임계값 (%)"),
+    price_threshold: Optional[float] = Query(None, description="가격 변동 임계값 (%)"),
+    min_transaction_count: int = Query(5, ge=1, description="최소 거래 건수"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    시장 국면 지표 조회
+    
+    벌집 순환 모형(Honeycomb Cycle) 기반으로 시장 국면을 판별합니다.
+    
+    **6개 국면:**
+    1. 회복 (Recovery): 거래량 증가 ↑ / 가격 하락 혹은 보합 →
+    2. 상승 (Expansion): 거래량 증가 ↑ / 가격 상승 ↑
+    3. 둔화 (Slowdown): 거래량 감소 ↓ / 가격 상승 ↑
+    4. 후퇴 (Recession): 거래량 감소 ↓ / 가격 하락 ↓
+    5. 침체 (Depression): 거래량 급감 ↓ / 가격 하락세 지속 ↓
+    6. 천착 (Trough): 거래량 미세 증가 ↑ / 가격 하락 ↓
+    """
+    try:
+        # 파라미터 검증
+        if region_type not in ["전국", "수도권", "지방5대광역시"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"유효하지 않은 region_type: {region_type}. 허용 값: 전국, 수도권, 지방5대광역시"
+            )
+        
+        if volume_calculation_method not in ["average", "month_over_month"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"유효하지 않은 volume_calculation_method: {volume_calculation_method}. 허용 값: average, month_over_month"
+            )
+        
+        # 캐시 키 생성
+        cache_key = build_cache_key(
+            "statistics",
+            "market-phase",
+            region_type,
+            volume_calculation_method,
+            str(average_period_months),
+            str(volume_threshold) if volume_threshold is not None else "default",
+            str(price_threshold) if price_threshold is not None else "default",
+            str(min_transaction_count)
+        )
+        
+        # 캐시 확인
+        cached_result = await get_from_cache(cache_key)
+        if cached_result:
+            logger.info(
+                f"[Market Phase] Cache hit - region_type: {region_type}"
+            )
+            # 캐시된 결과에도 임계값이 포함되어 있지만, 로깅을 위해 확인
+            if isinstance(cached_result, dict) and 'thresholds' in cached_result:
+                thresholds = cached_result.get('thresholds', {})
+                logger.info(
+                    f"[Market Phase] Cached thresholds - "
+                    f"vol={thresholds.get('volume_threshold')}, "
+                    f"price={thresholds.get('price_threshold')}"
+                )
+            return cached_result
+        
+        # 임계값 조회 (응답에 사용될 임계값)
+        vol_threshold, price_thresh = await get_thresholds(
+            db, region_type, None, volume_threshold, price_threshold
+        )
+        
+        logger.info(
+            f"[Market Phase] Calculation started - "
+            f"region_type: {region_type}, "
+            f"volume_method: {volume_calculation_method}, "
+            f"thresholds: vol={vol_threshold}, price={price_thresh} "
+            f"(API params: vol={volume_threshold}, price={price_threshold})"
+        )
+        
+        # 전국/수도권: 단일 데이터
+        if region_type in ["전국", "수도권"]:
+            # 거래량 변동률 계산
+            if volume_calculation_method == "average":
+                volume_change_rate, current_volume = await calculate_volume_change_rate_average(
+                    db, region_type, None, average_period_months
+                )
+            else:
+                volume_change_rate, current_volume = await calculate_volume_change_rate_mom(
+                    db, region_type, None
+                )
+            
+            # 가격 변동률 계산
+            price_change_rate = await calculate_price_change_rate_moving_average(
+                db, region_type, None
+            )
+            
+            # 국면 판별
+            phase_data = calculate_market_phase(
+                volume_change_rate,
+                price_change_rate,
+                current_volume,
+                min_transaction_count,
+                vol_threshold,
+                price_thresh
+            )
+            
+            # 응답 생성
+            response = MarketPhaseResponse(
+                success=True,
+                data=MarketPhaseDataPoint(
+                    region=None,
+                    volume_change_rate=volume_change_rate,
+                    price_change_rate=price_change_rate,
+                    **phase_data
+                ),
+                calculation_method=MarketPhaseCalculationMethod(
+                    volume_method=volume_calculation_method,
+                    average_period_months=average_period_months if volume_calculation_method == "average" else None,
+                    price_method="moving_average_3months"
+                ),
+                thresholds=MarketPhaseThresholds(
+                    volume_threshold=vol_threshold,
+                    price_threshold=price_thresh
+                )
+            )
+            
+            # 캐시 저장 (TTL: 1시간)
+            await set_to_cache(cache_key, response.dict(), ttl=3600)
+            
+            logger.info(
+                f"[Market Phase] Calculation completed - "
+                f"region_type: {region_type}, "
+                f"phase: {phase_data.get('phase')}, "
+                f"phase_label: {phase_data.get('phase_label')}, "
+                f"Response thresholds: vol={vol_threshold}, price={price_thresh}"
+            )
+            
+            return response
+        
+        # 지방5대광역시: 지역별 데이터
+        else:
+            regions = ['부산광역시', '대구광역시', '광주광역시', '대전광역시', '울산광역시']
+            data_list = []
+            
+            # 순차 처리로 변경 (SQLAlchemy AsyncSession은 동시 쿼리 불가)
+            # 병렬 처리는 같은 세션을 공유하면 세션 충돌 발생
+            for region in regions:
+                logger.info(
+                    f"[Market Phase] Region calculation started - region: {region}"
+                )
+                
+                # 거래량 변동률 계산
+                if volume_calculation_method == "average":
+                    volume_change_rate, current_volume = await calculate_volume_change_rate_average(
+                        db, region_type, region, average_period_months
+                    )
+                else:
+                    volume_change_rate, current_volume = await calculate_volume_change_rate_mom(
+                        db, region_type, region
+                    )
+                
+                # 가격 변동률 계산
+                price_change_rate = await calculate_price_change_rate_moving_average(
+                    db, region_type, region
+                )
+                
+                # 지역별 임계값 조회 (지방5대광역시는 각 지역별로 동일한 임계값 사용)
+                # region_name은 정규화된 이름 사용 (예: "광주" 대신 "광주광역시")
+                region_vol_threshold, region_price_thresh = await get_thresholds(
+                    db, region_type, region, volume_threshold, price_threshold
+                )
+                
+                # 국면 판별
+                phase_data = calculate_market_phase(
+                    volume_change_rate,
+                    price_change_rate,
+                    current_volume,
+                    min_transaction_count,
+                    region_vol_threshold,
+                    region_price_thresh
+                )
+                
+                # 지역명 정규화
+                normalized_region = normalize_city_name(region)
+                
+                data_list.append(
+                    MarketPhaseDataPoint(
+                        region=normalized_region,
+                        volume_change_rate=volume_change_rate,
+                        price_change_rate=price_change_rate,
+                        **phase_data
+                    )
+                )
+                
+                logger.info(
+                    f"✅ [Market Phase] 지역 계산 완료 - "
+                    f"region: {region}, "
+                    f"phase: {phase_data.get('phase')}, "
+                    f"volume: {current_volume}"
+                )
+            
+            # 지방5대광역시는 지역별로 동일한 임계값 사용 (1.7%, 0.4%)
+            # vol_threshold, price_thresh는 이미 get_thresholds에서 지방5대광역시 기본값으로 설정됨
+            # 응답에 사용된 임계값 로깅
+            logger.info(
+                f"[Market Phase] Response thresholds for 지방5대광역시 - "
+                f"volume_threshold: {vol_threshold}, price_threshold: {price_thresh}"
+            )
+            
+            response = MarketPhaseListResponse(
+                success=True,
+                data=data_list,
+                region_type=region_type,
+                calculation_method=MarketPhaseCalculationMethod(
+                    volume_method=volume_calculation_method,
+                    average_period_months=average_period_months if volume_calculation_method == "average" else None,
+                    price_method="moving_average_3months"
+                ),
+                thresholds=MarketPhaseThresholds(
+                    volume_threshold=vol_threshold,  # 지방5대광역시: 1.7%
+                    price_threshold=price_thresh     # 지방5대광역시: 0.4%
+                )
+            )
+            
+            # 캐시 저장 (TTL: 1시간)
+            await set_to_cache(cache_key, response.dict(), ttl=3600)
+            
+            logger.info(
+                f"✅ [Market Phase] 계산 완료 - "
+                f"region_type: {region_type}, "
+                f"지역 수: {len(data_list)}"
+            )
+            
+            return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"❌ [Market Phase] 시장 국면 지표 조회 실패: {e}",
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"시장 국면 지표 조회 중 오류가 발생했습니다: {str(e)}"
         )

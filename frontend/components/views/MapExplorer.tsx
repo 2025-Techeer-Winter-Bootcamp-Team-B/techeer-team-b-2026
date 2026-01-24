@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Search, Sparkles, SlidersHorizontal, Map, X, Clock, TrendingUp, Building2, MapPin, Loader2, Navigation, ChevronDown } from 'lucide-react';
+import { Search, Sparkles, SlidersHorizontal, Map, X, Clock, TrendingUp, Building2, MapPin, Loader2, Navigation, ChevronDown, Car, Timer, Route, Circle, TrainFront } from 'lucide-react';
 import { ViewProps } from '../../types';
 import { MapSideDetail } from '../MapSideDetail';
 import { useKakaoLoader } from '../../hooks/useKakaoLoader';
@@ -14,12 +14,39 @@ import {
   fetchMapBoundsData,
   MapBoundsRequest,
   RegionPriceItem,
-  ApartmentPriceItem
+  ApartmentPriceItem,
+  fetchDirections,
+  fetchPlacesByCategory,
+  fetchPlacesByKeyword
 } from '../../services/api';
 
 // 쿠키 관련 상수
 const COOKIE_KEY_RECENT_SEARCHES = 'map_recent_searches';
 const MAX_COOKIE_SEARCHES = 5;
+
+// 지하철 노선 색상 매핑
+const getSubwayColor = (lineName: string): string => {
+  if (lineName.includes('1호선')) return '#0052A4';
+  if (lineName.includes('2호선')) return '#00A84D';
+  if (lineName.includes('3호선')) return '#EF7C1C';
+  if (lineName.includes('4호선')) return '#00A5DE';
+  if (lineName.includes('5호선')) return '#996CAC';
+  if (lineName.includes('6호선')) return '#CD7C2F';
+  if (lineName.includes('7호선')) return '#747F00';
+  if (lineName.includes('8호선')) return '#E6186C';
+  if (lineName.includes('9호선')) return '#BB8336';
+  if (lineName.includes('신분당')) return '#D4003B';
+  if (lineName.includes('수인분당')) return '#F5A200';
+  if (lineName.includes('경의중앙')) return '#77C4A3';
+  if (lineName.includes('경춘')) return '#0C8E72';
+  if (lineName.includes('공항')) return '#0090D2';
+  if (lineName.includes('의정부')) return '#FD8100';
+  if (lineName.includes('에버')) return '#77C4A3';
+  if (lineName.includes('경강')) return '#0C8E72';
+  if (lineName.includes('서해')) return '#81A914';
+  if (lineName.includes('GTX-A')) return '#9A6292';
+  return '#F59E0B'; // 기본값 (주황)
+};
 
 // 쿠키에서 최근 검색어 읽기
 const getRecentSearchesFromCookie = (): string[] => {
@@ -111,14 +138,14 @@ const getPriceColor = (price: number, isRegion = false): string => {
 
 // 확대 레벨에 따른 데이터 타입 결정
 // 카카오맵: 레벨이 낮을수록 확대, 높을수록 축소
-// - 레벨 11 이상 (축소): 시/도
-// - 레벨 6~10: 시군구
-// - 레벨 4~5: 동
-// - 레벨 1~3 (확대): 아파트
+// - 레벨 10 이상 (축소): 시/도
+// - 레벨 7~9: 시군구
+// - 레벨 5~6: 동
+// - 레벨 1~4 (확대): 아파트
 const getDataTypeByZoom = (zoomLevel: number): 'sido' | 'sigungu' | 'dong' | 'apartment' => {
-  if (zoomLevel >= 11) return 'sido';
-  if (zoomLevel >= 6) return 'sigungu';
-  if (zoomLevel >= 4) return 'dong';
+  if (zoomLevel >= 10) return 'sido';
+  if (zoomLevel >= 7) return 'sigungu';
+  if (zoomLevel >= 5) return 'dong';
   return 'apartment';
 };
 
@@ -235,11 +262,24 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
           }
         }
       } else {
-        // 일반 검색
+        // 일반 검색 (아파트 + 장소)
         setIsSearching(true);
         try {
-          const response = await searchApartments(searchQuery, 10);
-          setSearchResults(response.data.results);
+          const [aptResponse, placeResponse] = await Promise.all([
+            searchApartments(searchQuery, 5),
+            fetchPlacesByKeyword(searchQuery, { size: 5 })
+          ]);
+          
+          const places = placeResponse.documents ? placeResponse.documents.map((p: any) => ({
+            apt_id: p.id,
+            apt_name: p.place_name,
+            address: p.road_address_name || p.address_name,
+            location: { lat: Number(p.y), lng: Number(p.x) },
+            type: 'place',
+            category: p.category_group_name
+          })) : [];
+          
+          setSearchResults([...places, ...aptResponse.data.results]);
         } catch (error) {
           console.error('Search failed:', error);
           setSearchResults([]);
@@ -256,8 +296,44 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
     };
   }, [searchQuery, isAiActive]);
 
-  // 오버레이 제거 함수
-  const clearAllOverlays = useCallback(() => {
+  // 길찾기 관련 상태 및 Refs
+  const [isDirectionsMode, setIsDirectionsMode] = useState(false);
+  const [isDirectionsMinimized, setIsDirectionsMinimized] = useState(false);
+  const [directionsData, setDirectionsData] = useState<any>(null);
+  const [isLoadingDirections, setIsLoadingDirections] = useState(false);
+  const polylineRef = useRef<any>(null);
+  const startMarkerRef = useRef<any>(null);
+  const endMarkerRef = useRef<any>(null);
+  const routeOverlaysRef = useRef<any[]>([]);
+  
+  // 카테고리 마커 Refs (지하철)
+  const stationOverlaysRef = useRef<any[]>([]);
+
+  // 길찾기 오버레이 제거
+  const clearRouteOverlays = useCallback(() => {
+    if (polylineRef.current) {
+      polylineRef.current.setMap(null);
+      polylineRef.current = null;
+    }
+    if (startMarkerRef.current) {
+      startMarkerRef.current.setMap(null);
+      startMarkerRef.current = null;
+    }
+    if (endMarkerRef.current) {
+      endMarkerRef.current.setMap(null);
+      endMarkerRef.current = null;
+    }
+    routeOverlaysRef.current.forEach((overlay: any) => {
+      overlay.setMap(null);
+    });
+    routeOverlaysRef.current = [];
+    
+    setDirectionsData(null);
+    setIsDirectionsMode(false);
+  }, []);
+
+  // 맵 데이터 오버레이(아파트, 지역 등) 제거
+  const clearMapDataOverlays = useCallback(() => {
     // 지역 오버레이 제거
     regionOverlaysRef.current.forEach((overlay: any) => {
       overlay.setMap(null);
@@ -287,6 +363,223 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
       clustererRef.current.clear();
     }
   }, []);
+  
+  // 카테고리 마커(지하철) 제거
+  const clearCategoryOverlays = useCallback(() => {
+    stationOverlaysRef.current.forEach((overlay: any) => {
+      overlay.setMap(null);
+    });
+    stationOverlaysRef.current = [];
+  }, []);
+
+  // 모든 오버레이 제거 (초기화용)
+  const clearAllOverlays = useCallback(() => {
+    clearRouteOverlays();
+    clearMapDataOverlays();
+    clearCategoryOverlays();
+  }, [clearRouteOverlays, clearMapDataOverlays, clearCategoryOverlays]);
+
+  // 카테고리 장소 마커 업데이트 함수
+  const updatePlacesMarkers = useCallback(async (
+    categoryCode: string, 
+    map: any, 
+    overlaysRef: React.MutableRefObject<any[]>,
+    style: { bgColor?: string, colorCallback?: (name: string) => string, icon: string, label: string }
+  ) => {
+    if (!map) return;
+    
+    const bounds = map.getBounds();
+    const sw = bounds.getSouthWest();
+    const ne = bounds.getNorthEast();
+    const rect = `${sw.getLng()},${sw.getLat()},${ne.getLng()},${ne.getLat()}`;
+    
+    try {
+      const response = await fetchPlacesByCategory(categoryCode, { rect });
+      
+      // 데이터가 있을 때만 기존 마커 제거 및 업데이트
+      if (response.documents) {
+        // 기존 마커 제거
+        overlaysRef.current.forEach((overlay: any) => {
+          overlay.setMap(null);
+        });
+        overlaysRef.current = [];
+        
+        const kakaoMaps = window.kakao.maps as any;
+        
+        response.documents.forEach((place: any) => {
+          const position = new kakaoMaps.LatLng(place.y, place.x);
+          
+          let bgColor = style.bgColor || '#F59E0B';
+          
+          if (style.colorCallback) {
+             // 카테고리 이름에서 노선명 추출 (예: "교통,수송 > 지하철 > 수도권 4호선")
+             const categoryParts = place.category_name.split('>');
+             const lineName = categoryParts[categoryParts.length - 1].trim();
+             bgColor = style.colorCallback(lineName);
+          }
+          
+          // 이름 단순화 (호선 정보 제거)
+          const simpleName = place.place_name.replace(/\s+\d+호선.*$/, '').replace(/\s+\S+선.*$/, '');
+
+          const content = document.createElement('div');
+          content.className = 'place-overlay';
+          content.style.cssText = `
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 4px 8px;
+            background: ${bgColor};
+            border-radius: 12px;
+            color: white;
+            font-size: 11px;
+            font-weight: 600;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+            border: 1.5px solid white;
+            white-space: nowrap;
+            gap: 4px;
+            cursor: pointer;
+          `;
+          
+          content.innerHTML = `
+            ${style.icon}
+            <span>${simpleName}</span>
+          `;
+          
+          content.onclick = (e) => {
+            e.stopPropagation();
+            map.setCenter(position);
+          };
+          
+          const overlay = new kakaoMaps.CustomOverlay({
+            position: position,
+            content: content,
+            map: map,
+            yAnchor: 1.2,
+            zIndex: 5
+          });
+          
+          overlaysRef.current.push(overlay);
+        });
+      }
+    } catch (error) {
+      console.error(`Failed to fetch places for ${categoryCode}:`, error);
+    }
+  }, []);
+
+  // 길찾기 실행 함수
+  const handleDirectionsClick = async () => {
+    // 이미 길찾기 모드라면 종료
+    if (isDirectionsMode) {
+      clearRouteOverlays();
+      return;
+    }
+
+    const selectedApt = mapApartments.find(apt => apt.id === selectedMarkerId);
+    if (!selectedApt) {
+      setLoadError('도착지가 선택되지 않았습니다.');
+      return;
+    }
+
+    if (!userLocation && !isLocating) {
+      getCurrentLocation();
+      // 위치를 가져올 때까지 잠시 대기하거나 사용자에게 알림
+      // 여기서는 getCurrentLocation이 비동기 결과를 바로 반환하지 않으므로
+      // userLocation 상태가 업데이트될 때까지 기다려야 함.
+      // 일단 간단히 에러 메시지 표시
+      if (!userLocation) {
+        setLoadError('현재 위치를 먼저 확인해주세요.');
+        return;
+      }
+    }
+
+    if (!userLocation) {
+       setLoadError('현재 위치를 알 수 없습니다.');
+       return;
+    }
+
+    setIsLoadingDirections(true);
+    try {
+      const origin = `${userLocation.lng},${userLocation.lat},name=내 위치`;
+      const destination = `${selectedApt.lng},${selectedApt.lat},name=${selectedApt.name}`;
+      
+      const response = await fetchDirections(origin, destination);
+      
+      if (response.routes && response.routes.length > 0) {
+        const route = response.routes[0];
+        setDirectionsData(route);
+        setIsDirectionsMode(true);
+        
+        const kakaoMaps = window.kakao.maps as any;
+        
+        // 경로 그리기
+        const linePath: any[] = [];
+        route.sections.forEach((section: any) => {
+          section.roads.forEach((road: any) => {
+            for (let i = 0; i < road.vertexes.length; i += 2) {
+              const x = road.vertexes[i];
+              const y = road.vertexes[i + 1];
+              linePath.push(new kakaoMaps.LatLng(y, x));
+            }
+          });
+        });
+        
+        // 기존 폴리라인 제거
+        if (polylineRef.current) {
+          polylineRef.current.setMap(null);
+        }
+        
+        // 폴리라인 생성
+        polylineRef.current = new kakaoMaps.Polyline({
+          path: linePath,
+          strokeWeight: 6,
+          strokeColor: '#3B82F6', // Blue-500
+          strokeOpacity: 0.8,
+          strokeStyle: 'solid'
+        });
+        
+        polylineRef.current.setMap(mapRef.current);
+        
+        // 출발/도착 마커
+        const startPos = new kakaoMaps.LatLng(userLocation.lat, userLocation.lng);
+        const endPos = new kakaoMaps.LatLng(selectedApt.lat, selectedApt.lng);
+        
+        // 출발 마커 (커스텀)
+        const startContent = document.createElement('div');
+        startContent.innerHTML = `<div style="padding:5px 10px; background:#3B82F6; color:white; border-radius:15px; font-weight:bold; font-size:12px; box-shadow:0 2px 5px rgba(0,0,0,0.3);">출발</div>`;
+        startMarkerRef.current = new kakaoMaps.CustomOverlay({
+          position: startPos,
+          content: startContent,
+          map: mapRef.current,
+          yAnchor: 1.5
+        });
+        
+        // 도착 마커 (커스텀)
+        const endContent = document.createElement('div');
+        endContent.innerHTML = `<div style="padding:5px 10px; background:#EF4444; color:white; border-radius:15px; font-weight:bold; font-size:12px; box-shadow:0 2px 5px rgba(0,0,0,0.3);">도착</div>`;
+        endMarkerRef.current = new kakaoMaps.CustomOverlay({
+          position: endPos,
+          content: endContent,
+          map: mapRef.current,
+          yAnchor: 1.5
+        });
+        
+        // 지도 범위 재설정
+        const bounds = new kakaoMaps.LatLngBounds();
+        linePath.forEach(point => bounds.extend(point));
+        mapRef.current.setBounds(bounds);
+        
+      } else {
+        setLoadError('경로를 찾을 수 없습니다.');
+      }
+      
+    } catch (error) {
+      console.error('Directions error:', error);
+      setLoadError('길찾기 중 오류가 발생했습니다.');
+    } finally {
+      setIsLoadingDirections(false);
+    }
+  };
+
 
   // 지역 오버레이 생성 함수
   const createRegionOverlay = useCallback((
@@ -371,35 +664,50 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      min-width: 55px;
-      padding: 5px 8px;
+      min-width: 60px;
+      padding: 6px 10px;
       background: ${bgColor};
-      border-radius: 10px;
+      border-radius: 12px;
       color: white;
       font-weight: 600;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-      border: 1.5px solid rgba(255,255,255,0.25);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      border: 2px solid white;
       cursor: pointer;
       transition: all 0.2s ease;
+      position: relative;
     `;
     
-    // 이름 줄이기
-    const shortName = apt.apt_name.length > 7 
-      ? apt.apt_name.substring(0, 7) + '..' 
-      : apt.apt_name;
+    // 포인터 (삼각형) 추가
+    const pointer = document.createElement('div');
+    pointer.style.cssText = `
+      position: absolute;
+      bottom: -6px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 0;
+      height: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-top: 8px solid ${bgColor}; 
+      filter: drop-shadow(0 2px 1px rgba(0,0,0,0.1));
+    `;
+    content.appendChild(pointer);
     
-    content.innerHTML = `
-      <div style="font-size: 11px; opacity: 0.95; margin-bottom: 1px; white-space: nowrap; max-width: 70px; overflow: hidden; text-overflow: ellipsis; font-weight: 600;">${shortName}</div>
-      <div style="font-size: 15px; font-weight: 800; letter-spacing: -0.3px;">${formatPriceLabel(apt.avg_price)}</div>
+    const minPriceLabel = apt.min_price ? `${apt.min_price.toFixed(1)}억~` : '';
+    const maxPriceLabel = apt.max_price ? `${apt.max_price.toFixed(1)}억` : formatPriceLabel(apt.avg_price);
+
+    content.innerHTML += `
+      <div style="font-size: 11px; opacity: 0.9; margin-bottom: 2px; white-space: nowrap; font-weight: 500;">${minPriceLabel}</div>
+      <div style="font-size: 14px; font-weight: 800; letter-spacing: -0.5px; line-height: 1;">${maxPriceLabel}</div>
     `;
     
     content.onmouseenter = () => {
-      content.style.transform = 'scale(1.1)';
-      content.style.boxShadow = '0 5px 15px rgba(0,0,0,0.3)';
+      content.style.transform = 'scale(1.1) translateY(-2px)';
+      content.style.zIndex = '20';
     };
     content.onmouseleave = () => {
       content.style.transform = 'scale(1)';
-      content.style.boxShadow = '0 3px 10px rgba(0,0,0,0.2)';
+      content.style.zIndex = '';
     };
     
     content.addEventListener('click', (e) => {
@@ -411,7 +719,7 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
       position: position,
       content: content,
       map: map,
-      yAnchor: 0.5,
+      yAnchor: 1.15, // 포인터가 정확히 위치를 가리키도록 조정 (1.0 + margin/height)
       zIndex: 15
     });
     
@@ -455,6 +763,27 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
       setIsLoadingMapData(true);
       
       try {
+        // 1. 카테고리 데이터 로드 (지하철) - 제거됨
+        /*
+        // 지하철 (Level 7 이하)
+        if (level <= 7) {
+          updatePlacesMarkers('SW8', mapRef.current, stationOverlaysRef, { 
+            colorCallback: getSubwayColor,
+            icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect width="16" height="12" x="4" y="3" rx="2"/><path d="M6 15v5"/><path d="M18 15v5"/><path d="m8 3-.8 2"/><path d="m16 3 .8 2"/></svg>', 
+            label: '지하철' 
+          });
+        } else {
+          stationOverlaysRef.current.forEach((overlay: any) => overlay.setMap(null));
+          stationOverlaysRef.current = [];
+        }
+        */
+
+        // 길찾기 모드일 때는 아파트 데이터 로드 중단
+        if (isDirectionsMode) {
+          console.log('[Map] loadMapData - skipped apartments due to directions mode');
+          return;
+        }
+
         const swLat = sw.getLat();
         const swLng = sw.getLng();
         const neLat = ne.getLat();
@@ -544,8 +873,8 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
           if (response.apartments) allApartments = response.apartments;
         }
         
-        // 기존 오버레이 제거
-        clearAllOverlays();
+        // 기존 오버레이 제거 (맵 데이터만 제거하고, 경로 오버레이는 유지)
+        clearMapDataOverlays();
         
         const kakaoMaps = window.kakao.maps as any;
         
@@ -597,8 +926,8 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
         isLoadingRef.current = false;
         setIsLoadingMapData(false);
       }
-    }, 300);
-  }, [transactionType, clearAllOverlays, createRegionOverlay, createApartmentOverlay]);
+    }, 10);
+  }, [transactionType, clearMapDataOverlays, createRegionOverlay, createApartmentOverlay, isDirectionsMode, updatePlacesMarkers]);
 
   // 현재 위치 가져오기
   const getCurrentLocation = useCallback(() => {
@@ -782,6 +1111,20 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
       setRecentSearches(getRecentSearchesFromCookie());
     }
     
+    // 장소(지하철, 학교 등)인 경우 지도 이동만 수행
+    if ('type' in apt && apt.type === 'place') {
+      if (mapRef.current) {
+        const center = new window.kakao.maps.LatLng(apt.location.lat, apt.location.lng);
+        mapRef.current.setCenter(center);
+        mapRef.current.setLevel(4);
+      }
+      setIsSearchExpanded(false);
+      setSearchQuery('');
+      setSearchResults([]);
+      setAiResults([]);
+      return;
+    }
+    
     // 가격 정보 가져오기
     const priceMap = await fetchCompareMap([apt.apt_id]);
     const priceValue = priceMap.get(apt.apt_id) ?? null;
@@ -905,43 +1248,62 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
           mapRef.current.setLevel(5);
         }
       } else {
-        // 일반 검색
-      const response = await searchApartments(searchQuery.trim(), 10);
-      const results = response.data.results;
-      
-      if (!results.length) {
-        setMapApartments([]);
-        return;
-      }
-      
-      const ids = results.map((item) => item.apt_id);
-        const priceMap = await fetchCompareMap(ids);
-      
-      const mapped = results
-        .filter((item) => item.location)
-        .map((item) => {
-          const priceValue = priceMap.get(item.apt_id) ?? null;
-          return {
-            id: String(item.apt_id),
-            aptId: item.apt_id,
-            name: item.apt_name,
-            priceLabel: formatPriceLabel(priceValue),
-            priceValue,
-            location: item.address || '',
-            lat: item.location?.lat || 0,
-            lng: item.location?.lng || 0,
-            isSpeculationArea: false
-          } as MapApartment;
-        });
-      
-      setMapApartments(mapped);
-      
-      const first = mapped[0];
-      if (first && mapRef.current) {
-        const center = new window.kakao.maps.LatLng(first.lat, first.lng);
-        mapRef.current.setCenter(center);
-        mapRef.current.setLevel(5);
-      }
+        // 일반 검색 (아파트 + 장소)
+        const [aptResponse, placeResponse] = await Promise.all([
+            searchApartments(searchQuery.trim(), 10),
+            fetchPlacesByKeyword(searchQuery.trim(), { size: 5 })
+        ]);
+        
+        const places = placeResponse.documents ? placeResponse.documents.map((p: any) => ({
+            apt_id: p.id,
+            apt_name: p.place_name,
+            address: p.road_address_name || p.address_name,
+            location: { lat: Number(p.y), lng: Number(p.x) },
+            type: 'place'
+        })) : [];
+        
+        const apartmentResults = aptResponse.data.results;
+        const allResults = [...places, ...apartmentResults];
+        
+        if (!allResults.length) {
+          setMapApartments([]);
+          return;
+        }
+        
+        // 아파트만 가격 조회 및 표시
+        if (apartmentResults.length > 0) {
+            const ids = apartmentResults.map((item) => item.apt_id);
+            const priceMap = await fetchCompareMap(ids as number[]);
+            
+            const mapped = apartmentResults
+              .filter((item) => item.location)
+              .map((item) => {
+                const priceValue = priceMap.get(item.apt_id as number) ?? null;
+                return {
+                  id: String(item.apt_id),
+                  aptId: item.apt_id as number,
+                  name: item.apt_name,
+                  priceLabel: formatPriceLabel(priceValue),
+                  priceValue,
+                  location: item.address || '',
+                  lat: item.location?.lat || 0,
+                  lng: item.location?.lng || 0,
+                  isSpeculationArea: false
+                } as MapApartment;
+              });
+            
+            setMapApartments(mapped);
+        } else {
+            setMapApartments([]);
+        }
+        
+        // 첫 번째 결과로 이동 (장소 포함)
+        const first = allResults[0];
+        if (first && first.location && mapRef.current) {
+          const center = new window.kakao.maps.LatLng(first.location.lat, first.location.lng);
+          mapRef.current.setCenter(center);
+          mapRef.current.setLevel(5);
+        }
       }
       
       setIsSearchExpanded(false);
@@ -1261,6 +1623,22 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
                   <Navigation className="w-6 h-6" />
                 )}
             </button>
+
+            <button 
+              onClick={handleDirectionsClick}
+              disabled={!selectedMarkerId || isLoadingDirections}
+              className={`hidden md:flex w-[60px] h-[60px] rounded-xl border shadow-sharp items-center justify-center transition-colors active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
+                isDirectionsMode 
+                  ? 'bg-blue-600 border-blue-600 text-white shadow-blue-200' 
+                  : 'bg-white border-slate-200 text-slate-600 hover:text-blue-600 hover:border-blue-200'
+              }`}
+            >
+                {isLoadingDirections ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <Car className="w-6 h-6" />
+                )}
+            </button>
         </div>
 
         {/* AI 추천 질문 & 설정 패널 */}
@@ -1463,6 +1841,92 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
         )}
       </div>
 
+      {/* 길찾기 결과 카드 */}
+      {isDirectionsMode && directionsData && (
+        <div className={`absolute bottom-0 left-0 right-0 md:bottom-28 md:left-16 md:right-auto md:w-[360px] z-[110] bg-white/95 backdrop-blur-xl rounded-t-2xl md:rounded-2xl shadow-[0_-5px_20px_rgba(0,0,0,0.15)] md:shadow-2xl border-t md:border border-white/50 animate-slide-up flex flex-col transition-all duration-300 ${isDirectionsMinimized ? 'h-[180px] md:h-[180px]' : 'max-h-[60vh]'}`}>
+          <div className="p-5 pb-0 flex-shrink-0">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 flex items-center gap-2">
+                    <Car className="w-5 h-5 text-blue-600" />
+                    자동차 경로
+                  </h3>
+                  <p className="text-xs text-slate-500 font-medium mt-1">추천 경로 기준</p>
+                </div>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => setIsDirectionsMinimized(!isDirectionsMinimized)}
+                    className="p-2 rounded-full bg-slate-100 hover:bg-slate-200 transition-colors -mt-1"
+                  >
+                    <ChevronDown className={`w-5 h-5 text-slate-500 transition-transform duration-300 ${isDirectionsMinimized ? 'rotate-180' : ''}`} />
+                  </button>
+                  <button 
+                    onClick={clearRouteOverlays}
+                    className="p-2 rounded-full bg-slate-100 hover:bg-slate-200 transition-colors -mr-1 -mt-1"
+                  >
+                    <X className="w-5 h-5 text-slate-500" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-baseline gap-2 mb-6 p-4 bg-slate-50 rounded-xl border border-slate-100">
+                <span className="text-3xl font-black text-blue-600 tabular-nums">
+                  {Math.round(directionsData.summary.duration / 60)}
+                </span>
+                <span className="text-sm font-bold text-slate-500">분</span>
+                <span className="text-sm text-slate-300 mx-1">|</span>
+                <span className="text-sm font-bold text-slate-700">
+                  {(directionsData.summary.distance / 1000).toFixed(1)}km
+                </span>
+                <span className="text-sm text-slate-300 mx-1">|</span>
+                <span className="text-sm font-bold text-slate-700">
+                  {directionsData.summary.fare?.taxi?.toLocaleString()}원
+                </span>
+              </div>
+          </div>
+
+          <div className={`overflow-y-auto custom-scrollbar px-5 pb-5 flex-1 ${isDirectionsMinimized ? 'hidden' : ''}`}>
+              {/* 타임라인 시각화 */}
+              <div className="relative pl-4 border-l-2 border-slate-200 space-y-6 py-2 ml-1">
+                <div className="relative">
+                  <div className="absolute -left-[21px] top-1.5 w-3.5 h-3.5 bg-blue-500 rounded-full ring-4 ring-white shadow-sm z-10"></div>
+                  <p className="text-xs font-bold text-slate-400 mb-0.5">출발</p>
+                  <p className="text-sm font-bold text-slate-900 truncate">내 위치</p>
+                </div>
+                
+                {/* 상세 경로 가이드 */}
+                {directionsData.sections && directionsData.sections[0] && directionsData.sections[0].guides && (
+                    <div className="space-y-4 py-1">
+                        {directionsData.sections[0].guides.map((guide: any, idx: number) => (
+                            <div key={idx} className="relative group">
+                                <div className="absolute -left-[20px] top-2 w-2.5 h-2.5 bg-slate-300 rounded-full ring-4 ring-white group-hover:bg-blue-400 transition-colors"></div>
+                                <p className="text-[13px] font-medium text-slate-700 leading-snug">
+                                    {guide.guidance}
+                                </p>
+                                {guide.distance > 0 && (
+                                    <p className="text-[11px] text-slate-400 mt-0.5 font-medium">
+                                        {guide.distance >= 1000 
+                                            ? `${(guide.distance / 1000).toFixed(1)}km` 
+                                            : `${guide.distance}m`} 이동
+                                    </p>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                <div className="relative">
+                  <div className="absolute -left-[21px] top-1.5 w-3.5 h-3.5 bg-red-500 rounded-full ring-4 ring-white shadow-sm z-10"></div>
+                  <p className="text-xs font-bold text-slate-400 mb-0.5">도착</p>
+                  <p className="text-sm font-bold text-slate-900 truncate">
+                    {directionsData.summary.destination?.name || '목적지'}
+                  </p>
+                </div>
+              </div>
+          </div>
+        </div>
+      )}
+
       {/* 지도 레벨 & 데이터 타입 표시 */}
       <div className="absolute bottom-24 left-4 md:bottom-8 md:left-16 z-10 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-2 shadow-md border border-slate-200/50">
         <div className="flex items-center gap-2 text-xs">
@@ -1501,9 +1965,26 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
                        <div className="flex items-end gap-2 mb-6">
                            <span className="text-2xl font-black text-slate-900 tabular-nums">{selectedProperty.priceLabel}</span>
                        </div>
-                       <button className="w-full bg-deep-900 text-white font-bold py-3.5 rounded-xl shadow-lg active:scale-[0.98] transition-transform flex items-center justify-center gap-2 text-[15px]">
-                           상세 정보 전체보기
-                       </button>
+                       <div className="flex gap-2 items-center w-full">
+                           <button 
+                               onClick={() => onPropertyClick(String(selectedProperty.aptId))}
+                               className="flex-1 bg-slate-100 text-slate-700 font-bold py-3.5 rounded-xl active:scale-[0.98] transition-transform flex items-center justify-center gap-2 text-[15px]"
+                           >
+                               <Building2 className="w-4 h-4" />
+                               상세 정보
+                           </button>
+                           <button 
+                               onClick={(e) => {
+                                   e.stopPropagation();
+                                   handleDirectionsClick();
+                                   setSelectedMarkerId(null);
+                               }}
+                               className="flex-1 bg-blue-600 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-blue-200 active:scale-[0.98] transition-transform flex items-center justify-center gap-2 text-[15px]"
+                           >
+                               <Car className="w-4 h-4" />
+                               길 안내
+                           </button>
+                       </div>
                    </div>
                )}
            </div>
