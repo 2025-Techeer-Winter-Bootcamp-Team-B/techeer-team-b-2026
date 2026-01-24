@@ -19,6 +19,7 @@ interface ProfessionalChartProps {
     isSparkline?: boolean;
     showHighLow?: boolean;
     chartStyle?: 'line' | 'area' | 'candlestick';
+    period?: '1년' | '3년' | '전체';
 }
 
 export const ProfessionalChart: React.FC<ProfessionalChartProps> = ({ 
@@ -31,7 +32,8 @@ export const ProfessionalChart: React.FC<ProfessionalChartProps> = ({
     areaBottomColor,
     isSparkline = false,
     showHighLow = false,
-    chartStyle = 'area'
+    chartStyle = 'area',
+    period
 }) => {
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -137,8 +139,23 @@ export const ProfessionalChart: React.FC<ProfessionalChartProps> = ({
             
             const containerWidth = getContainerWidth();
             if (containerWidth === 0) {
-                // 아직 레이아웃이 계산되지 않았으면 다시 시도
-                rafId = requestAnimationFrame(initChart);
+                // 아직 레이아웃이 계산되지 않았으면 다시 시도 (최대 10번)
+                let retryCount = 0;
+                const maxRetries = 10;
+                const retryInit = () => {
+                    retryCount++;
+                    const width = getContainerWidth();
+                    if (width > 0 || retryCount >= maxRetries) {
+                        if (width > 0) {
+                            initChart();
+                        } else {
+                            console.warn('[ProfessionalChart] 컨테이너 너비를 가져올 수 없습니다.');
+                        }
+                    } else {
+                        rafId = requestAnimationFrame(retryInit);
+                    }
+                };
+                rafId = requestAnimationFrame(retryInit);
                 return;
             }
 
@@ -202,10 +219,14 @@ export const ProfessionalChart: React.FC<ProfessionalChartProps> = ({
             
             // 데이터 개수 추적 변수
             let totalDataPoints = 0;
+            let hasAnyData = false;
 
             if (series && series.length > 0) {
                 series.forEach((s, seriesIndex) => {
                     if (!s.visible) return;
+                    // 데이터가 없는 시리즈는 건너뛰기
+                    if (!s.data || s.data.length === 0) return;
+                    
                     const seriesColor = s.color;
                     const lineSeries = chart.addLineSeries({
                         color: seriesColor,
@@ -228,6 +249,7 @@ export const ProfessionalChart: React.FC<ProfessionalChartProps> = ({
                     if (sampledData.length > 0) {
                         lineSeries.setData(sampledData);
                         allSeriesData.set(lineSeries, sampledData);
+                        hasAnyData = true;
                         
                         // 최대 데이터 개수 업데이트
                         if (sampledData.length > totalDataPoints) {
@@ -422,7 +444,55 @@ export const ProfessionalChart: React.FC<ProfessionalChartProps> = ({
                 }
             }
 
-            chart.timeScale().fitContent();
+            // 데이터가 없으면 차트를 제거하고 종료
+            if (!hasAnyData && totalDataPoints === 0) {
+                try {
+                    chart.remove();
+                } catch (e) {}
+                chartRef.current = null;
+                isInitializing = false;
+                return;
+            }
+
+            // 전체 기간일 때만 약간 축소하여 스크롤 가능하도록 설정
+            if (period === '전체' && (series || data)) {
+                const allData = series && series.length > 0 
+                    ? series.flatMap(s => s.data || [])
+                    : (data || []);
+                
+                if (allData.length > 0) {
+                    // 데이터를 시간순으로 정렬
+                    const sortedData = [...allData].sort((a, b) => 
+                        new Date(a.time).getTime() - new Date(b.time).getTime()
+                    );
+                    
+                    const firstTime = sortedData[0].time;
+                    const lastTime = sortedData[sortedData.length - 1].time;
+                    
+                    // 전체 데이터 범위 계산
+                    const totalDuration = new Date(lastTime).getTime() - new Date(firstTime).getTime();
+                    
+                    // 전체의 약 90%만 표시하여 스크롤 한 번 정도만 가능하도록
+                    const visibleDuration = totalDuration * 0.9;
+                    const visibleStart = new Date(new Date(firstTime).getTime() + (totalDuration - visibleDuration) / 2);
+                    const visibleEnd = new Date(visibleStart.getTime() + visibleDuration);
+                    
+                    try {
+                        chart.timeScale().setVisibleRange({
+                            from: (visibleStart.getTime() / 1000) as any,
+                            to: (visibleEnd.getTime() / 1000) as any
+                        });
+                    } catch (e) {
+                        // setVisibleRange 실패 시 fitContent 사용
+                        chart.timeScale().fitContent();
+                    }
+                } else {
+                    chart.timeScale().fitContent();
+                }
+            } else {
+                chart.timeScale().fitContent();
+            }
+            
             // 시리즈 이름과 색상 매핑 저장
             const seriesMetaMap = new Map<ISeriesApi<SeriesType>, { name: string; color: string }>();
             if (series && series.length > 0) {
@@ -444,23 +514,48 @@ export const ProfessionalChart: React.FC<ProfessionalChartProps> = ({
                     return;
                 }
                 
-                // param.seriesData에서 마우스가 올려진 시리즈 찾기 (Y 좌표가 가장 가까운 것)
+                const paramTimeStr = param.time as string;
+                
+                // param.seriesData에서 마우스가 올려진 시리즈 찾기
                 let targetPrice: number | null = null;
                 let targetSeriesName: string = '';
                 let targetColor: string = '#3182F6';
                 let minDistance = Infinity;
                 
                 // param.seriesData에 있는 시리즈들 중에서 마우스와 가장 가까운 것 찾기
+                // param.seriesData는 param.time에 해당하는 모든 시리즈의 보간된 값을 포함합니다
                 if (param.seriesData && param.seriesData.size > 0) {
                     param.seriesData.forEach((seriesValue, seriesApi) => {
                         if (seriesValue && typeof seriesValue === 'object' && 'value' in seriesValue) {
+                            const value = (seriesValue as any).value;
                             const seriesY = (seriesValue as any).y;
-                            if (seriesY !== undefined) {
-                                const distance = Math.abs(param.point.y - seriesY);
+                            const meta = seriesMetaMap.get(seriesApi);
+                            
+                            // 값이 유효한지 확인 (null, undefined, NaN 체크)
+                            if (value !== null && value !== undefined && !isNaN(value)) {
+                                // 각 시리즈의 price scale을 사용해서 마우스 Y 좌표를 가격으로 변환
+                                let mousePrice: number | null = null;
+                                try {
+                                    mousePrice = (seriesApi as any).coordinateToPrice?.(param.point.y) || null;
+                                } catch (e) {
+                                    // coordinateToPrice가 없거나 실패하면 null
+                                }
+                                
+                                // seriesY가 있으면 Y 좌표 거리 사용, 없으면 가격 차이 사용
+                                let distance: number;
+                                if (seriesY !== undefined && !isNaN(seriesY)) {
+                                    distance = Math.abs(param.point.y - seriesY);
+                                } else if (mousePrice !== null) {
+                                    // 가격 차이를 사용 (마우스 위치의 가격과 시리즈 가격의 차이)
+                                    distance = Math.abs(mousePrice - value);
+                                } else {
+                                    // 둘 다 없으면 무한대 (선택되지 않음)
+                                    distance = Infinity;
+                                }
+                                
                                 if (distance < minDistance) {
                                     minDistance = distance;
-                                    targetPrice = (seriesValue as any).value;
-                                    const meta = seriesMetaMap.get(seriesApi);
+                                    targetPrice = value;
                                     targetSeriesName = meta?.name || '';
                                     targetColor = meta?.color || '#3182F6';
                                 }
@@ -469,17 +564,62 @@ export const ProfessionalChart: React.FC<ProfessionalChartProps> = ({
                     });
                 }
                 
-                // param.seriesData에 없으면 allSeriesData에서 찾기
+                // param.seriesData에 없거나 유효한 값이 없으면 allSeriesData에서 정확한 시간의 데이터 찾기
                 if (targetPrice === null) {
+                    let closestDataPoint: { time: string; value: number } | null = null;
+                    let closestSeriesApi: ISeriesApi<SeriesType> | null = null;
+                    let closestTimeDiff = Infinity;
+                    let closestPriceDiff = Infinity;
+                    
+                    // 모든 시리즈에서 param.time에 가장 가까운 데이터 포인트 찾기
                     for (const [seriesApi, seriesData] of allSeriesData.entries()) {
-                        const dataPoint = seriesData.find(d => d.time === param.time);
-                        if (dataPoint) {
-                            const meta = seriesMetaMap.get(seriesApi);
-                            targetPrice = dataPoint.value;
-                            targetSeriesName = meta?.name || '';
-                            targetColor = meta?.color || '#3182F6';
-                            break;
+                        const meta = seriesMetaMap.get(seriesApi);
+                        
+                        // 각 시리즈의 price scale을 사용해서 마우스 Y 좌표를 가격으로 변환
+                        let mousePrice: number | null = null;
+                        try {
+                            mousePrice = (seriesApi as any).coordinateToPrice?.(param.point.y) || null;
+                        } catch (e) {
+                            // coordinateToPrice가 없거나 실패하면 null
                         }
+                        
+                        // 정확히 일치하는 시간 찾기
+                        let dataPoint = seriesData.find(d => d.time === paramTimeStr);
+                        
+                        // 정확히 일치하는 것이 없으면 가장 가까운 시간 찾기
+                        if (!dataPoint && seriesData.length > 0) {
+                            const paramTime = new Date(paramTimeStr).getTime();
+                            for (const point of seriesData) {
+                                const pointTime = new Date(point.time).getTime();
+                                const timeDiff = Math.abs(paramTime - pointTime);
+                                if (timeDiff < closestTimeDiff) {
+                                    closestTimeDiff = timeDiff;
+                                    dataPoint = point;
+                                }
+                            }
+                        }
+                        
+                        if (dataPoint) {
+                            // 마우스 위치의 가격과 가장 가까운 시리즈 선택
+                            const priceDiff = mousePrice !== null ? Math.abs(mousePrice - dataPoint.value) : Infinity;
+                            
+                            // 시간 차이가 같거나 더 작고, 가격 차이가 더 작은 시리즈 선택
+                            const currentTimeDiff = Math.abs(new Date(dataPoint.time).getTime() - new Date(paramTimeStr).getTime());
+                            if (closestDataPoint === null || 
+                                (currentTimeDiff <= closestTimeDiff && priceDiff < closestPriceDiff)) {
+                                closestTimeDiff = currentTimeDiff;
+                                closestPriceDiff = priceDiff;
+                                closestDataPoint = dataPoint;
+                                closestSeriesApi = seriesApi;
+                            }
+                        }
+                    }
+                    
+                    if (closestDataPoint && closestSeriesApi) {
+                        const meta = seriesMetaMap.get(closestSeriesApi);
+                        targetPrice = closestDataPoint.value;
+                        targetSeriesName = meta?.name || '';
+                        targetColor = meta?.color || '#3182F6';
                     }
                 }
                 
@@ -540,21 +680,38 @@ export const ProfessionalChart: React.FC<ProfessionalChartProps> = ({
                 }
             }
         };
-    }, [data, series, height, theme, lineColor, areaTopColor, areaBottomColor, isSparkline, showHighLow, chartStyle]);
+    }, [data, series, height, theme, lineColor, areaTopColor, areaBottomColor, isSparkline, showHighLow, chartStyle, period]);
+
+    // 데이터 유효성 검사
+    const hasData = (series && series.length > 0 && series.some(s => s.data && s.data.length > 0)) || 
+                    (data && data.length > 0);
 
     return (
         <div className="relative w-full">
-            <div 
-                ref={chartContainerRef} 
-                className="w-full relative overflow-hidden" 
-                style={{ 
-                    maxWidth: '100%',
-                    display: 'block',
-                    minWidth: 0
-                }} 
-            />
+            {!hasData ? (
+                <div className="flex items-center justify-center h-full min-h-[200px]">
+                    <div className="text-center">
+                        <p className={`text-[14px] font-medium mb-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                            데이터가 없습니다
+                        </p>
+                        <p className={`text-[12px] ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                            차트 데이터를 불러오는 중이거나 표시할 데이터가 없습니다
+                        </p>
+                    </div>
+                </div>
+            ) : (
+                <div 
+                    ref={chartContainerRef} 
+                    className="w-full relative overflow-hidden" 
+                    style={{ 
+                        maxWidth: '100%',
+                        display: 'block',
+                        minWidth: 0
+                    }} 
+                />
+            )}
             {/* 커스텀 툴팁 - 마우스 위치의 데이터만 표시 */}
-            {tooltip && tooltip.visible && (
+            {hasData && tooltip && tooltip.visible && (
                 <div 
                     className="absolute pointer-events-none z-50 px-3 py-2.5 rounded-xl shadow-xl text-sm"
                     style={{

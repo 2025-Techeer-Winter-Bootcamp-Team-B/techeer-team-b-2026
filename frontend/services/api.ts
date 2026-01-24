@@ -161,7 +161,29 @@ const apiFetch = async <T>(path: string, options: RequestOptions = {}): Promise<
         
         try {
           const errorBody = await response.json();
-          errorMessage = errorBody.message || errorBody.detail || errorMessage;
+          
+          // FastAPI validation error는 detail 필드에 배열 형태로 반환됨
+          if (errorBody.detail) {
+            if (Array.isArray(errorBody.detail)) {
+              // 배열인 경우: 각 에러를 포맷팅
+              errorMessage = errorBody.detail
+                .map((err: any) => {
+                  if (typeof err === 'string') return err;
+                  if (err.msg) return `${err.loc?.join('.') || ''}: ${err.msg}`;
+                  return JSON.stringify(err);
+                })
+                .join(', ');
+            } else if (typeof errorBody.detail === 'string') {
+              errorMessage = errorBody.detail;
+            } else if (errorBody.detail.message) {
+              errorMessage = errorBody.detail.message;
+            } else {
+              errorMessage = JSON.stringify(errorBody.detail);
+            }
+          } else if (errorBody.message) {
+            errorMessage = errorBody.message;
+          }
+          
           errorCode = errorBody.code;
           errorDetails = errorBody;
         } catch {

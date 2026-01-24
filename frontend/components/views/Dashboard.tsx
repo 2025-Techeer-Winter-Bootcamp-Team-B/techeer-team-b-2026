@@ -24,6 +24,8 @@ import {
   fetchApartmentExclusiveAreas,
   fetchApartmentDetail,
   fetchHPIByRegionType,
+  fetchRegionPrices,
+  fetchRegionStats,
   setAuthToken,
   type MyProperty,
   type FavoriteApartment,
@@ -592,20 +594,6 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
           const myAssets = mapToDashboardAsset(myProps, 0);
           const favAssets = mapToDashboardAsset(mergedFavProps, 3);
 
-          // 1단계: 기본 데이터로 먼저 빠르게 표시 (fallback 차트 데이터 사용)
-          // currentPrice 단위는 만원, 기본값은 4억(40000만원)
-          const initialMyAssets = myAssets.map(asset => ({
-              ...asset,
-              chartData: generateAssetHistory(asset.currentPrice > 0 ? asset.currentPrice : 40000, 500, asset.name)
-          }));
-          const initialFavAssets = favAssets.map(asset => ({
-              ...asset,
-              chartData: generateAssetHistory(asset.currentPrice > 0 ? asset.currentPrice : 50000, 500, asset.name)
-          }));
-          
-          // 기존 사용자 추가 그룹 유지하면서 내 자산과 관심 단지만 업데이트
-          console.log('🔧 상태 업데이트 전 - initialFavAssets 개수:', initialFavAssets.length);
-          
           // localStorage에서 사용자 추가 그룹 복원
           let restoredUserGroups: AssetGroup[] = [];
           try {
@@ -617,7 +605,7 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                       name: g.name,
                       assets: g.assets.map((a: any) => ({
                           ...a,
-                          chartData: generateAssetHistory(a.currentPrice > 0 ? a.currentPrice : 50000, 500, a.name),
+                          chartData: [], // 초기값은 빈 배열, 실제 데이터 로드 대기
                           color: CHART_COLORS[0] // 기본 색상
                       }))
                   }));
@@ -626,6 +614,16 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
           } catch (error) {
               console.error('localStorage 사용자 그룹 복원 실패:', error);
           }
+          
+          // 초기 상태 설정 (차트 데이터는 빈 배열로 시작, 실제 데이터 로드 대기)
+          const initialMyAssets = myAssets.map(asset => ({
+              ...asset,
+              chartData: [] // 실제 데이터 로드 대기
+          }));
+          const initialFavAssets = favAssets.map(asset => ({
+              ...asset,
+              chartData: [] // 실제 데이터 로드 대기
+          }));
           
           setAssetGroups(prev => {
               // 기존 상태에서 사용자 그룹 가져오기 (새로고침 직후가 아닌 경우)
@@ -647,95 +645,125 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
               console.log('🔧 상태 업데이트 후 - 사용자 그룹 개수:', allUserGroups.length);
               return newGroups;
           });
-          setIsLoading(false);
 
-          // 2단계: 차트 데이터를 백그라운드에서 점진적으로 로드 (최대 3개씩 병렬 처리)
+          // 실제 차트 데이터를 로드 (목업 데이터 사용 안 함)
           const allAssets = [...myAssets, ...favAssets];
           const loadChartData = async () => {
-              const updatedAssets = [...allAssets];
-              const batchSize = 3;
-              
-              for (let i = 0; i < allAssets.length; i += batchSize) {
-                  const batch = allAssets.slice(i, i + batchSize);
-                  const batchResults = await Promise.all(
-                      batch.map(async (asset, batchIdx) => {
-                          const globalIdx = i + batchIdx;
-                          const fallbackPrice = asset.currentPrice > 0 ? asset.currentPrice : 40000;
-                          
-                          if (!asset.aptId) {
-                              return { index: globalIdx, chartData: generateAssetHistory(fallbackPrice, 500, asset.name) };
-                          }
-                          
-                          try {
-                              // 2020년부터 현재까지 데이터를 가져오기 위해 72개월(6년) 설정
-                              const transRes = await fetchApartmentTransactions(asset.aptId, 'sale', 100, 72);
-                              console.log(`📊 차트 데이터 조회 (apt_id: ${asset.aptId}):`, transRes.data?.price_trend?.length || 0, '개');
+              try {
+                  const updatedAssets = [...allAssets];
+                  const batchSize = 3;
+                  
+                  for (let i = 0; i < allAssets.length; i += batchSize) {
+                      const batch = allAssets.slice(i, i + batchSize);
+                      const batchResults = await Promise.all(
+                          batch.map(async (asset, batchIdx) => {
+                              const globalIdx = i + batchIdx;
                               
-                              if (transRes.success && transRes.data.price_trend && transRes.data.price_trend.length > 0) {
-                                  const chartData = transRes.data.price_trend.map((item: any) => ({
-                                      time: `${item.month}-01`,
-                                      value: item.avg_price
-                                  }));
-                                  
-                                  // 디버깅: 데이터 형식 확인
-                                  if (chartData.length > 0) {
-                                      console.log(`[데이터 로딩] apt_id: ${asset.aptId}, 데이터 개수: ${chartData.length}`);
-                                      console.log(`[데이터 로딩] 샘플 데이터:`, chartData.slice(0, 3));
-                                      console.log(`[데이터 로딩] 날짜 범위: ${chartData[0].time} ~ ${chartData[chartData.length - 1].time}`);
+                              if (!asset.aptId) {
+                                  // aptId가 없으면 빈 배열 반환 (목업 데이터 사용 안 함)
+                                  console.log(`⚠️ aptId가 없음: ${asset.name}`);
+                                  return { index: globalIdx, chartData: [] };
+                              }
+                              
+                              try {
+                                  // 백엔드 API 제한: limit 최대 50, months 최대 120
+                                  // selectedPeriod에 따라 months 설정
+                                  let months = 3; // 기본값
+                                  if (selectedPeriod === '1년') {
+                                      months = 13; // 시작월 포함 13개월
+                                  } else if (selectedPeriod === '3년') {
+                                      months = 36;
+                                  } else if (selectedPeriod === '전체') {
+                                      months = 120; // 최대값 (10년)
                                   }
                                   
-                                  return { index: globalIdx, chartData };
+                                  console.log(`🔄 차트 데이터 로드 시작: apt_id=${asset.aptId}, name=${asset.name}, period=${selectedPeriod}, months=${months}`);
+                                  const transRes = await fetchApartmentTransactions(asset.aptId, 'sale', 50, months);
+                                  console.log(`📊 차트 데이터 조회 완료 (apt_id: ${asset.aptId}):`, {
+                                      success: transRes.success,
+                                      hasData: !!transRes.data,
+                                      hasPriceTrend: !!transRes.data?.price_trend,
+                                      trendLength: transRes.data?.price_trend?.length || 0,
+                                      fullResponse: transRes
+                                  });
+                                  
+                                  if (transRes.success && transRes.data?.price_trend && transRes.data.price_trend.length > 0) {
+                                      const chartData = transRes.data.price_trend
+                                          .filter((item: any) => item.month && item.avg_price != null) // 유효한 데이터만 필터링
+                                          .map((item: any) => ({
+                                              time: `${item.month}-01`, // "YYYY-MM-01" 형식으로 변환
+                                              value: Math.round(item.avg_price) // 정수로 반올림
+                                          }))
+                                          .sort((a: any, b: any) => a.time.localeCompare(b.time)); // 시간순 정렬
+                                      
+                                      // 디버깅: 데이터 형식 확인
+                                      if (chartData.length > 0) {
+                                          console.log(`✅ [데이터 로딩 성공] apt_id: ${asset.aptId}, 데이터 개수: ${chartData.length}`);
+                                          console.log(`📅 [데이터 로딩] 날짜 범위: ${chartData[0].time} ~ ${chartData[chartData.length - 1].time}`);
+                                          console.log(`💰 [데이터 로딩] 샘플 데이터:`, chartData.slice(0, 3));
+                                      } else {
+                                          console.warn(`⚠️ [데이터 로딩] 유효한 데이터 없음: apt_id: ${asset.aptId}`);
+                                      }
+                                      
+                                      return { index: globalIdx, chartData };
+                                  } else {
+                                      console.warn(`⚠️ [데이터 로딩] 응답에 데이터 없음: apt_id: ${asset.aptId}`, {
+                                          success: transRes.success,
+                                          hasData: !!transRes.data,
+                                          hasPriceTrend: !!transRes.data?.price_trend
+                                      });
+                                  }
+                              } catch (error) {
+                                  console.error(`❌ 가격 추이 조회 실패 (apt_id: ${asset.aptId}):`, error);
+                                  if (error instanceof Error) {
+                                      console.error(`에러 메시지: ${error.message}`);
+                                      console.error(`에러 스택: ${error.stack}`);
+                                  }
                               }
-                          } catch (error) {
-                              console.error(`가격 추이 조회 실패 (apt_id: ${asset.aptId}):`, error);
-                          }
-                          
-                          return { index: globalIdx, chartData: generateAssetHistory(fallbackPrice, 500, asset.name) };
-                      })
-                  );
-                  
-                  // 배치 결과 반영
-                  batchResults.forEach(result => {
-                      updatedAssets[result.index] = { ...updatedAssets[result.index], chartData: result.chartData };
-                  });
-                  
-                  // 상태 업데이트 (UI 반영) - 사용자 추가 그룹 유지
-                  setAssetGroups(prev => {
-                      const userGroups = prev.filter(g => g.id !== 'my' && g.id !== 'favorites');
-                      return [
-                          { id: 'my', name: '내 자산', assets: updatedAssets.slice(0, myAssets.length) },
-                          { id: 'favorites', name: '관심 단지', assets: updatedAssets.slice(myAssets.length) },
-                          ...userGroups
-                      ];
-                  });
+                              
+                              // 실제 데이터를 가져오지 못한 경우 빈 배열 반환 (목업 데이터 사용 안 함)
+                              return { index: globalIdx, chartData: [] };
+                          })
+                      );
+                      
+                      // 배치 결과 반영
+                      batchResults.forEach(result => {
+                          updatedAssets[result.index] = { ...updatedAssets[result.index], chartData: result.chartData };
+                      });
+                      
+                      // 상태 업데이트 (UI 반영) - 사용자 추가 그룹 유지
+                      setAssetGroups(prev => {
+                          const userGroups = prev.filter(g => g.id !== 'my' && g.id !== 'favorites');
+                          return [
+                              { id: 'my', name: '내 자산', assets: updatedAssets.slice(0, myAssets.length) },
+                              { id: 'favorites', name: '관심 단지', assets: updatedAssets.slice(myAssets.length) },
+                              ...userGroups
+                          ];
+                      });
+                  }
+              } catch (error) {
+                  console.error('차트 데이터 로드 중 전체 오류:', error);
+              } finally {
+                  // 모든 차트 데이터 로드 완료 후 로딩 상태 해제
+                  setIsLoading(false);
               }
           };
           
-          // 차트 데이터 로딩은 비동기로 진행 (기본 데이터 표시 후)
+          // 실제 차트 데이터 로드 시작
           loadChartData();
           
-          // 지역별 수익률 비교 데이터 계산 - 내 자산 + 관심 리스트 포함
-          // 매매 기준 최근 1년 상승률과 주택가격지수(시군구) 비교
-          const allProperties = [
-              ...myProps.map(p => ({ 
-                  apt_name: p.name,
-                  apt_id: p.aptId,
-                  region_name: p.location.split(' ').slice(1).join(' ') || p.location, // "경기 의정부시" → "의정부시"
-                  city_name: p.location.split(' ')[0] || '', // "경기 의정부시" → "경기"
-                  source: 'my' as const
-              })),
-              ...favProps.map(p => ({
-                  apt_name: p.name,
-                  apt_id: p.aptId,
-                  region_name: p.location.split(' ').slice(1).join(' ') || p.location,
-                  city_name: p.location.split(' ')[0] || '',
-                  source: 'favorites' as const
-              }))
-          ];
+          // 지역별 수익률 비교 데이터 계산 - 내 자산만 포함 (관심 리스트 제외)
+          // 매매 기준 최근 1년 상승률과 주택가격지수 비교
+          const allProperties = myProps.map(p => ({ 
+              apt_name: p.name,
+              apt_id: p.aptId,
+              region_name: p.location.split(' ').slice(1).join(' ') || p.location, // "경기 의정부시" → "의정부시"
+              city_name: p.location.split(' ')[0] || '', // "경기 의정부시" → "경기"
+              source: 'my' as const
+          }));
           
-          console.log('[지역 비교] 전체 아파트 개수:', allProperties.length);
+          console.log('[지역 비교] 내 자산 아파트 개수:', allProperties.length);
           console.log('[지역 비교] 내 자산:', rawMyProperties.length);
-          console.log('[지역 비교] 관심 리스트:', favoritesRes.success && favoritesRes.data.favorites ? favoritesRes.data.favorites.length : 0);
           
           if (allProperties.length > 0) {
               // 각 아파트별로 개별 데이터 생성
@@ -744,10 +772,18 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                   let regionAverageRate = 0;
                   
                   // 1. 내 단지 상승률 계산 (매매 기준, 최근 1년)
+                  // 주의: 지역 비교는 1년 전과 비교해야 하므로 12개월 데이터 필요
                   if (prop.apt_id) {
                       try {
-                          // 최근 1년 데이터 조회 (12개월)
-                          const transRes = await fetchApartmentTransactions(prop.apt_id, 'sale', 100, 12);
+                          // 지역 비교는 1년 전 데이터와 비교해야 하므로 12개월 데이터 조회
+                          const transRes = await fetchApartmentTransactions(prop.apt_id, 'sale', 50, 12);
+                          
+                          console.log(`[지역 비교] 아파트 ${prop.apt_id} (${prop.apt_name}) 거래 데이터:`, {
+                              success: transRes.success,
+                              hasPriceTrend: !!transRes.data?.price_trend,
+                              priceTrendLength: transRes.data?.price_trend?.length || 0,
+                              priceTrend: transRes.data?.price_trend || []
+                          });
                           
                           if (transRes.success && transRes.data.price_trend && transRes.data.price_trend.length > 0) {
                               const priceTrend = transRes.data.price_trend;
@@ -757,61 +793,66 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                               // 현재 가격 (가장 최근 데이터)
                               const currentPrice = priceTrend[priceTrend.length - 1]?.avg_price;
                               
+                              console.log(`[지역 비교] 아파트 ${prop.apt_id} (${prop.apt_name}) 가격 추이 상세:`, {
+                                  oneYearAgoPrice,
+                                  currentPrice,
+                                  priceTrendLength: priceTrend.length,
+                                  firstMonth: priceTrend[0]?.month,
+                                  lastMonth: priceTrend[priceTrend.length - 1]?.month,
+                                  allMonths: priceTrend.map(p => ({ month: p.month, avg_price: p.avg_price }))
+                              });
+                              
                               if (oneYearAgoPrice && currentPrice && oneYearAgoPrice > 0) {
                                   myPropertyRate = ((currentPrice - oneYearAgoPrice) / oneYearAgoPrice) * 100;
+                                  console.log(`[지역 비교] ✅ 아파트 ${prop.apt_id} (${prop.apt_name}) 상승률 계산: ${myPropertyRate.toFixed(2)}%`);
+                              } else {
+                                  console.warn(`[지역 비교] ⚠️ 아파트 ${prop.apt_id} (${prop.apt_name}) 가격 데이터 부족:`, {
+                                      oneYearAgoPrice,
+                                      currentPrice,
+                                      reason: !oneYearAgoPrice ? '1년 전 가격 없음' : !currentPrice ? '현재 가격 없음' : '1년 전 가격이 0'
+                                  });
                               }
+                          } else {
+                              console.warn(`[지역 비교] ❌ 아파트 ${prop.apt_id} (${prop.apt_name}) 거래 데이터 없음:`, {
+                                  success: transRes.success,
+                                  hasData: !!transRes.data,
+                                  hasPriceTrend: !!transRes.data?.price_trend,
+                                  priceTrendLength: transRes.data?.price_trend?.length || 0
+                              });
                           }
                       } catch (error) {
                           console.error(`[지역 비교] 아파트 ${prop.apt_id} 매매 데이터 조회 실패:`, error);
                       }
                   }
                   
-                  // 2. 행정구역 평균 상승률 계산 (주택가격지수, 시군구 레벨)
+                  // 2. 행정구역 평균 상승률 계산 (시군구별 통계 API 사용)
+                  // 해당 아파트가 속하는 시군구의 같은 개월수(12개월) 상승률 계산
                   try {
-                      // 시군구 레벨로 변환: "경기 의정부시" → "의정부시"
-                      const sigunguName = prop.region_name || prop.city_name;
-                      
-                      if (sigunguName) {
-                          // 현재 년월 계산 (YYYYMM 형식)
-                          const now = new Date();
-                          const currentYm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+                      if (prop.apt_id) {
+                          // 아파트 상세 정보에서 region_id 가져오기
+                          const aptDetailRes = await fetchApartmentDetail(prop.apt_id);
                           
-                          // 1년 전 년월 계산
-                          const oneYearAgo = new Date(now);
-                          oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-                          const oneYearAgoYm = `${oneYearAgo.getFullYear()}${String(oneYearAgo.getMonth() + 1).padStart(2, '0')}`;
-                          
-                          // 주택가격지수 조회 (시군구 레벨, APT 타입)
-                          const hpiRes = await fetchHPIByRegionType('sigungu', 'APT', currentYm);
-                          
-                          if (hpiRes.success && hpiRes.data && hpiRes.data.length > 0) {
-                              // 해당 시군구 찾기
-                              const sigunguData = hpiRes.data.find(item => 
-                                  item.name === sigunguName || 
-                                  item.name.includes(sigunguName) ||
-                                  sigunguName.includes(item.name)
-                              );
+                          if (aptDetailRes.success && aptDetailRes.data && aptDetailRes.data.region_id) {
+                              const regionId = aptDetailRes.data.region_id;
                               
-                              if (sigunguData && sigunguData.value) {
-                                  // 1년 전 데이터 조회
-                                  const hpiResOneYearAgo = await fetchHPIByRegionType('sigungu', 'APT', oneYearAgoYm);
-                                  
-                                  if (hpiResOneYearAgo.success && hpiResOneYearAgo.data && hpiResOneYearAgo.data.length > 0) {
-                                      const sigunguDataOneYearAgo = hpiResOneYearAgo.data.find(item => 
-                                          item.name === sigunguName || 
-                                          item.name.includes(sigunguName) ||
-                                          sigunguName.includes(item.name)
-                                      );
-                                      
-                                      if (sigunguDataOneYearAgo && sigunguDataOneYearAgo.value && sigunguDataOneYearAgo.value > 0) {
-                                          regionAverageRate = ((sigunguData.value - sigunguDataOneYearAgo.value) / sigunguDataOneYearAgo.value) * 100;
-                                      }
-                                  }
+                              // 시군구별 통계 조회 (내 아파트와 동일한 12개월 기간)
+                              const regionStatsRes = await fetchRegionStats(regionId, 'sale', 12);
+                              
+                              if (regionStatsRes.success && regionStatsRes.data && regionStatsRes.data.change_rate !== undefined) {
+                                  regionAverageRate = regionStatsRes.data.change_rate;
+                                  console.log(`[지역 비교] 시군구 ${prop.region_name || aptDetailRes.data.region_name} (region_id: ${regionId}) 상승률:`, regionAverageRate);
+                              } else {
+                                  console.warn(`[지역 비교] 시군구 ${prop.region_name} (region_id: ${regionId}) 통계 데이터 조회 실패:`, regionStatsRes);
                               }
+                          } else {
+                              console.warn(`[지역 비교] 아파트 ${prop.apt_name} (apt_id: ${prop.apt_id})의 region_id를 가져올 수 없음`);
                           }
+                      } else {
+                          console.warn(`[지역 비교] 아파트 ${prop.apt_name}의 apt_id가 없어 시군구 상승률을 계산할 수 없음`);
                       }
                   } catch (error) {
-                      console.error(`[지역 비교] 시군구 ${prop.region_name} 주택가격지수 조회 실패:`, error);
+                      // 시군구 통계 조회 실패 시 조용히 무시
+                      console.warn(`[지역 비교] 시군구 통계 조회 실패 (무시됨):`, error);
                   }
                   
                   // 아파트 이름 짧게 표시 (최대 10자)
@@ -819,12 +860,16 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                       ? prop.apt_name.substring(0, 10) + '...' 
                       : prop.apt_name;
                   
-                  return {
+                  const result = {
                       region: shortAptName,
                       myProperty: Math.round(myPropertyRate * 100) / 100,
                       regionAverage: Math.round(regionAverageRate * 100) / 100,
                       aptName: prop.apt_name
                   };
+                  
+                  console.log(`[지역 비교] 아파트 ${prop.apt_name} 최종 데이터:`, result);
+                  
+                  return result;
               });
               
               // 모든 Promise 완료 대기
@@ -835,8 +880,8 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
               // 상승률 기준으로 정렬 (내림차순)
               comparisonData.sort((a, b) => b.myProperty - a.myProperty);
               
-              // 최대 8개 아파트만 표시
-              setRegionComparisonData(comparisonData.slice(0, 8));
+              // 최대 3개 아파트만 표시 (내 자산만)
+              setRegionComparisonData(comparisonData.slice(0, 3));
           } else {
               console.log('[지역 비교] 아파트 데이터가 없습니다');
               setRegionComparisonData([]);
@@ -846,7 +891,7 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
       } finally {
           setIsLoading(false);
       }
-  }, [isClerkLoaded, isSignedIn, getToken, mapToDashboardAsset]);
+  }, [isClerkLoaded, isSignedIn, getToken, mapToDashboardAsset, selectedPeriod]);
 
   // 로그인 상태 변경 시 데이터 로드
   useEffect(() => {
@@ -1074,27 +1119,22 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
       
       switch (selectedPeriod) {
           case '1년':
-              startDate = new Date('2024-01-01T00:00:00');
-              // 현재 날짜의 마지막 날로 설정 (더 관대하게)
-              endDate = new Date(`${currentYear}-${String(currentMonth).padStart(2, '0')}-31T23:59:59`);
-              // 2025년 12월까지 허용
-              if (endDate > new Date('2025-12-31T23:59:59')) {
-                  endDate = new Date('2025-12-31T23:59:59');
-              }
+              // 현재 날짜에서 1년 전
+              startDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate(), 0, 0, 0, 0);
+              // 현재 날짜의 마지막 시각으로 설정 (오늘까지 포함)
+              endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
               break;
           case '3년':
-              startDate = new Date('2022-06-01');
-              endDate = new Date(`${currentYear}-${String(currentMonth).padStart(2, '0')}-31`);
-              if (endDate > new Date('2025-12-31')) {
-                  endDate = new Date('2025-12-31');
-              }
+              // 현재 날짜에서 3년 전
+              startDate = new Date(now.getFullYear() - 3, now.getMonth(), now.getDate(), 0, 0, 0, 0);
+              // 현재 날짜의 마지막 시각으로 설정
+              endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
               break;
           case '전체':
-              startDate = new Date('2020-01-01');
-              endDate = new Date(`${currentYear}-${String(currentMonth).padStart(2, '0')}-31`);
-              if (endDate > new Date('2025-12-31')) {
-                  endDate = new Date('2025-12-31');
-              }
+              // 현재 날짜에서 10년 전으로 설정 (충분히 과거 데이터 포함)
+              startDate = new Date(now.getFullYear() - 10, now.getMonth(), now.getDate(), 0, 0, 0, 0);
+              // 현재 날짜의 마지막 시각으로 설정
+              endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
               break;
           default:
               return data;
@@ -1106,9 +1146,12 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
           if (timeStr.includes('-') && timeStr.length >= 10) {
               return new Date(timeStr);
           }
-          // "2024-01" 형식 (월만 있는 경우)
+          // "2024-01" 형식 (월만 있는 경우) - 해당 월의 마지막 날로 설정하여 해당 월의 모든 데이터 포함
           if (timeStr.includes('-') && timeStr.length === 7) {
-              return new Date(timeStr + '-01');
+              const [year, month] = timeStr.split('-').map(Number);
+              // 해당 월의 마지막 날짜 계산
+              const lastDay = new Date(year, month, 0).getDate();
+              return new Date(year, month - 1, lastDay, 23, 59, 59, 999);
           }
           // 기본 파싱
           return new Date(timeStr);
@@ -1132,9 +1175,14 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                   }
                   return false;
               }
-              const inRange = date >= startDate && date <= endDate;
+              // 날짜 비교 (시간 부분 무시하고 날짜만 비교)
+              const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+              const startDateOnly = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+              const endDateOnly = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+              
+              const inRange = dateOnly >= startDateOnly && dateOnly <= endDateOnly;
               if (selectedPeriod === '1년' && !inRange) {
-                  console.log(`[필터링] 제외된 데이터:`, d.time, `(${date.toISOString().split('T')[0]})`);
+                  console.log(`[필터링] 제외된 데이터:`, d.time, `(${date.toISOString().split('T')[0]})`, `범위: ${startDateOnly.toISOString().split('T')[0]} ~ ${endDateOnly.toISOString().split('T')[0]}`);
               }
               return inRange;
           } catch (e) {
@@ -1159,6 +1207,11 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
           } else {
               console.warn(`[필터링] ⚠️ 필터링 후 데이터가 없습니다!`);
           }
+      }
+      
+      // 데이터가 충분하지 않으면 빈 배열 반환 (차트가 끊기지 않도록)
+      if (filtered.length < 2) {
+          return [];
       }
       
       return filtered;
@@ -1251,17 +1304,25 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
       
       if (visibleAssets.length === 0) return [];
 
+      // 차트 데이터가 있는 자산만 필터링
+      const assetsWithData = visibleAssets.filter(asset => asset.chartData && asset.chartData.length > 0);
+      
+      if (assetsWithData.length === 0) {
+          // 차트 데이터가 없으면 빈 배열 반환 (로딩 중이거나 데이터 없음)
+          return [];
+      }
+
       if (viewMode === 'combined') {
           // 모아보기: 모든 자산의 가격을 합산한 단일 그래프
           const allDates = new Set<string>();
-          visibleAssets.forEach(asset => {
+          assetsWithData.forEach(asset => {
               asset.chartData.forEach(d => allDates.add(d.time));
           });
           
           const sortedDates = Array.from(allDates).sort();
           const combinedData = sortedDates.map(date => {
               let totalValue = 0;
-              visibleAssets.forEach(asset => {
+              assetsWithData.forEach(asset => {
                   // 해당 날짜의 데이터가 있으면 사용, 없으면 가장 가까운 이전 데이터 사용
                   const dataPoint = asset.chartData.find(d => d.time === date);
                   if (dataPoint) {
@@ -1286,13 +1347,43 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
               visible: true
           }];
       } else {
-          // 개별보기: 각 자산별 그래프 (이름 포함)
-          return visibleAssets.map(asset => ({
-              name: asset.name,
-              data: filterDataByPeriod(asset.chartData),
-              color: asset.color,
-              visible: true
-          }));
+          // 개별보기: 각 자산별 그래프 (이름 포함) - 데이터가 있는 것만
+          return assetsWithData.map(asset => {
+              const filteredData = filterDataByPeriod(asset.chartData);
+              
+              // 디버깅: 각 아파트별 데이터 확인
+              if (selectedPeriod === '1년') {
+                  console.log(`[차트 시리즈] ${asset.name}:`, {
+                      원본데이터개수: asset.chartData.length,
+                      필터링후개수: filteredData.length,
+                      원본날짜범위: asset.chartData.length > 0 
+                          ? `${asset.chartData[0].time} ~ ${asset.chartData[asset.chartData.length - 1].time}`
+                          : '없음',
+                      필터링후날짜범위: filteredData.length > 0
+                          ? `${filteredData[0].time} ~ ${filteredData[filteredData.length - 1].time}`
+                          : '없음',
+                      필터링후데이터: filteredData.slice(0, 10).map(d => ({ time: d.time, value: d.value }))
+                  });
+              }
+              
+              // 데이터가 충분하지 않으면 (2개 미만) 빈 배열 반환하여 차트에서 제외
+              if (filteredData.length < 2) {
+                  console.warn(`[차트 시리즈] ${asset.name}: 데이터가 부족하여 차트에서 제외됨 (${filteredData.length}개)`);
+                  return {
+                      name: asset.name,
+                      data: [],
+                      color: asset.color,
+                      visible: false
+                  };
+              }
+              
+              return {
+                  name: asset.name,
+                  data: filteredData,
+                  color: asset.color,
+                  visible: true
+              };
+          }).filter(series => series.visible && series.data.length > 0); // 빈 데이터 시리즈 제거
       }
   }, [activeGroup, viewMode, selectedPeriod, selectedAssetId]);
 
@@ -1445,11 +1536,50 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                       const currentFavAssets = assetGroups.find(g => g.id === 'favorites')?.assets || [];
                       const newAsset = mapToDashboardAsset([newProperty], currentFavAssets.length)[0];
                       
-                      // 차트 데이터 생성 (기본값 사용)
+                      // 차트 데이터는 빈 배열로 시작, 실제 데이터 로드 대기
                       const assetWithChart: DashboardAsset = {
                           ...newAsset,
-                          chartData: generateAssetHistory(newAsset.currentPrice > 0 ? newAsset.currentPrice : 50000, 500, newAsset.name)
+                          chartData: [] // 실제 데이터 로드 대기
                       };
+                      
+                      // 백그라운드에서 실제 차트 데이터 로드 (selectedPeriod에 따라)
+                      if (newAsset.aptId) {
+                          let months = 3; // 기본값
+                          if (selectedPeriod === '1년') {
+                              months = 13; // 시작월 포함 13개월
+                          } else if (selectedPeriod === '3년') {
+                              months = 36;
+                          } else if (selectedPeriod === '전체') {
+                              months = 120; // 최대값 (10년)
+                          }
+                          fetchApartmentTransactions(newAsset.aptId, 'sale', 50, months)
+                              .then(transRes => {
+                                  if (transRes.success && transRes.data.price_trend && transRes.data.price_trend.length > 0) {
+                                      const chartData = transRes.data.price_trend.map((item: any) => ({
+                                          time: `${item.month}-01`,
+                                          value: item.avg_price
+                                      }));
+                                      
+                                      // 상태 업데이트
+                                      setAssetGroups(prev => prev.map(group => {
+                                          if (group.id === 'favorites') {
+                                              return {
+                                                  ...group,
+                                                  assets: group.assets.map(asset => 
+                                                      asset.id === newAsset.id 
+                                                          ? { ...asset, chartData }
+                                                          : asset
+                                                  )
+                                              };
+                                          }
+                                          return group;
+                                      }));
+                                  }
+                              })
+                              .catch(error => {
+                                  console.error('차트 데이터 로드 실패:', error);
+                              });
+                      }
                       
                       setAssetGroups(prev => {
                           const updated = prev.map(group => {
@@ -1530,7 +1660,7 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                   gapPrice: 0,
                   jeonseRatio: 0,
                   isVisible: true,
-                  chartData: generateAssetHistory(50000, 500, aptName),
+                  chartData: [], // 실제 데이터 로드 대기
                   color: CHART_COLORS[activeGroup.assets.length % CHART_COLORS.length]
               };
               
@@ -1544,7 +1674,6 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                           const priceInMan = Math.round(aptData.price * 10000);
                           newAsset.currentPrice = priceInMan;
                           newAsset.purchasePrice = priceInMan;
-                          newAsset.chartData = generateAssetHistory(priceInMan, 500, aptName);
                       }
                       if (aptData.address) {
                           newAsset.location = aptData.address;
@@ -1552,6 +1681,45 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                   }
               } catch {
                   // 가격 정보 없어도 진행
+              }
+              
+              // 백그라운드에서 실제 차트 데이터 로드 (selectedPeriod에 따라)
+              if (aptId) {
+                  let months = 3; // 기본값
+                  if (selectedPeriod === '1년') {
+                      months = 13; // 시작월 포함 13개월
+                  } else if (selectedPeriod === '3년') {
+                      months = 36;
+                  } else if (selectedPeriod === '전체') {
+                      months = 120; // 최대값 (10년)
+                  }
+                  fetchApartmentTransactions(aptId, 'sale', 50, months)
+                      .then(transRes => {
+                          if (transRes.success && transRes.data.price_trend && transRes.data.price_trend.length > 0) {
+                              const chartData = transRes.data.price_trend.map((item: any) => ({
+                                  time: `${item.month}-01`,
+                                  value: item.avg_price
+                              }));
+                              
+                              // 상태 업데이트
+                              setAssetGroups(prev => prev.map(group => {
+                                  if (group.id === activeGroupId) {
+                                      return {
+                                          ...group,
+                                          assets: group.assets.map(asset => 
+                                              asset.id === newAsset.id 
+                                                  ? { ...asset, chartData }
+                                                  : asset
+                                          )
+                                      };
+                                  }
+                                  return group;
+                              }));
+                          }
+                      })
+                      .catch(error => {
+                          console.error('차트 데이터 로드 실패:', error);
+                      });
               }
               
               // 해당 그룹에 아파트 추가
@@ -1851,59 +2019,67 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
   const ControlsContent = () => (
       <>
         {/* Tabs */}
-        <div className="flex items-center gap-2 mb-6 border-b border-slate-100 pb-3 overflow-visible scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent hover:scrollbar-thumb-slate-300">
-            {assetGroups.map((group) => (
-                <div
-                    key={group.id}
-                    draggable={isEditMode}
-                    onDragStart={() => handleDragStart(group.id)}
-                    onDragOver={(e) => handleDragOver(e, group.id)}
-                    onDragEnd={handleDragEnd}
-                    className={`relative flex items-center gap-1 flex-shrink-0 ${
-                        draggedGroupId === group.id ? 'opacity-50' : ''
-                    } ${isEditMode ? 'cursor-grab active:cursor-grabbing' : ''}`}
-                >
-                    {isEditMode && editingGroupId === group.id ? (
-                        <input
-                            type="text"
-                            value={editingGroupName}
-                            onChange={(e) => setEditingGroupName(e.target.value)}
-                            onBlur={() => handleRenameGroup(group.id)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleRenameGroup(group.id)}
-                            className="px-3 py-2 rounded-lg text-[15px] font-bold border-2 border-blue-500 focus:outline-none w-28"
-                            autoFocus
-                        />
-                    ) : (
-                        <button 
-                            onClick={() => isEditMode ? null : handleTabChange(group.id)}
-                            onDoubleClick={() => {
-                                if (isEditMode) {
-                                    setEditingGroupId(group.id);
-                                    setEditingGroupName(group.name);
-                                }
-                            }}
-                            className={`px-4 py-2 rounded-lg text-[15px] font-bold transition-all whitespace-nowrap border min-w-[80px] text-center ${
-                                activeGroupId === group.id 
-                                ? 'bg-deep-900 text-white border-deep-900 shadow-sm' 
-                                : 'bg-white text-slate-500 hover:bg-slate-50 border-slate-200'
-                            }`}
-                        >
-                            {group.name}
-                        </button>
-                    )}
-                    {isEditMode && editingGroupId !== group.id && assetGroups.length > 1 && group.id !== 'my' && (
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteGroup(group.id);
-                            }}
-                            className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center text-xs font-bold hover:bg-red-600 transition-colors shadow-md z-50"
-                        >
-                            <X className="w-3 h-3" />
-                        </button>
-                    )}
-                </div>
-            ))}
+        <div className="flex items-center gap-2 mb-6 border-b border-slate-100 pb-3">
+            {/* 스크롤 가능한 탭 영역 */}
+            <div className={`flex items-center gap-2 flex-1 ${
+                assetGroups.length >= 3 
+                    ? 'overflow-x-auto overflow-y-visible scrollbar-hide' 
+                    : 'overflow-visible'
+            }`}>
+                {assetGroups.map((group) => (
+                    <div
+                        key={group.id}
+                        draggable={isEditMode}
+                        onDragStart={() => handleDragStart(group.id)}
+                        onDragOver={(e) => handleDragOver(e, group.id)}
+                        onDragEnd={handleDragEnd}
+                        className={`relative flex items-center gap-1 flex-shrink-0 ${
+                            draggedGroupId === group.id ? 'opacity-50' : ''
+                        } ${isEditMode ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                    >
+                        {isEditMode && editingGroupId === group.id ? (
+                            <input
+                                type="text"
+                                value={editingGroupName}
+                                onChange={(e) => setEditingGroupName(e.target.value)}
+                                onBlur={() => handleRenameGroup(group.id)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleRenameGroup(group.id)}
+                                className="px-3 py-2 rounded-lg text-[15px] font-bold border-2 border-blue-500 focus:outline-none w-28"
+                                autoFocus
+                            />
+                        ) : (
+                            <button 
+                                onClick={() => isEditMode ? null : handleTabChange(group.id)}
+                                onDoubleClick={() => {
+                                    if (isEditMode) {
+                                        setEditingGroupId(group.id);
+                                        setEditingGroupName(group.name);
+                                    }
+                                }}
+                                className={`px-4 py-2 rounded-lg text-[15px] font-bold transition-all whitespace-nowrap border min-w-[80px] text-center ${
+                                    activeGroupId === group.id 
+                                    ? 'bg-deep-900 text-white border-deep-900 shadow-sm' 
+                                    : 'bg-white text-slate-500 hover:bg-slate-50 border-slate-200'
+                                }`}
+                            >
+                                {group.name}
+                            </button>
+                        )}
+                        {isEditMode && editingGroupId !== group.id && assetGroups.length > 1 && group.id !== 'my' && (
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteGroup(group.id);
+                                }}
+                                className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center text-xs font-bold hover:bg-red-600 transition-colors shadow-md z-50"
+                            >
+                                <X className="w-3 h-3" />
+                            </button>
+                        )}
+                    </div>
+                ))}
+            </div>
+            {/* 추가 버튼 - 스크롤 영역 밖, 카드 안에 고정 */}
             <button 
                 onClick={() => setIsAddGroupModalOpen(true)}
                 className="p-2 bg-white border border-slate-200 rounded-lg text-slate-400 hover:text-blue-600 hover:border-blue-200 transition-colors shadow-sm flex-shrink-0"
@@ -2522,6 +2698,7 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                                                     height={420} 
                                                     theme="dark"
                                                     showHighLow={true}
+                                                    period={selectedPeriod as '1년' | '3년' | '전체'}
                                                 />
                                             )}
                                         </div>
