@@ -43,6 +43,7 @@ from app.models import (  # noqa: F401
     news,
     recent_search,
     recent_view,
+    asset_activity_log,
 )
 
 

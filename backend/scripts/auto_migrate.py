@@ -42,19 +42,32 @@ async def get_database_url():
         return os.environ.get('DATABASE_URL', '')
 
 
-async def ensure_migration_table(engine):
-    """마이그레이션 추적 테이블 생성"""
-    async with engine.begin() as conn:
-        await conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS _migrations (
-                id SERIAL PRIMARY KEY,
-                name VARCHAR(255) NOT NULL UNIQUE,
-                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """))
-        await conn.execute(text("""
-            COMMENT ON TABLE _migrations IS '적용된 마이그레이션 추적 테이블'
-        """))
+async def ensure_migration_table(engine, max_retries: int = 10, retry_delay: float = 2.0):
+    """마이그레이션 추적 테이블 생성 (재시도 로직 포함)"""
+    for attempt in range(max_retries):
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS _migrations (
+                        id SERIAL PRIMARY KEY,
+                        name VARCHAR(255) NOT NULL UNIQUE,
+                        applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """))
+                await conn.execute(text("""
+                    COMMENT ON TABLE _migrations IS '적용된 마이그레이션 추적 테이블'
+                """))
+            return  # 성공 시 즉시 반환
+        except Exception as e:
+            error_msg = str(e).lower()
+            # "the database system is starting up" 오류인 경우 재시도
+            if "starting up" in error_msg or "connection" in error_msg:
+                if attempt < max_retries - 1:
+                    print(f"   ⏳ 데이터베이스 준비 대기 중... (재시도 {attempt + 1}/{max_retries})")
+                    await asyncio.sleep(retry_delay)
+                    continue
+            # 다른 오류는 즉시 재발생
+            raise
 
 
 async def get_applied_migrations(engine):
@@ -195,8 +208,9 @@ async def run_auto_migrations():
     engine = create_async_engine(database_url, echo=False)
     
     try:
-        # 마이그레이션 테이블 확인/생성
-        await ensure_migration_table(engine)
+        # 마이그레이션 테이블 확인/생성 (재시도 로직 포함)
+        print("🔄 마이그레이션 테이블 확인 중...")
+        await ensure_migration_table(engine, max_retries=10, retry_delay=2.0)
         
         # 이미 적용된 마이그레이션 조회
         applied = await get_applied_migrations(engine)

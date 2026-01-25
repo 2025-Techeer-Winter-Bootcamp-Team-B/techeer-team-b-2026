@@ -91,6 +91,7 @@ from app.services.data_collection.constants import (
 from app.services.data_collection.base import DataCollectionServiceBase
 from app.services.data_collection.utils.matching import ApartmentMatcher
 from app.services.data_collection.constants import MOLIT_SALE_API_URL
+from app.services.asset_activity_service import trigger_price_change_log_if_needed
 
 
 class SaleCollectionService(DataCollectionServiceBase):
@@ -736,6 +737,24 @@ class SaleCollectionService(DataCollectionServiceBase):
                                 if matched_apt.is_available != "1":
                                     matched_apt.is_available = "1"
                                     local_db.add(matched_apt)
+                                
+                                # 가격 변동 로그 트리거 (실시간 업데이트)
+                                # 실거래가 저장 후 가격 변동이 1% 이상이면 로그 생성
+                                if sale_create.trans_price and sale_create.contract_date:
+                                    try:
+                                        await trigger_price_change_log_if_needed(
+                                            db=local_db,
+                                            apt_id=matched_apt.apt_id,
+                                            new_price=sale_create.trans_price,
+                                            sale_date=sale_create.contract_date
+                                        )
+                                    except Exception as e:
+                                        # 트리거 실패해도 실거래가 저장은 성공으로 처리
+                                        logger.warning(
+                                            f"⚠️ 가격 변동 로그 트리거 실패 - "
+                                            f"apt_id: {matched_apt.apt_id}, "
+                                            f"에러: {type(e).__name__}: {str(e)}"
+                                        )
                                 
                                 # 배치 커밋 (성능 최적화)
                                 if len(sales_to_save) >= batch_size:
