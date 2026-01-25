@@ -1011,12 +1011,12 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onChangeV
       <main className={`${
         isMapMode 
           ? 'h-screen w-full p-0 md:pt-16 md:px-0' 
-          : (isDashboard ? 'pt-0 md:pt-20 px-0 md:px-8' : 'pt-14 md:pt-20 px-4 md:px-8')
+          : (isDashboard ? 'pt-0 md:pt-20 px-0 md:px-2' : 'pt-2 md:pt-20 px-2 md:px-8')
       } max-w-[1600px] 2xl:max-w-[1760px] mx-auto min-h-screen relative`}>
         
         {/* Mobile Header */}
         {isDashboard && !isDetailOpen && !isMapMode && (
-          <div className={`md:hidden flex justify-between items-center mb-0 pt-6 pb-4 px-6 z-20 relative animate-fade-in`}>
+          <div className={`md:hidden flex justify-between items-center mb-0 pt-6 pb-4 px-3 z-20 relative animate-fade-in`}>
               <SignedIn>
                   <div className="flex items-center gap-3" onClick={() => setIsProfileOpen(true)}>
                      <div className="w-10 h-10 rounded-full bg-slate-200 overflow-hidden border border-white shadow-md">

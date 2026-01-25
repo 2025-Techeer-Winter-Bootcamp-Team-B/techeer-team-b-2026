@@ -36,11 +36,11 @@ async def migrate_price_history():
     try:
         async with async_session() as db:
             print("\n" + "="*60)
-            print("📋 과거 실거래가 데이터 기반 가격 변동 로그 생성")
+            print(" 과거 실거래가 데이터 기반 가격 변동 로그 생성")
             print("="*60)
             
             # 1. my_properties와 favorite_apartments에 등록된 모든 아파트 ID 수집
-            print("\n1️⃣ 등록된 아파트 조회 중...")
+            print("\n1⃣ 등록된 아파트 조회 중...")
             
             # MY_ASSET 아파트들 (account_id, apt_id 쌍)
             properties_result = await db.execute(
@@ -69,7 +69,7 @@ async def migrate_price_history():
             all_apartments = {**my_asset_apartments, **interest_apartments}
             
             if not all_apartments:
-                print("✅ 등록된 아파트가 없습니다.")
+                print(" 등록된 아파트가 없습니다.")
                 return
             
             print(f"   - MY_ASSET: {len(my_asset_apartments)}개")
@@ -77,7 +77,7 @@ async def migrate_price_history():
             print(f"   - 전체: {len(all_apartments)}개")
             
             # 2. 각 아파트별로 과거 1년 실거래가 조회 및 가격 변동 로그 생성
-            print("\n2️⃣ 실거래가 히스토리 조회 및 가격 변동 로그 생성 중...")
+            print("\n2⃣ 실거래가 히스토리 조회 및 가격 변동 로그 생성 중...")
             
             # 과거 1년 기간 설정
             end_date = datetime.now().date()
@@ -166,7 +166,7 @@ async def migrate_price_history():
                                 
                                 if total_logs_created % 50 == 0:
                                     await db.commit()
-                                    print(f"   💾 중간 커밋 완료 ({total_logs_created}개 로그 생성)")
+                                    print(f"    중간 커밋 완료 ({total_logs_created}개 로그 생성)")
                         
                         previous_price = current_price
                         previous_date = current_date
@@ -183,25 +183,25 @@ async def migrate_price_history():
                     total_errors += 1
                     error_msg = f"account_id={account_id}, apt_id={apt_id}: {str(e)}"
                     errors.append(error_msg)
-                    print(f"   ❌ 오류: {error_msg}")
+                    print(f"    오류: {error_msg}")
                     await db.rollback()
             
             # 최종 커밋
             if total_logs_created > 0:
                 await db.commit()
-                print(f"\n💾 최종 커밋 완료")
+                print(f"\n 최종 커밋 완료")
             
             # 결과 출력
             print("\n" + "="*60)
-            print("🎉 마이그레이션 완료!")
+            print(" 마이그레이션 완료!")
             print("="*60)
-            print(f"✅ 생성된 로그: {total_logs_created}개")
-            print(f"⏭️  스킵된 로그: {total_logs_skipped}개 (이미 존재)")
-            print(f"❌ 오류: {total_errors}개")
+            print(f" 생성된 로그: {total_logs_created}개")
+            print(f"⏭  스킵된 로그: {total_logs_skipped}개 (이미 존재)")
+            print(f" 오류: {total_errors}개")
             print("="*60)
             
             if errors:
-                print("\n⚠️  오류 상세 (최대 10개):")
+                print("\n  오류 상세 (최대 10개):")
                 for error in errors[:10]:
                     print(f"  - {error}")
                 if len(errors) > 10:
@@ -209,17 +209,17 @@ async def migrate_price_history():
             
             # 검증: 생성된 로그 수 확인
             if total_logs_created > 0:
-                print("\n🔍 마이그레이션 결과 검증 중...")
+                print("\n 마이그레이션 결과 검증 중...")
                 verify_result = await db.execute(
                     select(AssetActivityLog).where(
                         AssetActivityLog.event_type.in_(["PRICE_UP", "PRICE_DOWN"])
                     )
                 )
                 price_logs = verify_result.scalars().all()
-                print(f"✅ asset_activity_logs 테이블에 가격 변동 로그 {len(price_logs)}개 확인됨")
+                print(f" asset_activity_logs 테이블에 가격 변동 로그 {len(price_logs)}개 확인됨")
             
     except Exception as e:
-        print(f"\n❌ 치명적 오류: {str(e)}")
+        print(f"\n 치명적 오류: {str(e)}")
         import traceback
         traceback.print_exc()
         raise

@@ -70,7 +70,7 @@ if not logger.handlers:
     "",
     response_model=dict,
     status_code=status.HTTP_200_OK,
-    tags=["🏠 My Properties (내 집)"],
+    tags=[" My Properties (내 집)"],
     summary="내 집 목록 조회",
     description="""
     현재 로그인한 사용자가 등록한 내 집 목록을 조회합니다.
@@ -131,7 +131,7 @@ async def get_my_properties(
     """
     try:
         account_id = current_user.account_id
-        logger.info(f"🏠 [My Properties] 조회 시작 - account_id: {account_id}, skip: {skip}, limit: {limit}")
+        logger.info(f" [My Properties] 조회 시작 - account_id: {account_id}, skip: {skip}, limit: {limit}")
         
         # 캐시 키 생성 (버전 포함하여 캐시 무효화 관리)
         CACHE_VERSION = "v2"  # 캐시 스키마 버전 - 필드 추가 시 버전 업
@@ -144,7 +144,7 @@ async def get_my_properties(
         
         if cached_data is not None and cached_count is not None:
             # 캐시 히트: 캐시된 데이터 반환
-            logger.info(f"✅ [My Properties] 캐시 히트 - account_id: {account_id}")
+            logger.info(f" [My Properties] 캐시 히트 - account_id: {account_id}")
             return {
                 "success": True,
                 "data": {
@@ -155,7 +155,7 @@ async def get_my_properties(
             }
         
         # 2. 캐시 미스: 데이터베이스에서 조회
-        logger.info(f"❌ [My Properties] 캐시 미스 - DB 조회 시작 - account_id: {account_id}")
+        logger.info(f" [My Properties] 캐시 미스 - DB 조회 시작 - account_id: {account_id}")
         properties = await my_property_crud.get_by_account(
             db,
             account_id=account_id,
@@ -208,7 +208,7 @@ async def get_my_properties(
             except Exception as e:
                 error_traceback = traceback.format_exc()
                 logger.warning(
-                    f"⚠️ 부동산 지수 일괄 조회 실패\n"
+                    f" 부동산 지수 일괄 조회 실패\n"
                     f"   account_id: {account_id}\n"
                     f"   region_ids: {list(region_ids)}\n"
                     f"   에러 타입: {type(e).__name__}\n"
@@ -264,7 +264,7 @@ async def get_my_properties(
                     if matched_sale:
                         latest_prices[prop.apt_id] = int(matched_sale.trans_price)
                         logger.info(
-                            f"✅ 내 자산 최신가 조회 성공 (Batch) - "
+                            f" 내 자산 최신가 조회 성공 (Batch) - "
                             f"property_id: {prop.property_id}, apt_id: {prop.apt_id}, "
                             f"등록면적: {prop.exclusive_area}㎡, "
                             f"거래면적: {matched_sale.exclusive_area}㎡, "
@@ -275,14 +275,14 @@ async def get_my_properties(
                         fallback_sale = prop_sales[0] # 첫 번째가 최신
                         latest_prices[prop.apt_id] = int(fallback_sale.trans_price)
                         logger.warning(
-                            f"⚠️ 전용면적({prop.exclusive_area}㎡)에 맞는 거래 없음, "
+                            f" 전용면적({prop.exclusive_area}㎡)에 맞는 거래 없음, "
                             f"전체 최신 거래 사용 - apt_id: {prop.apt_id}, 가격: {fallback_sale.trans_price}만원"
                         )
 
             except Exception as e:
                 error_traceback = traceback.format_exc()
                 logger.warning(
-                    f"⚠️ 최신 매매가 일괄 조회 실패\n"
+                    f" 최신 매매가 일괄 조회 실패\n"
                     f"   account_id: {account_id}\n"
                     f"   properties 개수: {len(properties)}\n"
                     f"   에러 타입: {type(e).__name__}\n"
@@ -343,7 +343,7 @@ async def get_my_properties(
             except Exception as e:
                 error_traceback = traceback.format_exc()
                 logger.error(
-                    f"❌ 개별 내 집 데이터 변환 중 오류\n"
+                    f" 개별 내 집 데이터 변환 중 오류\n"
                     f"   account_id: {account_id}\n"
                     f"   property_id: {prop.property_id if prop else 'None'}\n"
                     f"   apt_id: {prop.apt_id if prop else 'None'}\n"
@@ -365,7 +365,7 @@ async def get_my_properties(
         await set_to_cache(cache_key, {"properties": properties_data}, ttl=1800)
         await set_to_cache(count_cache_key, total, ttl=1800)
         
-        logger.info(f"✅ [My Properties] 조회 완료 및 캐시 저장 - account_id: {account_id}, 결과: {len(properties_data)}개")
+        logger.info(f" [My Properties] 조회 완료 및 캐시 저장 - account_id: {account_id}, 결과: {len(properties_data)}개")
         
         return {
             "success": True,
@@ -379,7 +379,7 @@ async def get_my_properties(
         error_traceback = traceback.format_exc()
         
         logger.error(
-            f"❌ [My Properties] 조회 실패\n"
+            f" [My Properties] 조회 실패\n"
             f"   account_id: {current_user.account_id if current_user else 'None'}\n"
             f"   skip: {skip}, limit: {limit}\n"
             f"   에러 타입: {error_type}\n"
@@ -406,7 +406,7 @@ async def get_my_properties(
     "",
     response_model=dict,
     status_code=status.HTTP_201_CREATED,
-    tags=["🏠 My Properties (내 집)"],
+    tags=[" My Properties (내 집)"],
     summary="내 집 등록",
     description="""
     새로운 내 집을 등록합니다.
@@ -531,14 +531,14 @@ async def create_my_property(
         except Exception as e:
             # 과거 가격 변동 로그 생성 실패해도 계속 진행
             logger.warning(
-                f"⚠️ 과거 가격 변동 로그 생성 실패 (내 집 추가) - "
+                f" 과거 가격 변동 로그 생성 실패 (내 집 추가) - "
                 f"account_id: {current_user.account_id}, apt_id: {property_obj.apt_id}, "
                 f"에러: {type(e).__name__}: {str(e)}"
             )
     except Exception as e:
         # 로그 생성 실패해도 내 집 생성은 성공으로 처리
         logger.warning(
-            f"⚠️ 활동 로그 생성 실패 (내 집 추가) - "
+            f" 활동 로그 생성 실패 (내 집 추가) - "
             f"account_id: {current_user.account_id}, apt_id: {property_obj.apt_id}, "
             f"에러: {type(e).__name__}: {str(e)}"
         )
@@ -575,7 +575,7 @@ async def create_my_property(
     "/{property_id}",
     response_model=dict,
     status_code=status.HTTP_200_OK,
-    tags=["🏠 My Properties (내 집)"],
+    tags=[" My Properties (내 집)"],
     summary="내 집 상세 조회",
     description="""
     특정 내 집의 상세 정보를 조회합니다.
@@ -735,7 +735,7 @@ async def get_my_property(
     "/{property_id}",
     response_model=dict,
     status_code=status.HTTP_200_OK,
-    tags=["🏠 My Properties (내 집)"],
+    tags=[" My Properties (내 집)"],
     summary="내 집 정보 수정",
     description="""
     내 집 정보를 수정합니다.
@@ -853,7 +853,7 @@ async def update_my_property(
     "/{property_id}",
     response_model=dict,
     status_code=status.HTTP_200_OK,
-    tags=["🏠 My Properties (내 집)"],
+    tags=[" My Properties (내 집)"],
     summary="내 집 삭제",
     description="""
     내 집을 삭제합니다.
@@ -931,7 +931,7 @@ async def delete_my_property(
     except Exception as e:
         # 로그 생성 실패해도 내 집 삭제는 성공으로 처리
         logger.warning(
-            f"⚠️ 활동 로그 생성 실패 (내 집 삭제) - "
+            f" 활동 로그 생성 실패 (내 집 삭제) - "
             f"account_id: {current_user.account_id}, apt_id: {property_obj.apt_id}, "
             f"에러: {type(e).__name__}: {str(e)}"
         )
@@ -954,7 +954,7 @@ async def delete_my_property(
     "/{property_id}/recent-transactions",
     response_model=dict,
     status_code=status.HTTP_200_OK,
-    tags=["🏠 My Properties (내 집)"],
+    tags=[" My Properties (내 집)"],
     summary="동일 단지 최근 거래 조회",
     description="""
     내 집과 동일한 아파트 단지의 최근 거래 내역을 조회합니다.

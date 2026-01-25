@@ -54,7 +54,7 @@ if not logger.handlers:
     "",
     response_model=dict,
     status_code=status.HTTP_200_OK,
-    tags=["📋 Asset Activity (자산 활동)"],
+    tags=[" Asset Activity (자산 활동)"],
     summary="자산 활동 로그 조회",
     description="""
     현재 로그인한 사용자의 자산 활동 내역을 조회합니다.
@@ -209,7 +209,7 @@ async def get_activity_logs(
             })
         
         logger.info(
-            f"✅ 활동 로그 조회 완료 - "
+            f" 활동 로그 조회 완료 - "
             f"account_id: {current_user.account_id}, "
             f"결과: {len(logs_data)}개, 총: {total}개"
         )
@@ -229,7 +229,7 @@ async def get_activity_logs(
         error_message = str(e)
         
         logger.error(
-            f"❌ 활동 로그 조회 실패 - "
+            f" 활동 로그 조회 실패 - "
             f"account_id: {current_user.account_id}, "
             f"에러: {error_type}: {error_message}",
             exc_info=True
