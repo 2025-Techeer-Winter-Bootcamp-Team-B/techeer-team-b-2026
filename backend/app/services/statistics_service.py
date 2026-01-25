@@ -137,10 +137,9 @@ async def get_rvol(
             .group_by(extract('year', date_field), extract('month', date_field))
         )
         
-        average_result, current_result = await asyncio.gather(
-            db.execute(average_volume_stmt),
-            db.execute(current_volume_stmt)
-        )
+        # 순차 실행 (SQLAlchemy AsyncSession 동시성 제한)
+        average_result = await db.execute(average_volume_stmt)
+        current_result = await db.execute(current_volume_stmt)
         
         average_rows = average_result.fetchall()
         current_rows = current_result.fetchall()
@@ -292,13 +291,11 @@ async def get_quadrant(
             .group_by(extract('year', Rent.deal_date), extract('month', Rent.deal_date))
         )
         
-        # 실행
-        sale_previous_result, sale_recent_result, rent_previous_result, rent_recent_result = await asyncio.gather(
-            db.execute(sale_previous_stmt),
-            db.execute(sale_recent_stmt),
-            db.execute(rent_previous_stmt),
-            db.execute(rent_recent_stmt)
-        )
+        # 순차 실행 (SQLAlchemy AsyncSession 동시성 제한)
+        sale_previous_result = await db.execute(sale_previous_stmt)
+        sale_recent_result = await db.execute(sale_recent_stmt)
+        rent_previous_result = await db.execute(rent_previous_stmt)
+        rent_recent_result = await db.execute(rent_recent_stmt)
         
         sale_previous_rows = sale_previous_result.fetchall()
         sale_recent_rows = sale_recent_result.fetchall()

@@ -642,6 +642,12 @@ async def ai_search_apartments(
     region_lookup_duration = region_lookup_end_time - region_lookup_start_time
     logger.info(f"[AI_SEARCH] [2단계] 지역 ID 조회 완료 - 소요시간: {region_lookup_duration:.3f}초, region_id: {region_id}, 시간: {datetime.now().isoformat()}")
     
+    # [개선] 지하철역 검색인 경우 지역 제한을 완화 (AI가 지역을 잘못 추론했거나, 역이 행정구역 경계에 있는 경우 대비)
+    if parsed_criteria.get("subway_station") and region_id:
+        logger.info(f"[AI_SEARCH] 지하철역 검색 감지 - 지역 제한 해제 (region_id: {region_id} -> None)")
+        region_id = None
+        parsed_criteria["region_id"] = None
+    
     # 3. 상세 검색 실행
     search_start_time = time.time()
     logger.info(f"[AI_SEARCH] [3단계] 상세 검색 시작 - 시간: {datetime.now().isoformat()}")
