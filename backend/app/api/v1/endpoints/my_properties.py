@@ -39,6 +39,10 @@ from app.utils.cache import (
     get_my_property_detail_cache_key,
     get_my_property_pattern_key
 )
+from app.services.asset_activity_service import (
+    log_apartment_added,
+    log_apartment_deleted
+)
 
 router = APIRouter()
 
@@ -494,7 +498,24 @@ async def create_my_property(
         account_id=current_user.account_id
     )
     
-    # 4. 캐시 무효화 (해당 계정의 모든 내 집 캐시 삭제)
+    # 4-1. 활동 로그 생성 (아파트 추가)
+    try:
+        await log_apartment_added(
+            db,
+            account_id=current_user.account_id,
+            apt_id=property_obj.apt_id,
+            category="MY_ASSET",
+            current_price=property_obj.current_market_price
+        )
+    except Exception as e:
+        # 로그 생성 실패해도 내 집 생성은 성공으로 처리
+        logger.warning(
+            f"⚠️ 활동 로그 생성 실패 (내 집 추가) - "
+            f"account_id: {current_user.account_id}, apt_id: {property_obj.apt_id}, "
+            f"에러: {type(e).__name__}: {str(e)}"
+        )
+    
+    # 4-2. 캐시 무효화 (해당 계정의 모든 내 집 캐시 삭제)
     CACHE_VERSION = "v2"
     cache_pattern = f"{CACHE_VERSION}:{get_my_property_pattern_key(current_user.account_id)}"
     await delete_cache_pattern(cache_pattern)
@@ -870,6 +891,22 @@ async def delete_my_property(
     
     if not property_obj:
         raise NotFoundException("내 집")
+    
+    # 활동 로그 생성 (아파트 삭제)
+    try:
+        await log_apartment_deleted(
+            db,
+            account_id=current_user.account_id,
+            apt_id=property_obj.apt_id,
+            category="MY_ASSET"
+        )
+    except Exception as e:
+        # 로그 생성 실패해도 내 집 삭제는 성공으로 처리
+        logger.warning(
+            f"⚠️ 활동 로그 생성 실패 (내 집 삭제) - "
+            f"account_id: {current_user.account_id}, apt_id: {property_obj.apt_id}, "
+            f"에러: {type(e).__name__}: {str(e)}"
+        )
     
     # 캐시 무효화 (해당 계정의 모든 내 집 캐시 삭제)
     CACHE_VERSION = "v2"

@@ -50,6 +50,10 @@ from app.utils.cache import (
     get_favorite_apartments_count_cache_key,
     get_favorite_apartment_pattern_key
 )
+from app.services.asset_activity_service import (
+    log_apartment_added,
+    log_apartment_deleted
+)
 
 router = APIRouter()
 
@@ -778,6 +782,22 @@ async def create_favorite_apartment(
     )
     logger.info(f"✅ 관심 아파트 생성 완료 - favorite_id: {favorite.favorite_id}, account_id: {account_id}, apt_id: {favorite_in.apt_id}")
     
+    # 4-1. 활동 로그 생성 (관심 아파트 추가)
+    try:
+        await log_apartment_added(
+            db,
+            account_id=account_id,
+            apt_id=favorite.apt_id,
+            category="INTEREST"
+        )
+    except Exception as e:
+        # 로그 생성 실패해도 관심 아파트 추가는 성공으로 처리
+        logger.warning(
+            f"⚠️ 활동 로그 생성 실패 (관심 아파트 추가) - "
+            f"account_id: {account_id}, apt_id: {favorite.apt_id}, "
+            f"에러: {type(e).__name__}: {str(e)}"
+        )
+    
     # 5. 캐시 무효화 (해당 계정의 모든 관심 아파트 캐시 삭제)
     cache_pattern = get_favorite_apartment_pattern_key(account_id)
     await delete_cache_pattern(cache_pattern)
@@ -983,6 +1003,22 @@ async def delete_favorite_apartment(
     
     if not favorite:
         raise NotFoundException("관심 아파트")
+    
+    # 활동 로그 생성 (관심 아파트 삭제)
+    try:
+        await log_apartment_deleted(
+            db,
+            account_id=current_user.account_id,
+            apt_id=apt_id,
+            category="INTEREST"
+        )
+    except Exception as e:
+        # 로그 생성 실패해도 관심 아파트 삭제는 성공으로 처리
+        logger.warning(
+            f"⚠️ 활동 로그 생성 실패 (관심 아파트 삭제) - "
+            f"account_id: {current_user.account_id}, apt_id: {apt_id}, "
+            f"에러: {type(e).__name__}: {str(e)}"
+        )
     
     # 캐시 무효화 (해당 계정의 모든 관심 아파트 캐시 삭제)
     cache_pattern = get_favorite_apartment_pattern_key(current_user.account_id)
