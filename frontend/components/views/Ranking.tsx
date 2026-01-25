@@ -105,33 +105,41 @@ const RankingRow: React.FC<{
     >
       <div
         onClick={onClick}
-        className={`group flex items-center gap-3 px-4 py-3 border-b border-slate-100 hover:bg-slate-50 transition-colors cursor-pointer ${
+        className={`group flex items-center gap-3 px-4 py-3 border-b border-slate-100 transition-all duration-300 cursor-pointer ${
           isTop3
             ? item.rank === 1
-              ? 'bg-yellow-50/50'
+              ? 'bg-gradient-to-r from-yellow-50/80 via-yellow-50/60 to-yellow-50/40 hover:from-yellow-100/80 hover:via-yellow-100/60 hover:to-yellow-100/40 shadow-sm hover:shadow-md'
               : item.rank === 2
-              ? 'bg-gray-50/50'
-              : 'bg-orange-50/50'
-            : 'bg-white'
+              ? 'bg-gradient-to-r from-gray-50/80 via-gray-50/60 to-gray-50/40 hover:from-gray-100/80 hover:via-gray-100/60 hover:to-gray-100/40 shadow-sm hover:shadow-md'
+              : 'bg-gradient-to-r from-orange-50/80 via-orange-50/60 to-orange-50/40 hover:from-orange-100/80 hover:via-orange-100/60 hover:to-orange-100/40 shadow-sm hover:shadow-md'
+            : 'bg-white hover:bg-slate-50'
         }`}
       >
         {/* 순위 */}
-        <div className={`flex-shrink-0 w-8 h-8 rounded-md flex items-center justify-center font-bold text-sm ${
+        <div className={`flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center font-black text-base font-sans transition-all duration-300 ${
           isTop3 
             ? item.rank === 1 
-              ? 'bg-yellow-500 text-white' 
+              ? 'bg-gradient-to-br from-yellow-400 via-yellow-500 to-yellow-600 text-white shadow-lg shadow-yellow-500/50 group-hover:scale-110 group-hover:shadow-xl group-hover:shadow-yellow-500/60' 
               : item.rank === 2
-              ? 'bg-gray-400 text-white'
-              : 'bg-orange-500 text-white'
-            : 'bg-slate-100 text-slate-700'
+              ? 'bg-gradient-to-br from-gray-300 via-gray-400 to-gray-500 text-white shadow-lg shadow-gray-400/50 group-hover:scale-110 group-hover:shadow-xl group-hover:shadow-gray-400/60'
+              : 'bg-gradient-to-br from-orange-400 via-orange-500 to-orange-600 text-white shadow-lg shadow-orange-500/50 group-hover:scale-110 group-hover:shadow-xl group-hover:shadow-orange-500/60'
+            : 'bg-slate-100 text-slate-700 group-hover:bg-slate-200'
         }`}>
           {item.rank}
         </div>
 
         {/* 아파트 정보 */}
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 font-sans">
           <div className="flex items-center gap-2">
-            <h4 className="font-bold text-[15px] truncate text-slate-900 group-hover:text-blue-600 transition-colors">
+            <h4 className={`font-bold text-[15px] truncate transition-colors ${
+              isTop3 
+                ? item.rank === 1
+                  ? 'text-yellow-900 group-hover:text-yellow-700'
+                  : item.rank === 2
+                  ? 'text-gray-900 group-hover:text-gray-700'
+                  : 'text-orange-900 group-hover:text-orange-700'
+                : 'text-slate-900 group-hover:text-blue-600'
+            }`}>
               {item.name}
             </h4>
           </div>
@@ -141,9 +149,17 @@ const RankingRow: React.FC<{
         </div>
 
         {/* 가격 및 통계 */}
-        <div className="flex items-center gap-4 flex-shrink-0">
+        <div className="flex items-center gap-4 flex-shrink-0 font-sans">
           <div className="text-right">
-            <p className="font-bold text-[15px] tabular-nums text-slate-900">
+            <p className={`font-bold tabular-nums transition-colors ${
+              isTop3
+                ? item.rank === 1
+                  ? 'text-yellow-900 text-[17px]'
+                  : item.rank === 2
+                  ? 'text-gray-900 text-[17px]'
+                  : 'text-orange-900 text-[17px]'
+                : 'text-slate-900 text-[17px]'
+            }`}>
               {(() => {
                 const eok = Math.floor(item.price / 10000);
                 const man = item.price % 10000;
@@ -152,26 +168,26 @@ const RankingRow: React.FC<{
                   // 0억인 경우: 만원만 표시
                   return (
                     <>
-                      <span>{man.toLocaleString()}</span>
-                      <span className="ml-0.5 text-[13px]">만원</span>
+                      <span className="font-bold">{man.toLocaleString()}</span>
+                      <span className="ml-0.5 text-[15px] font-bold">만원</span>
                     </>
                   );
                 } else if (man === 0) {
                   // 0000만원인 경우: 억만 표시
                   return (
                     <>
-                      <span>{eok}</span>
-                      <span className="ml-0.5 text-[13px]">억</span>
+                      <span className="font-bold">{eok}</span>
+                      <span className="ml-0.5 text-[15px] font-bold">억</span>
                     </>
                   );
                 } else {
                   // 일반적인 경우: 억 만원 모두 표시
                   return (
                     <>
-                      <span>{eok}</span>
-                      <span className="ml-0.5 text-[13px]">억</span>
-                      <span className="ml-1">{man.toLocaleString()}</span>
-                      <span className="ml-0.5 text-[13px]">만원</span>
+                      <span className="font-bold">{eok}</span>
+                      <span className="ml-0.5 text-[15px] font-bold">억</span>
+                      <span className="ml-1 font-bold">{man.toLocaleString()}</span>
+                      <span className="ml-0.5 text-[15px] font-bold">만원</span>
                     </>
                   );
                 }
@@ -233,7 +249,7 @@ const RankingSection: React.FC<{
   const [selectedPeriod, setSelectedPeriod] = useState(defaultPeriod);
 
   return (
-    <Card className="p-0 overflow-hidden border border-slate-200 shadow-sm bg-white">
+    <Card className="p-0 overflow-hidden border border-slate-200 shadow-sm bg-white font-sans">
       <div className="border-b border-slate-200 px-4 py-3 bg-slate-50">
         <div className="flex items-center justify-between">
           <div className={`flex items-center gap-2 ${periods.length > 1 ? '' : ''}`}>
@@ -512,7 +528,7 @@ export const Ranking: React.FC<ViewProps> = ({ onPropertyClick }) => {
   }, [selectedPeriod]);
 
   return (
-    <div className="space-y-8 pb-32 animate-fade-in px-4 md:px-0 pt-10">
+    <div className="space-y-8 pb-32 animate-fade-in px-4 md:px-0 pt-10 font-sans">
       <div className="md:hidden pt-2 pb-2">
         <h1 className="text-2xl font-black text-slate-900">랭킹</h1>
       </div>

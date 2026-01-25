@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Home, Compass, ArrowRightLeft, PieChart, Search, LogOut, X, Sparkles, Moon, Sun, QrCode, LogIn, TrendingUp, FileText, Building2 } from 'lucide-react';
+import { Home, Compass, ArrowRightLeft, PieChart, Search, LogOut, X, Sparkles, Moon, Sun, QrCode, LogIn, TrendingUp, FileText, Building2, Download } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { SignInButton, SignUpButton, SignedIn, SignedOut, useUser, useAuth as useClerkAuth, useClerk } from '@clerk/clerk-react';
 import { ViewType, TabItem } from '../types';
 import { setAuthToken, fetchTrendingApartments, searchApartments, aiSearchApartments, type TrendingApartmentItem, type ApartmentSearchItem, type AISearchApartment, type AISearchCriteria } from '../services/api';
 import { PercentileBadge } from './ui/PercentileBadge';
+import { getInstallPrompt, showInstallPrompt, isWebView, isPWAInstalled } from '../utils/pwa';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -636,8 +637,11 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onChangeV
     return false;
   });
   const [isQROpen, setIsQROpen] = useState(false);
+  const [showInstallButton, setShowInstallButton] = useState(false);
   
-  // Clerk 인증 훅
+  // Clerk 인증 훅 사용
+  // 주의: 이 컴포넌트는 ClerkProvider 안에서만 사용되어야 합니다
+  // index.tsx에서 ClerkProvider가 없을 때는 이 컴포넌트가 렌더링되지 않도록 처리됨
   const { isLoaded: isClerkLoaded, isSignedIn, user: clerkUser } = useUser();
   const { getToken } = useClerkAuth();
   const { signOut } = useClerk();
@@ -645,6 +649,36 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onChangeV
   const location = useLocation();
   const navigate = useNavigate();
 
+  // PWA 설치 버튼 표시 여부 확인
+  useEffect(() => {
+    // WebView나 이미 설치된 경우 버튼 숨김
+    if (isWebView() || isPWAInstalled()) {
+      setShowInstallButton(false);
+      return;
+    }
+
+    // 설치 프롬프트가 있는지 확인
+    const checkInstallPrompt = () => {
+      const prompt = getInstallPrompt();
+      setShowInstallButton(!!prompt);
+    };
+
+    checkInstallPrompt();
+    // 주기적으로 확인 (프롬프트가 나중에 올 수 있음)
+    const interval = setInterval(checkInstallPrompt, 1000);
+    
+    return () => clearInterval(interval);
+  }, []);
+
+  // PWA 설치 핸들러
+  const handleInstallPWA = async () => {
+    const installed = await showInstallPrompt();
+    if (installed) {
+      setShowInstallButton(false);
+    }
+  };
+
+  // 라우트 변경 시 스크롤 맨 위로 복원 (SPA는 document가 유지되므로 수동 처리)
   // 라우트 변경 시 스크롤 위치 처리:
   // - hash가 없으면 맨 위로
   // - hash가 있으면 해당 섹션으로 스크롤
@@ -673,6 +707,8 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onChangeV
   
   // Clerk 토큰을 API에 설정
   useEffect(() => {
+    if (!getToken) return; // ClerkProvider가 없으면 건너뛰기
+    
     const updateAuthToken = async () => {
       if (isClerkLoaded && isSignedIn) {
         const token = await getToken();
@@ -890,6 +926,18 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onChangeV
           </nav>
         </div>
         <div className="flex items-center gap-3">
+            {/* PWA 설치 버튼 */}
+            {showInstallButton && (
+                <button 
+                    onClick={handleInstallPWA}
+                    className="hidden md:flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-brand-blue to-blue-600 text-white rounded-lg text-[14px] font-bold hover:from-blue-600 hover:to-blue-700 transition-all shadow-md hover:shadow-lg active:scale-95"
+                    title="앱 설치"
+                >
+                    <Download className="w-4 h-4" />
+                    설치
+                </button>
+            )}
+            
             <button 
                 onClick={() => setIsSearchOpen(true)}
                 className="p-2 rounded-full text-slate-400 dark:text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
@@ -899,12 +947,12 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onChangeV
             
             {/* 로그인 안됨 - 로그인 버튼 표시 */}
             <SignedOut>
-                <SignInButton mode="modal">
-                    <button className="flex items-center gap-2 px-4 py-2 bg-brand-blue text-white rounded-lg text-[14px] font-bold hover:bg-blue-600 transition-colors">
-                        <LogIn className="w-4 h-4" />
-                        로그인
-                    </button>
-                </SignInButton>
+              <SignInButton mode="modal">
+                <button className="flex items-center gap-2 px-4 py-2 bg-brand-blue text-white rounded-lg text-[14px] font-bold hover:bg-blue-600 transition-colors">
+                  <LogIn className="w-4 h-4" />
+                  로그인
+                </button>
+              </SignInButton>
             </SignedOut>
             
             {/* 로그인됨 - 프로필 드롭다운 표시 */}
