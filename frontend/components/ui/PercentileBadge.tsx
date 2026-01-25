@@ -70,7 +70,7 @@ export const getTierInfo = (percentile: number, rank?: number) => {
 };
 
 interface PercentileBadgeProps {
-  aptId: string;
+  aptId: number | string;
   showModal?: boolean;
   showLabel?: boolean; // "동네 상위" 텍스트 표시 여부
   className?: string;
@@ -104,7 +104,9 @@ export const PercentileBadge: React.FC<PercentileBadgeProps> = ({
       
       setIsLoading(true);
       try {
-        const data = await fetchApartmentPercentile(aptId);
+        const aptIdNumber = typeof aptId === 'number' ? aptId : Number(aptId);
+        if (!Number.isFinite(aptIdNumber)) return;
+        const data = await fetchApartmentPercentile(aptIdNumber);
         setPercentileData({
           display_text: data.display_text,
           percentile: data.percentile,

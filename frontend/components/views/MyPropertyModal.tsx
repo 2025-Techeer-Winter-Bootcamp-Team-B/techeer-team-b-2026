@@ -13,7 +13,7 @@ interface MyPropertyModalProps {
   isOpen: boolean;
   onClose: () => void;
   isEditMode: boolean;
-  aptId: string;
+  aptId: number | string;
   apartmentName: string;
   myPropertyId?: number | null;
   transactions: Array<{ area?: string; price: number }>;
@@ -166,8 +166,13 @@ export const MyPropertyModal: React.FC<MyPropertyModalProps> = ({
         }
       } else {
         // 추가 모드: createMyProperty 호출
+        const aptIdNumber = typeof aptId === 'number' ? aptId : Number(aptId);
+        if (!Number.isFinite(aptIdNumber)) {
+          alert('아파트 ID가 올바르지 않습니다.');
+          return;
+        }
         const data = {
-          apt_id: aptId,
+          apt_id: aptIdNumber,
           nickname: form.nickname || apartmentName,
           exclusive_area: form.exclusive_area,
           current_market_price: currentMarketPrice,

@@ -465,7 +465,7 @@ export interface ApartmentExclusiveAreasResponse {
   };
 }
 
-export const fetchApartmentExclusiveAreas = (aptId: number) =>
+export const fetchApartmentExclusiveAreas = (aptId: number | string) =>
   apiFetch<ApartmentExclusiveAreasResponse>(`/apartments/${aptId}/exclusive-areas`);
 
 export interface PercentileResponse {
@@ -488,7 +488,7 @@ export interface PercentileResponse {
   display_text: string;
 }
 
-export const fetchApartmentPercentile = (aptId: number) =>
+export const fetchApartmentPercentile = (aptId: number | string) =>
   apiFetch<PercentileResponse>(`/apartments/${aptId}/percentile`);
 
 export const fetchApartmentTransactions = (
