@@ -52,7 +52,7 @@ router = APIRouter()
     "/summary/my-property",
     response_model=dict,
     status_code=status.HTTP_200_OK,
-    tags=["🤖 AI (인공지능)"],
+    tags=[" AI (인공지능)"],
     summary="내 집 칭찬글 생성",
     description="""
     AI를 사용하여 내 집에 대한 칭찬글을 생성합니다.
@@ -201,7 +201,7 @@ async def generate_property_compliment(
     "/summary/apartment",
     response_model=dict,
     status_code=status.HTTP_200_OK,
-    tags=["🤖 AI (인공지능)"],
+    tags=[" AI (인공지능)"],
     summary="아파트 정보 AI 요약 생성",
     description="""
     AI를 사용하여 아파트에 대한 객관적이고 유용한 요약을 생성합니다.
@@ -351,7 +351,7 @@ async def generate_apartment_summary(
     "/search",
     response_model=AISearchResponse,
     status_code=status.HTTP_200_OK,
-    tags=["🤖 AI (인공지능)"],
+    tags=[" AI (인공지능)"],
     summary="AI 자연어 아파트 검색",
     description="""
     AI에게 자연어로 원하는 집에 대한 설명을 하면 AI가 파싱해서 관련된 아파트 리스트를 반환합니다.
@@ -706,7 +706,7 @@ async def ai_search_apartments(
             deposit_count = sum(1 for apt in apartments if apt.get("average_deposit") is not None)
             logger.info(f"[AI_SEARCH] 전세 조건 필터링 결과 - 전세 데이터 있는 아파트: {deposit_count}/{len(apartments)}")
             if deposit_count == 0:
-                logger.warning(f"[AI_SEARCH] ⚠️ 전세 조건이 있지만 전세 데이터가 있는 아파트가 없음!")
+                logger.warning(f"[AI_SEARCH]  전세 조건이 있지만 전세 데이터가 있는 아파트가 없음!")
                 # 샘플 결과 로깅
                 if len(apartments) > 0:
                     sample = apartments[0]

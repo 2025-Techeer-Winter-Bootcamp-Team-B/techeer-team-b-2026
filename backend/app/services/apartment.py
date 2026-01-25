@@ -136,9 +136,9 @@ class ApartmentService:
                             shape = to_shape(value)
                             # WKT (Well-Known Text) 형식으로 변환 (예: "POINT(126.9780 37.5665)")
                             detail_dict['geometry'] = shape.wkt
-                            logger.debug(f"✅ geometry 변환 성공: apt_id={apt_id}, geometry={detail_dict['geometry']}")
+                            logger.debug(f" geometry 변환 성공: apt_id={apt_id}, geometry={detail_dict['geometry']}")
                         except Exception as e:
-                            logger.warning(f"⚠️ geometry 변환 실패: apt_id={apt_id}, 오류={str(e)}", exc_info=True)
+                            logger.warning(f" geometry 변환 실패: apt_id={apt_id}, 오류={str(e)}", exc_info=True)
                             detail_dict['geometry'] = None
                     else:
                         detail_dict['geometry'] = None
@@ -152,7 +152,7 @@ class ApartmentService:
             return ApartDetailBase.model_validate(detail_dict)
         except Exception as e:
             # 스키마 변환 오류 로깅
-            logger.error(f"❌ 아파트 상세 정보 스키마 변환 오류: apt_id={apt_id}, 오류={str(e)}", exc_info=True)
+            logger.error(f" 아파트 상세 정보 스키마 변환 오류: apt_id={apt_id}, 오류={str(e)}", exc_info=True)
             logger.error(f"   detail_dict keys: {list(detail_dict.keys())}")
             logger.error(f"   detail_dict values (first 5): {dict(list(detail_dict.items())[:5])}")
             logger.error(f"   geometry type: {type(detail_dict.get('geometry'))}")
@@ -757,7 +757,7 @@ class ApartmentService:
         from app.models.state import State as StateModel
         from app.models.apart_detail import ApartDetail as ApartDetailModel
 
-        # 🔧 [BUG FIX] 동 단위 감지 시 상위 시군구로 변경
+        #  [BUG FIX] 동 단위 감지 시 상위 시군구로 변경
         # apartments 테이블의 region_id가 대부분 시군구 레벨로 저장되어 있어,
         # 동 단위로 검색 시 결과가 0건인 문제를 해결하기 위함.
         if state.region_code and len(state.region_code) >= 5:
@@ -770,7 +770,7 @@ class ApartmentService:
                 sigungu = sigungu_result.scalar_one_or_none()
                 if sigungu:
                     state = sigungu
-                    logger.info(f"🔍 [get_apartments_by_region] 동 단위 감지 → 상위 시군구로 변경: region_id={state.region_id}, region_name={state.region_name}")
+                    logger.info(f" [get_apartments_by_region] 동 단위 감지 → 상위 시군구로 변경: region_id={state.region_id}, region_name={state.region_name}")
         
         # location_type 판단
         # region_code의 마지막 8자리가 "00000000"이면 시도 레벨
@@ -782,9 +782,9 @@ class ApartmentService:
 
         # 전체 개수 조회를 위한 쿼리 (count 쿼리)
         if is_city:
-            # 🔧 시도 선택: 해당 시도 코드(앞 2자리)로 시작하는 모든 지역의 아파트 조회
+            #  시도 선택: 해당 시도 코드(앞 2자리)로 시작하는 모든 지역의 아파트 조회
             city_code_prefix = state.region_code[:2]
-            logger.info(f"🔍 [get_apartments_by_region] 시도 레벨 검색 - region_name={state.region_name}, prefix={city_code_prefix}")
+            logger.info(f" [get_apartments_by_region] 시도 레벨 검색 - region_name={state.region_name}, prefix={city_code_prefix}")
             count_stmt = (
                 select(func.count(Apartment.apt_id))
                 .join(StateModel, Apartment.region_id == StateModel.region_id)
@@ -822,13 +822,13 @@ class ApartmentService:
                 .limit(limit)
             )
         elif is_sigungu:
-            # 🔧 시군구 선택: 해당 시군구 코드로 시작하는 모든 동의 아파트 조회
+            #  시군구 선택: 해당 시군구 코드로 시작하는 모든 동의 아파트 조회
             # apartments 테이블에 직접 region_id가 시군구로 저장된 경우와
             # 하위 동에 region_id가 저장된 경우를 모두 포함
             sigungu_code_prefix = state.region_code[:5]
-            logger.info(f"🔍 [get_apartments_by_region] 시군구 레벨 검색 - region_name={state.region_name}, prefix={sigungu_code_prefix}, region_code={state.region_code}")
+            logger.info(f" [get_apartments_by_region] 시군구 레벨 검색 - region_name={state.region_name}, prefix={sigungu_code_prefix}, region_code={state.region_code}")
             
-            # 🔧 고양시, 안산시, 용인시 등 시 내부에 구가 있는 경우 처리
+            #  고양시, 안산시, 용인시 등 시 내부에 구가 있는 경우 처리
             # 문제: "고양시"의 하위 구들("덕양구", "일산동구" 등)이 region_code의 앞 5자리가 다름
             # 예: 고양시 "4128000000" (앞 5자리: "41280"), 덕양구 "4128100000" (앞 5자리: "41281"), 일산동구 "4128200000" (앞 5자리: "41282")
             # 해결: 시 단위인 경우 region_code의 앞 4자리("4128")로 검색하여 모든 하위 구 포함
@@ -844,7 +844,7 @@ class ApartmentService:
                 )
                 sub_regions_result = await db.execute(sub_regions_stmt)
                 sub_region_ids = [row.region_id for row in sub_regions_result.fetchall()]
-                logger.info(f"🔍 [get_apartments_by_region] 하위 지역 수 (region_code 4자리 기반) - {len(sub_region_ids)}개 (prefix: {sigungu_prefix_4}, region_name: {state.region_name})")
+                logger.info(f" [get_apartments_by_region] 하위 지역 수 (region_code 4자리 기반) - {len(sub_region_ids)}개 (prefix: {sigungu_prefix_4}, region_name: {state.region_name})")
             else:
                 # 일반 시군구(구가 없는 시 또는 일반 구): 앞 5자리로 검색 (기존 로직)
                 sub_regions_stmt = sql_select(StateModel.region_id).where(
@@ -855,15 +855,15 @@ class ApartmentService:
                 )
                 sub_regions_result = await db.execute(sub_regions_stmt)
                 sub_region_ids = [row.region_id for row in sub_regions_result.fetchall()]
-                logger.info(f"🔍 [get_apartments_by_region] 하위 지역 수 (region_code 5자리 기반) - {len(sub_region_ids)}개 (prefix: {sigungu_code_prefix})")
+                logger.info(f" [get_apartments_by_region] 하위 지역 수 (region_code 5자리 기반) - {len(sub_region_ids)}개 (prefix: {sigungu_code_prefix})")
             
             # 본체 region_id가 하위 지역 목록에 없으면 추가
             if state.region_id not in sub_region_ids:
                 sub_region_ids.append(state.region_id)
-                logger.info(f"🔍 [get_apartments_by_region] 시군구 본체 region_id 추가 - {state.region_id} ({state.region_name})")
+                logger.info(f" [get_apartments_by_region] 시군구 본체 region_id 추가 - {state.region_id} ({state.region_name})")
             
             if len(sub_region_ids) == 0:
-                logger.warning(f"⚠️ [get_apartments_by_region] 하위 지역을 찾을 수 없음 - region_name={state.region_name}, region_code={state.region_code}")
+                logger.warning(f" [get_apartments_by_region] 하위 지역을 찾을 수 없음 - region_name={state.region_name}, region_code={state.region_code}")
                 # 하위 지역이 없으면 본체만 조회
                 sub_region_ids = [state.region_id]
             
@@ -897,8 +897,8 @@ class ApartmentService:
                 .limit(limit)
             )
         elif is_dong:
-            # 🔧 동 레벨 검색: 해당 동의 아파트만 조회
-            logger.info(f"🔍 [get_apartments_by_region] 동 레벨 검색 - region_name={state.region_name}, region_id={state.region_id}")
+            #  동 레벨 검색: 해당 동의 아파트만 조회
+            logger.info(f" [get_apartments_by_region] 동 레벨 검색 - region_name={state.region_name}, region_id={state.region_id}")
             
             count_stmt = (
                 select(func.count(Apartment.apt_id))
@@ -931,7 +931,7 @@ class ApartmentService:
             )
         else:
             # 예상치 못한 경우
-            logger.warning(f"⚠️ [get_apartments_by_region] 예상치 못한 지역 레벨 - region_id={state.region_id}, region_code={state.region_code}")
+            logger.warning(f" [get_apartments_by_region] 예상치 못한 지역 레벨 - region_id={state.region_id}, region_code={state.region_code}")
             return [], 0
     
     # 전체 개수와 결과를 동시에 조회
@@ -1200,7 +1200,7 @@ class ApartmentService:
                 Sale.exclusive_area.isnot(None),
                 Sale.exclusive_area > 0,
                 Sale.trans_price.isnot(None),
-                or_(Sale.remarks != "더미", Sale.remarks.is_(None))  # ✅ 더미 제외
+                or_(Sale.remarks != "더미", Sale.remarks.is_(None))  #  더미 제외
             )
             .group_by(Sale.apt_id)
         ).subquery()
@@ -1244,7 +1244,7 @@ class ApartmentService:
                 or_(Rent.is_deleted == False, Rent.is_deleted.is_(None)),
                 Rent.exclusive_area.isnot(None),
                 Rent.exclusive_area > 0,
-                or_(Rent.remarks != "더미", Rent.remarks.is_(None))  # ✅ 더미 제외
+                or_(Rent.remarks != "더미", Rent.remarks.is_(None))  #  더미 제외
             ]
             
             # 전세/월세 구분 필터링
@@ -1744,7 +1744,7 @@ class ApartmentService:
         if (min_deposit is not None or max_deposit is not None) and results:
             deposit_results = [r for r in results if r.get("average_deposit") is not None]
             if len(deposit_results) == 0:
-                logger.warning(f"[DETAILED_SEARCH] ⚠️ 전세 조건이 있지만 전세 데이터가 있는 결과가 없음! (전체 결과: {len(results)}개)")
+                logger.warning(f"[DETAILED_SEARCH]  전세 조건이 있지만 전세 데이터가 있는 결과가 없음! (전체 결과: {len(results)}개)")
                 # 샘플 결과 로깅
                 if len(results) > 0:
                     sample = results[0]

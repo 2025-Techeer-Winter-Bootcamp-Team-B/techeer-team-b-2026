@@ -2765,9 +2765,9 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
         </div>
         
         {/* Mobile View */}
-        <div className="md:hidden min-h-screen bg-[#f8f9fa] pb-24">
+        <div className="md:hidden min-h-screen bg-slate-50 pb-24">
             {/* Mobile Header */}
-            <div className={`sticky top-0 z-40 transition-all duration-300 ${scrolled ? 'bg-white/95 backdrop-blur-xl shadow-sm' : 'bg-transparent'} px-5 py-4`}>
+            <div className={`sticky top-0 z-40 transition-all duration-200 ${scrolled ? 'bg-white/95 backdrop-blur-xl shadow-sm' : 'bg-transparent'} px-3 py-3`}>
                 <div className="flex justify-between items-center">
                     <h1 className="text-xl font-black text-slate-900">홈</h1>
                     <button 
@@ -2779,9 +2779,9 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                 </div>
             </div>
 
-            <div className="px-5 space-y-4">
+            <div className="px-2 space-y-3">
                 {/* 내 자산 카드 */}
-                <div className="bg-gradient-to-br from-[#0f172a] via-[#1e293b] to-[#0f172a] rounded-[24px] p-6 relative overflow-hidden shadow-lg">
+                <div className="bg-gradient-to-br from-[#0f172a] via-[#1e293b] to-[#0f172a] rounded-[20px] p-4 relative overflow-hidden shadow-[0_8px_24px_rgba(0,0,0,0.12),0_2px_8px_rgba(0,0,0,0.08)]">
                     <div className="absolute top-[-20%] right-[-10%] w-[200px] h-[200px] bg-blue-500/20 blur-[60px] pointer-events-none"></div>
                     <div className="absolute bottom-[-20%] left-[-10%] w-[150px] h-[150px] bg-cyan-500/20 blur-[50px] pointer-events-none"></div>
                     
@@ -2854,35 +2854,36 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                 </div>
                 
                 {/* 내 자산 목록 카드 */}
-                <div className="bg-white rounded-[20px] p-5 shadow-sm border border-slate-100">
+                <div className="bg-white rounded-[20px] p-4 shadow-[0_4px_12px_rgba(0,0,0,0.06),0_1px_3px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.9)]">
                     <div className="flex items-center justify-between mb-4">
                         <h2 className="text-[17px] font-black text-slate-900">내 자산 목록</h2>
                         <span className="text-[13px] text-slate-400 font-medium">{sortedAssets.length}개</span>
                     </div>
                     
-                    <div className="space-y-2">
+                    <div className="space-y-1.5">
                         {isLoading ? (
-                            [1,2,3].map(i => <Skeleton key={i} className="h-20 w-full rounded-xl" />)
+                            [1,2,3].map(i => <Skeleton key={i} className="h-16 w-full rounded-xl" />)
                         ) : sortedAssets.length > 0 ? (
                             sortedAssets.slice(0, 5).map(prop => (
-                                <AssetRow 
-                                    key={prop.id} 
-                                    item={prop} 
-                                    onClick={() => !isEditMode && onPropertyClick(prop.aptId?.toString() || prop.id)}
-                                    onToggleVisibility={(e) => toggleAssetVisibility(activeGroup.id, prop.id, e)}
-                                    isEditMode={isEditMode}
-                                    isDeleting={deletingAssetId === prop.id}
-                                    isMyAsset={activeGroup.id === 'my'}
-                                    onEdit={activeGroup.id === 'my' ? (e) => {
-                                        e.stopPropagation();
-                                        const aptId = prop.aptId ?? prop.id;
-                                        onPropertyClick(String(aptId), { edit: true });
-                                    } : undefined}
-                                    onDelete={(e) => {
-                                        e.stopPropagation();
-                                        handleRemoveAsset(activeGroup.id, prop.id);
-                                    }}
-                                />
+                                <div key={prop.id} className="transform transition-all duration-200 active:scale-[0.98]">
+                                    <AssetRow 
+                                        item={prop} 
+                                        onClick={() => !isEditMode && onPropertyClick(prop.aptId?.toString() || prop.id)}
+                                        onToggleVisibility={(e) => toggleAssetVisibility(activeGroup.id, prop.id, e)}
+                                        isEditMode={isEditMode}
+                                        isDeleting={deletingAssetId === prop.id}
+                                        isMyAsset={activeGroup.id === 'my'}
+                                        onEdit={activeGroup.id === 'my' ? (e) => {
+                                            e.stopPropagation();
+                                            const aptId = prop.aptId ?? prop.id;
+                                            onPropertyClick(String(aptId), { edit: true });
+                                        } : undefined}
+                                        onDelete={(e) => {
+                                            e.stopPropagation();
+                                            handleRemoveAsset(activeGroup.id, prop.id);
+                                        }}
+                                    />
+                                </div>
                             ))
                         ) : (
                             <div className="h-32 flex flex-col items-center justify-center text-slate-400 gap-2">
@@ -2933,7 +2934,18 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                     <div className="p-5 space-y-5 pb-32 overflow-y-auto h-[calc(100vh-60px)]">
                         {/* 그룹 선택 */}
                         <div className="bg-white rounded-[20px] p-5 shadow-sm border border-slate-100">
-                            <h3 className="text-[15px] font-black text-slate-900 mb-4">관심 그룹 선택</h3>
+                            <div className="flex items-center justify-between mb-4">
+                                <h3 className="text-[15px] font-black text-slate-900">관심 그룹 선택</h3>
+                                <button 
+                                    onClick={() => {
+                                        setIsMobileSettingsOpen(false);
+                                        setIsAddGroupModalOpen(true);
+                                    }}
+                                    className="p-2 bg-blue-50 border border-blue-200 rounded-lg text-blue-600 hover:bg-blue-100 transition-colors"
+                                >
+                                    <Plus className="w-4 h-4" />
+                                </button>
+                            </div>
                             <div className="space-y-2">
                                 {assetGroups.map((group) => (
                                     <button

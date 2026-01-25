@@ -137,11 +137,11 @@ class AIService:
                     
                     if finish_reason == "MAX_TOKENS":
                         # 토큰 제한에 도달하여 응답이 잘렸을 가능성
-                        logger.warning(f"[AI_SERVICE] ⚠️ MAX_TOKENS에 도달하여 응답이 잘렸을 수 있습니다. max_tokens 값을 늘려주세요.")
+                        logger.warning(f"[AI_SERVICE]  MAX_TOKENS에 도달하여 응답이 잘렸을 수 있습니다. max_tokens 값을 늘려주세요.")
                     elif finish_reason == "SAFETY":
-                        logger.warning(f"[AI_SERVICE] ⚠️ SAFETY 필터에 의해 응답이 차단되었습니다.")
+                        logger.warning(f"[AI_SERVICE]  SAFETY 필터에 의해 응답이 차단되었습니다.")
                     elif finish_reason != "STOP":
-                        logger.warning(f"[AI_SERVICE] ⚠️ 예상치 못한 finishReason: {finish_reason}")
+                        logger.warning(f"[AI_SERVICE]  예상치 못한 finishReason: {finish_reason}")
                     
                     if "content" in candidate and "parts" in candidate["content"]:
                         parts = candidate["content"]["parts"]

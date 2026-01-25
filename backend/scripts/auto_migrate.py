@@ -88,7 +88,7 @@ async def mark_migration_applied(engine, name: str):
 
 async def run_migration_file(engine, migration_file: Path) -> bool:
     """개별 마이그레이션 파일 실행"""
-    print(f"\n📄 마이그레이션 실행: {migration_file.name}")
+    print(f"\n 마이그레이션 실행: {migration_file.name}")
     
     # SQL 파일 읽기
     with open(migration_file, 'r', encoding='utf-8') as f:
@@ -174,15 +174,15 @@ async def run_migration_file(engine, migration_file: Path) -> bool:
                 preview = statement[:50].replace('\n', ' ')
                 if len(statement) > 50:
                     preview += '...'
-                print(f"   ✅ [{i}/{len(statements)}] {preview}")
+                print(f"    [{i}/{len(statements)}] {preview}")
             except Exception as e:
                 error_msg = str(e).lower()
                 # 이미 존재하는 경우는 무시
                 if 'already exists' in error_msg or 'duplicate' in error_msg:
-                    print(f"   ⚠️  [{i}/{len(statements)}] 건너뜀 (이미 존재)")
+                    print(f"     [{i}/{len(statements)}] 건너뜀 (이미 존재)")
                     continue
                 else:
-                    print(f"   ❌ [{i}/{len(statements)}] 실패: {e}")
+                    print(f"    [{i}/{len(statements)}] 실패: {e}")
                     raise
     
     return True
@@ -191,43 +191,43 @@ async def run_migration_file(engine, migration_file: Path) -> bool:
 async def run_auto_migrations():
     """모든 마이그레이션 자동 실행"""
     print("=" * 60)
-    print("🚀 자동 마이그레이션 시작")
-    print(f"📅 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(" 자동 마이그레이션 시작")
+    print(f" 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
     
     # 데이터베이스 연결
     database_url = await get_database_url()
     if not database_url:
-        print("❌ DATABASE_URL이 설정되지 않았습니다.")
+        print(" DATABASE_URL이 설정되지 않았습니다.")
         return False
     
     # 호스트 정보만 출력 (보안)
     db_host = database_url.split('@')[-1].split('/')[0] if '@' in database_url else 'N/A'
-    print(f"📍 데이터베이스: {db_host}")
+    print(f" 데이터베이스: {db_host}")
     
     engine = create_async_engine(database_url, echo=False)
     
     try:
         # 마이그레이션 테이블 확인/생성 (재시도 로직 포함)
-        print("🔄 마이그레이션 테이블 확인 중...")
+        print(" 마이그레이션 테이블 확인 중...")
         await ensure_migration_table(engine, max_retries=10, retry_delay=2.0)
         
         # 이미 적용된 마이그레이션 조회
         applied = await get_applied_migrations(engine)
-        print(f"\n📊 이미 적용된 마이그레이션: {len(applied)}개")
+        print(f"\n 이미 적용된 마이그레이션: {len(applied)}개")
         
         # migrations 폴더의 SQL 파일 조회
         if not migrations_dir.exists():
-            print(f"\n⚠️  마이그레이션 폴더 없음: {migrations_dir}")
+            print(f"\n  마이그레이션 폴더 없음: {migrations_dir}")
             print("   새 마이그레이션이 없습니다.")
             return True
         
         migration_files = sorted(migrations_dir.glob('*.sql'))
         if not migration_files:
-            print("\n✅ 실행할 마이그레이션이 없습니다.")
+            print("\n 실행할 마이그레이션이 없습니다.")
             return True
         
-        print(f"📁 발견된 마이그레이션 파일: {len(migration_files)}개")
+        print(f" 발견된 마이그레이션 파일: {len(migration_files)}개")
         
         # 새 마이그레이션 실행
         new_count = 0
@@ -237,7 +237,7 @@ async def run_auto_migrations():
             migration_name = migration_file.name
             
             if migration_name in applied:
-                print(f"\n⏭️  건너뜀: {migration_name} (이미 적용됨)")
+                print(f"\n⏭  건너뜀: {migration_name} (이미 적용됨)")
                 skip_count += 1
                 continue
             
@@ -246,14 +246,14 @@ async def run_auto_migrations():
                 if success:
                     await mark_migration_applied(engine, migration_name)
                     new_count += 1
-                    print(f"   ✅ 마이그레이션 완료: {migration_name}")
+                    print(f"    마이그레이션 완료: {migration_name}")
             except Exception as e:
-                print(f"\n❌ 마이그레이션 실패: {migration_name}")
+                print(f"\n 마이그레이션 실패: {migration_name}")
                 print(f"   오류: {e}")
                 return False
         
         print("\n" + "=" * 60)
-        print(f"✅ 마이그레이션 완료!")
+        print(f" 마이그레이션 완료!")
         print(f"   - 새로 적용: {new_count}개")
         print(f"   - 건너뜀: {skip_count}개")
         print("=" * 60)
@@ -261,7 +261,7 @@ async def run_auto_migrations():
         return True
         
     except Exception as e:
-        print(f"\n❌ 마이그레이션 오류: {e}")
+        print(f"\n 마이그레이션 오류: {e}")
         import traceback
         traceback.print_exc()
         return False

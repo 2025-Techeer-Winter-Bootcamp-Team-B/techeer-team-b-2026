@@ -953,23 +953,24 @@ export const HousingDemand: React.FC = () => {
   const regionOptions: ExtendedRegionType[] = ['전국', '수도권', '서울특별시', '지방 5대광역시'];
 
   return (
-    <div className="space-y-8 pb-32 animate-fade-in px-4 md:px-0 pt-10">
-      <div className="md:hidden pt-2 pb-2">
-        <h1 className="text-2xl font-black text-slate-900">통계</h1>
+    <div className="space-y-4 md:space-y-8 pb-32 animate-fade-in px-2 md:px-0 pt-2 md:pt-10">
+      {/* Mobile Header */}
+      <div className="md:hidden mb-3 pb-2">
+        <h1 className="text-xl font-black text-slate-900">통계</h1>
       </div>
 
       {error && (
-        <div className="mb-4 px-4 py-3 rounded-xl bg-red-50 text-red-600 text-[13px] font-bold border border-red-100">
+        <div className="mb-3 md:mb-4 px-3 md:px-4 py-2 md:py-2.5 md:py-3 rounded-xl bg-red-50 text-red-600 text-[12px] md:text-[13px] font-bold border border-red-100">
           {error}
         </div>
       )}
 
-      <div className="mb-10 mt-8">
+      <div className="mb-6 md:mb-10 md:mt-8">
         <div>
-          <h2 className="text-3xl font-black text-slate-900 mb-2">
+          <h2 className="text-xl md:text-3xl font-black text-slate-900 mb-1 md:mb-2">
             주택 수요
           </h2>
-          <p className="text-slate-500 text-[15px] font-medium">
+          <p className="hidden md:block text-slate-500 text-[15px] font-medium">
             수요 흐름을 한눈에 파악해, 실제로 사람들이 찾는 주택의 방향을 읽어보세요.
           </p>
         </div>
@@ -977,23 +978,23 @@ export const HousingDemand: React.FC = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-10 gap-8">
         {/* 거래량 차트 (개선됨: Area Chart) */}
-        <Card id="section-transaction-volume" className="p-0 overflow-hidden border border-slate-200 shadow-soft bg-white lg:col-span-6 flex flex-col">
-          <div className="p-6 border-b border-slate-100">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
-              <div className="flex items-center gap-3">
-                <div>
-                    <h3 className="font-black text-slate-900 text-[18px]">거래량</h3>
-                    <p className="text-[14px] text-slate-500 mt-1 font-medium">
+        <div id="section-transaction-volume" className="md:rounded-[24px] md:border md:border-slate-200 md:shadow-soft md:bg-white bg-transparent border-0 rounded-none shadow-none lg:col-span-6 flex flex-col">
+          <div className="p-3 md:p-6 md:border-b md:border-slate-100 border-b border-slate-200 mb-2 md:mb-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 md:gap-4 mb-2 md:mb-4">
+              <div className="flex items-center gap-2 md:gap-3 min-w-0">
+                <div className="min-w-0 flex-1">
+                    <h3 className="font-black text-slate-900 text-[16px] md:text-[18px] truncate">거래량</h3>
+                    <p className="hidden md:block text-[14px] text-slate-500 mt-1 font-medium">
                     {viewMode === 'yearly' ? '연도별 거래량 추이' : '월별 거래량 추이'}
                     </p>
                 </div>
                 <div className="relative" ref={transactionRegionRef}>
                     <button
                         onClick={() => setIsTransactionRegionOpen(!isTransactionRegionOpen)}
-                        className="bg-slate-50 border border-slate-200 text-slate-700 text-[13px] rounded-lg px-3 py-1.5 font-bold hover:bg-slate-100 transition-all flex items-center gap-1.5"
+                        className="bg-slate-50 border border-slate-200 text-slate-700 text-[12px] md:text-[13px] rounded-lg px-2 md:px-3 py-1 md:py-1.5 font-bold hover:bg-slate-100 transition-all flex items-center gap-1 flex-shrink-0"
                     >
-                        <span>{transactionRegion}</span>
-                        <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isTransactionRegionOpen ? 'rotate-180' : ''}`} />
+                        <span className="truncate max-w-[80px] md:max-w-none">{transactionRegion}</span>
+                        <ChevronDown className={`w-3 h-3 md:w-3.5 md:h-3.5 text-slate-400 transition-transform flex-shrink-0 ${isTransactionRegionOpen ? 'rotate-180' : ''}`} />
                     </button>
                     {isTransactionRegionOpen && (
                         <div className="absolute left-0 top-full mt-2 w-[140px] bg-white rounded-xl shadow-deep border border-slate-200 overflow-hidden z-50 animate-enter">
@@ -1004,7 +1005,7 @@ export const HousingDemand: React.FC = () => {
                                         setTransactionRegion(region);
                                         setIsTransactionRegionOpen(false);
                                     }}
-                                    className={`w-full text-left px-4 py-3 text-[13px] font-bold transition-colors ${
+                                    className={`w-full text-left px-3 md:px-4 py-2.5 md:py-3 text-[13px] font-bold transition-colors duration-200 ${
                                         transactionRegion === region ? 'bg-slate-100 text-slate-900' : 'text-slate-700 hover:bg-slate-50'
                                     }`}
                                 >
@@ -1016,23 +1017,54 @@ export const HousingDemand: React.FC = () => {
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                {viewMode === 'monthly' && (
+                {/* 모바일: 드롭다운 */}
+                <div className="md:hidden flex items-center gap-2">
+                  {viewMode === 'monthly' && (
+                    <div className="relative">
+                      <select
+                        value={`${yearRange}년`}
+                        onChange={(e) => setYearRange(parseInt(e.target.value.replace('년', '')) as 2 | 3 | 5)}
+                        className="px-3 py-1.5 text-[13px] font-bold bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900 appearance-none cursor-pointer"
+                      >
+                        <option value="2년">2년</option>
+                        <option value="3년">3년</option>
+                        <option value="5년">5년</option>
+                      </select>
+                      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                    </div>
+                  )}
+                  <div className="relative">
+                    <select
+                      value={viewMode === 'yearly' ? '연도별' : '월별'}
+                      onChange={(e) => setViewMode(e.target.value === '연도별' ? 'yearly' : 'monthly')}
+                      className="px-3 py-1.5 text-[13px] font-bold bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900 appearance-none cursor-pointer"
+                    >
+                      <option value="연도별">연도별</option>
+                      <option value="월별">월별</option>
+                    </select>
+                    <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+                {/* PC: ToggleButtonGroup */}
+                <div className="hidden md:flex items-center gap-3">
+                  {viewMode === 'monthly' && (
+                    <ToggleButtonGroup
+                      options={['2년', '3년', '5년']}
+                      value={`${yearRange}년`}
+                      onChange={(value) => setYearRange(parseInt(value.replace('년', '')) as 2 | 3 | 5)}
+                    />
+                  )}
                   <ToggleButtonGroup
-                    options={['2년', '3년', '5년']}
-                    value={`${yearRange}년`}
-                    onChange={(value) => setYearRange(parseInt(value.replace('년', '')) as 2 | 3 | 5)}
+                    options={['연도별', '월별']}
+                    value={viewMode === 'yearly' ? '연도별' : '월별'}
+                    onChange={(value) => setViewMode(value === '연도별' ? 'yearly' : 'monthly')}
                   />
-                )}
-                <ToggleButtonGroup
-                  options={['연도별', '월별']}
-                  value={viewMode === 'yearly' ? '연도별' : '월별'}
-                  onChange={(value) => setViewMode(value === '연도별' ? 'yearly' : 'monthly')}
-                />
+                </div>
               </div>
             </div>
           </div>
-          <div className="p-6 bg-gradient-to-b from-white to-slate-50/20 flex-1 flex flex-col min-h-[400px]">
-            <div className="flex-1 w-full min-h-[400px]">
+          <div className="p-3 md:p-6 md:bg-gradient-to-b md:from-white md:to-slate-50/20 flex-1 flex flex-col min-h-[300px] md:min-h-[400px]">
+            <div className="flex-1 w-full min-h-[300px] md:min-h-[400px]">
               {isLoading || isTransactionLoading ? (
                 <div className="flex items-center justify-center h-full min-h-[400px]">
                   <p className="text-slate-400 text-[14px] font-bold">데이터를 불러오는 중...</p>
@@ -1049,20 +1081,31 @@ export const HousingDemand: React.FC = () => {
               )}
             </div>
           </div>
-        </Card>
+        </div>
 
         {/* 시장 국면 차트 */}
-        <Card id="section-market-phase" className="p-0 overflow-hidden border border-slate-200 shadow-soft bg-white lg:col-span-4 flex flex-col">
-          <div className="p-6 border-b border-slate-100">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="font-black text-slate-900 text-[18px]">시장 국면 지표</h3>
-                <p className="text-[14px] text-slate-500 mt-1 font-medium">최근 6개월간 시장 흐름</p>
+        <div id="section-market-phase" className="md:rounded-[24px] md:border md:border-slate-200 md:shadow-soft md:bg-white bg-transparent border-0 rounded-none shadow-none lg:col-span-4 flex flex-col">
+          <div className="p-3 md:p-6 md:border-b border-b border-slate-200 mb-2 md:mb-4">
+            <div className="flex items-center justify-between mb-2 md:mb-4">
+              <div className="min-w-0 flex-1">
+                <h3 className="font-black text-slate-900 text-[16px] md:text-[18px] truncate">시장 국면 지표</h3>
+                <p className="hidden md:block text-[14px] text-slate-500 mt-1 font-medium">최근 6개월간 시장 흐름</p>
               </div>
             </div>
 
-            {/* 탭 */}
-            <div className="flex gap-2 p-1.5 rounded-2xl bg-slate-100">
+            {/* 탭 - 모바일: 드롭다운, PC: 버튼 */}
+            <div className="md:hidden relative">
+              <select
+                value={quadrantTab}
+                onChange={(e) => setQuadrantTab(e.target.value as 'basic' | 'detail')}
+                className="w-full px-3 py-2.5 text-[13px] font-bold bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900 appearance-none cursor-pointer"
+              >
+                <option value="basic">기본</option>
+                <option value="detail">자세히</option>
+              </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+            </div>
+            <div className="hidden md:flex gap-2 p-1.5 rounded-2xl bg-slate-100">
               <button
                 onClick={() => setQuadrantTab('basic')}
                 className={`flex-1 py-3 rounded-xl font-bold transition-all ${
@@ -1256,27 +1299,27 @@ export const HousingDemand: React.FC = () => {
               </motion.div>
             )}
           </AnimatePresence>
-        </Card>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* 2. 주택 가격 지수 카드 */}
-          <Card className="p-0 overflow-hidden border border-slate-200 shadow-soft bg-white">
+          <Card className="md:rounded-[24px] md:border md:border-slate-200 md:shadow-soft md:bg-white bg-transparent border-0 rounded-none shadow-none">
                {/* HPI Header (생략 - 기존 코드와 동일) */}
-               <div className="p-6 border-b border-slate-100 flex flex-col md:flex-row md:justify-between md:items-center gap-4">
-                  <div className="flex items-center gap-3">
-                    <div>
-                        <h3 className="font-black text-slate-900 text-[18px]">주택 가격 지수</h3>
-                        <p className="text-[14px] text-slate-500 mt-1 font-medium">색상이 진할수록 값이 높음 (0~100)</p>
+               <div className="p-3 md:p-6 md:border-b border-b border-slate-200 flex flex-col md:flex-row md:justify-between md:items-center gap-2 md:gap-4">
+                  <div className="flex items-center gap-2 md:gap-3 min-w-0">
+                    <div className="min-w-0 flex-1">
+                        <h3 className="font-black text-slate-900 text-[16px] md:text-[18px] truncate">주택 가격 지수</h3>
+                        <p className="hidden md:block text-[14px] text-slate-500 mt-1 font-medium">색상이 진할수록 값이 높음 (0~100)</p>
                     </div>
                     {/* HPI Region Dropdown */}
-                    <div className="relative" ref={hpiRegionRef}>
+                    <div className="relative flex-shrink-0" ref={hpiRegionRef}>
                         <button
                             onClick={() => setIsHpiRegionOpen(!isHpiRegionOpen)}
-                            className="bg-slate-50 border border-slate-200 text-slate-700 text-[13px] rounded-lg px-3 py-1.5 font-bold hover:bg-slate-100 transition-all flex items-center gap-1.5"
+                            className="bg-slate-50 border border-slate-200 text-slate-700 text-[12px] md:text-[13px] rounded-lg px-2 md:px-3 py-1 md:py-1.5 font-bold hover:bg-slate-100 transition-all flex items-center gap-1"
                         >
-                            <span>{hpiRegion}</span>
-                            <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isHpiRegionOpen ? 'rotate-180' : ''}`} />
+                            <span className="truncate max-w-[80px] md:max-w-none">{hpiRegion}</span>
+                            <ChevronDown className={`w-3 h-3 md:w-3.5 md:h-3.5 text-slate-400 transition-transform flex-shrink-0 ${isHpiRegionOpen ? 'rotate-180' : ''}`} />
                         </button>
                         {isHpiRegionOpen && (
                             <div className="absolute left-0 top-full mt-2 w-[140px] bg-white rounded-xl shadow-deep border border-slate-200 overflow-hidden z-50 animate-enter">
@@ -1287,7 +1330,7 @@ export const HousingDemand: React.FC = () => {
                                             setHpiRegion(region);
                                             setIsHpiRegionOpen(false);
                                         }}
-                                        className={`w-full text-left px-4 py-3 text-[13px] font-bold transition-colors ${
+                                        className={`w-full text-left px-3 md:px-4 py-2.5 md:py-3 text-[13px] font-bold transition-colors duration-200 ${
                                             hpiRegion === region ? 'bg-slate-100 text-slate-900' : 'text-slate-700 hover:bg-slate-50'
                                         }`}
                                     >
