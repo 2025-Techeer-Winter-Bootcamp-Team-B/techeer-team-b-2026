@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS states (
     region_name VARCHAR(20) NOT NULL,
     region_code CHAR(10) NOT NULL,
     city_name VARCHAR(40) NOT NULL,
+    geometry GEOMETRY(Point, 4326),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     is_deleted BOOLEAN DEFAULT FALSE
@@ -96,6 +97,7 @@ COMMENT ON TABLE states IS '지역 정보 테이블';
 COMMENT ON COLUMN states.region_id IS 'PK';
 COMMENT ON COLUMN states.region_name IS '시군구명 (예: 강남구, 해운대구)';
 COMMENT ON COLUMN states.region_code IS '시도코드 2자리 + 시군구 3자리 + 동코드 5자리';
+COMMENT ON COLUMN states.geometry IS '위치 정보 (PostGIS)';
 COMMENT ON COLUMN states.is_deleted IS '삭제 여부 (소프트 삭제)';
 
 -- ============================================================
@@ -118,6 +120,13 @@ COMMENT ON COLUMN accounts.clerk_user_id IS 'Clerk 사용자 ID';
 COMMENT ON COLUMN accounts.email IS '캐시 저장용';
 COMMENT ON COLUMN accounts.is_dark_mode IS '다크모드 활성화 여부';
 COMMENT ON COLUMN accounts.is_deleted IS '소프트 삭제';
+
+-- 사용자 개인화 UI 설정 (대시보드 하단 우측 카드 선택)
+-- 기존 운영 DB에 대해서도 안전하게 적용되도록 IF NOT EXISTS 사용
+ALTER TABLE accounts
+ADD COLUMN IF NOT EXISTS dashboard_bottom_panel_view VARCHAR(32) NOT NULL DEFAULT 'regionComparison';
+
+COMMENT ON COLUMN accounts.dashboard_bottom_panel_view IS '대시보드 하단 우측 카드 뷰 (policyNews|transactionVolume|marketPhase|regionComparison)';
 
 -- ============================================================
 -- APARTMENTS 테이블 (아파트 기본 정보)
@@ -312,6 +321,36 @@ CREATE INDEX IF NOT EXISTS idx_population_movements_from_region ON population_mo
 CREATE INDEX IF NOT EXISTS idx_population_movements_to_region ON population_movements(to_region_id);
 
 -- ============================================================
+-- INTEREST_RATES 테이블 (금리 지표)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS interest_rates (
+    rate_id SERIAL PRIMARY KEY,
+    rate_type VARCHAR(50) NOT NULL UNIQUE,
+    rate_label VARCHAR(50) NOT NULL,
+    rate_value NUMERIC(5, 2) NOT NULL,
+    change_value NUMERIC(5, 2) NOT NULL DEFAULT 0.0,
+    trend VARCHAR(10) NOT NULL DEFAULT 'stable',
+    base_date DATE NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE INDEX IF NOT EXISTS idx_interest_rates_type ON interest_rates(rate_type);
+CREATE INDEX IF NOT EXISTS idx_interest_rates_base_date ON interest_rates(base_date);
+
+COMMENT ON TABLE interest_rates IS '금리 지표 정보';
+COMMENT ON COLUMN interest_rates.rate_id IS 'PK';
+COMMENT ON COLUMN interest_rates.rate_type IS '금리 유형 (base_rate, mortgage_fixed, mortgage_variable, jeonse_loan)';
+COMMENT ON COLUMN interest_rates.rate_label IS '표시명 (기준금리, 주담대(고정), 주담대(변동), 전세대출)';
+COMMENT ON COLUMN interest_rates.rate_value IS '금리 값 (%)';
+COMMENT ON COLUMN interest_rates.change_value IS '전월 대비 변동폭 (%)';
+COMMENT ON COLUMN interest_rates.trend IS '추세 (up, down, stable)';
+COMMENT ON COLUMN interest_rates.base_date IS '기준일';
+COMMENT ON COLUMN interest_rates.description IS '설명';
+
+-- ============================================================
 -- FAVORITE_LOCATIONS 테이블 (즐겨찾기 지역)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS favorite_locations (
@@ -403,6 +442,7 @@ CREATE INDEX IF NOT EXISTS idx_accounts_clerk_user_id ON accounts(clerk_user_id)
 CREATE INDEX IF NOT EXISTS idx_accounts_email ON accounts(email);
 CREATE INDEX IF NOT EXISTS idx_accounts_is_deleted ON accounts(is_deleted);
 CREATE INDEX IF NOT EXISTS idx_states_region_code ON states(region_code);
+CREATE INDEX IF NOT EXISTS idx_states_geometry ON states USING GIST (geometry);
 CREATE INDEX IF NOT EXISTS idx_apartments_region_id ON apartments(region_id);
 CREATE INDEX IF NOT EXISTS idx_apartments_kapt_code ON apartments(kapt_code);
 CREATE INDEX IF NOT EXISTS idx_apartments_is_deleted ON apartments(is_deleted);
