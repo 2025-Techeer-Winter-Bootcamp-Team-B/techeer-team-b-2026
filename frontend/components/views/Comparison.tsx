@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Sparkles, X, Plus, Building2, Car, Calendar, MapPin, ChevronUp, Filter, Check, RefreshCw } from 'lucide-react';
+import { Search, Sparkles, X, Plus, Building2, Car, Calendar, MapPin, ChevronUp, Filter, Check, RefreshCw, Home, Star } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell, Legend, LabelList } from 'recharts';
 import { ToggleButtonGroup } from '../ui/ToggleButtonGroup';
 import { ApartmentRow } from '../ui/ApartmentRow';
-import { fetchCompareApartments, fetchPyeongPrices, fetchTrendingApartments, searchApartments } from '../../services/api';
+import { fetchCompareApartments, fetchPyeongPrices, fetchTrendingApartments, searchApartments, fetchMyProperties, fetchFavoriteApartments } from '../../services/api';
+import { useUser } from '@clerk/clerk-react';
 
 const ASSET_COLORS: Record<string, string> = {
   '압구정 현대': '#1E88E5', // Blue
@@ -285,6 +286,14 @@ interface SearchAndSelectApartProps {
     comparisonMode?: '1:1' | 'multi';
 }
 
+// 추천 아파트 타입
+interface RecommendedApartment {
+    aptId: number;
+    name: string;
+    region: string;
+    source: 'myProperty' | 'favorite';
+}
+
 const SearchAndSelectApart: React.FC<SearchAndSelectApartProps> = ({ 
     isOpen, 
     onClose, 
@@ -292,6 +301,7 @@ const SearchAndSelectApart: React.FC<SearchAndSelectApartProps> = ({
     existingAssets,
     comparisonMode = 'multi'
 }) => {
+    const { isSignedIn } = useUser();
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedAssetForPyeong, setSelectedAssetForPyeong] = useState<AssetData | null>(null);
     const [searchAssets, setSearchAssets] = useState<AssetData[]>([]);
@@ -303,6 +313,10 @@ const SearchAndSelectApart: React.FC<SearchAndSelectApartProps> = ({
     const [hasMoreResults, setHasMoreResults] = useState(false);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const modalRef = useRef<HTMLDivElement>(null);
+    
+    // 추천 아파트 상태
+    const [recommendations, setRecommendations] = useState<RecommendedApartment[]>([]);
+    const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
     
     const filteredAvailableAssets = searchAssets.filter(asset => {
         const isNotAdded = !existingAssets.some(a => a.aptId === asset.aptId);
@@ -419,6 +433,63 @@ const SearchAndSelectApart: React.FC<SearchAndSelectApartProps> = ({
             document.removeEventListener('keydown', handleEscape);
         };
     }, [isOpen]);
+    
+    // 추천 아파트 로드 (내 자산 + 관심단지)
+    useEffect(() => {
+        if (!isOpen || !isSignedIn) {
+            setRecommendations([]);
+            return;
+        }
+        
+        const loadRecommendations = async () => {
+            setIsLoadingRecommendations(true);
+            try {
+                const [myPropertiesRes, favoritesRes] = await Promise.all([
+                    fetchMyProperties(0, 10).catch(() => ({ success: false, data: { properties: [] } })),
+                    fetchFavoriteApartments(0, 10).catch(() => ({ success: false, data: { favorites: [] } }))
+                ]);
+                
+                const recs: RecommendedApartment[] = [];
+                
+                // 내 자산에서 추천
+                if (myPropertiesRes.success && myPropertiesRes.data.properties) {
+                    myPropertiesRes.data.properties.forEach((prop) => {
+                        if (prop.apt_id && prop.apt_name) {
+                            recs.push({
+                                aptId: prop.apt_id,
+                                name: prop.apt_name,
+                                region: prop.region_name || prop.city_name || '',
+                                source: 'myProperty'
+                            });
+                        }
+                    });
+                }
+                
+                // 관심단지에서 추천 (중복 제외)
+                if (favoritesRes.success && favoritesRes.data.favorites) {
+                    favoritesRes.data.favorites.forEach((fav) => {
+                        if (fav.apt_id && fav.apt_name && !recs.some(r => r.aptId === fav.apt_id)) {
+                            recs.push({
+                                aptId: fav.apt_id,
+                                name: fav.apt_name,
+                                region: fav.region_name || fav.city_name || '',
+                                source: 'favorite'
+                            });
+                        }
+                    });
+                }
+                
+                setRecommendations(recs);
+            } catch (error) {
+                console.error('추천 아파트 로드 실패:', error);
+                setRecommendations([]);
+            } finally {
+                setIsLoadingRecommendations(false);
+            }
+        };
+        
+        loadRecommendations();
+    }, [isOpen, isSignedIn]);
 
     useEffect(() => {
         if (!isOpen) return;
@@ -492,6 +563,22 @@ const SearchAndSelectApart: React.FC<SearchAndSelectApartProps> = ({
         setSelectedAssetForPyeong(null);
         setPyeongOptions([]);
         setIsPyeongLoading(false);
+    };
+    
+    // 추천 아파트 선택 시 바로 평형 선택으로 이동
+    const handleSelectRecommendation = (rec: RecommendedApartment) => {
+        // RecommendedApartment를 AssetData로 변환하여 바로 평형 선택 화면으로 이동
+        const assetData: AssetData = {
+            id: rec.aptId,
+            aptId: rec.aptId,
+            name: rec.name,
+            region: rec.region,
+            price: 0,
+            jeonse: 0,
+            gap: 0,
+            color: COLOR_PALETTE[existingAssets.length % COLOR_PALETTE.length],
+        };
+        handleSelectForPyeong(assetData);
     };
 
     const handleSelectForPyeong = async (asset: AssetData) => {
@@ -635,11 +722,79 @@ const SearchAndSelectApart: React.FC<SearchAndSelectApartProps> = ({
                         /* 아파트 목록 화면 */
                         <>
                             {searchQuery.trim().length < 2 ? (
-                                <div className="flex flex-col items-center justify-center h-full text-center py-12">
-                                    <Search className="w-12 h-12 text-slate-300 mb-3" />
-                                    <p className="text-slate-500 font-medium">
-                                        아파트 이름 또는 지역을 2글자 이상 입력하세요
-                                    </p>
+                                <div className="space-y-4">
+                                    {/* 추천 아파트 섹션 */}
+                                    {isSignedIn && (recommendations.length > 0 || isLoadingRecommendations) && (
+                                        <div>
+                                            <p className="text-[13px] font-bold text-slate-500 uppercase tracking-wide mb-3 px-1">
+                                                추천 검색어
+                                            </p>
+                                            {isLoadingRecommendations ? (
+                                                <div className="flex items-center justify-center py-6">
+                                                    <div className="w-5 h-5 border-2 border-slate-200 border-t-indigo-500 rounded-full animate-spin"></div>
+                                                </div>
+                                            ) : (
+                                                <div className="space-y-2">
+                                                    {recommendations
+                                                        .filter(rec => !existingAssets.some(a => a.aptId === rec.aptId))
+                                                        .map((rec) => (
+                                                        <button
+                                                            key={`${rec.source}-${rec.aptId}`}
+                                                            onClick={() => handleSelectRecommendation(rec)}
+                                                            className="w-full p-4 border border-slate-200 rounded-xl hover:border-indigo-500 hover:bg-indigo-50/50 transition-all text-left group"
+                                                        >
+                                                            <div className="flex items-center justify-between">
+                                                                <div className="flex items-center gap-3 flex-1">
+                                                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                                                                        rec.source === 'myProperty' 
+                                                                            ? 'bg-emerald-100' 
+                                                                            : 'bg-amber-100'
+                                                                    }`}>
+                                                                        {rec.source === 'myProperty' 
+                                                                            ? <Home className="w-4 h-4 text-emerald-600" />
+                                                                            : <Star className="w-4 h-4 text-amber-600" />
+                                                                        }
+                                                                    </div>
+                                                                    <div>
+                                                                        <h4 className="text-[15px] font-bold text-slate-900 mb-0.5">
+                                                                            {rec.name}
+                                                                        </h4>
+                                                                        {rec.region && (
+                                                                            <p className="text-[12px] text-slate-500 font-medium">
+                                                                                {rec.region}
+                                                                            </p>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                                <span className={`px-2 py-1 rounded-full text-[10px] font-bold ${
+                                                                    rec.source === 'myProperty' 
+                                                                        ? 'bg-emerald-100 text-emerald-700' 
+                                                                        : 'bg-amber-100 text-amber-700'
+                                                                }`}>
+                                                                    {rec.source === 'myProperty' ? '내 자산' : '관심단지'}
+                                                                </span>
+                                                            </div>
+                                                        </button>
+                                                    ))}
+                                                    {recommendations.filter(rec => !existingAssets.some(a => a.aptId === rec.aptId)).length === 0 && (
+                                                        <p className="text-center text-[13px] text-slate-400 py-4">
+                                                            모든 추천 아파트가 이미 추가되었습니다
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                    
+                                    {/* 검색 안내 메시지 */}
+                                    {(!isSignedIn || recommendations.length === 0) && !isLoadingRecommendations && (
+                                        <div className="flex flex-col items-center justify-center text-center py-12">
+                                            <Search className="w-12 h-12 text-slate-300 mb-3" />
+                                            <p className="text-slate-500 font-medium">
+                                                아파트 이름 또는 지역을 2글자 이상 입력하세요
+                                            </p>
+                                        </div>
+                                    )}
                                 </div>
                             ) : isSearching ? (
                                 <div className="flex flex-col items-center justify-center h-full text-center py-12">
