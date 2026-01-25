@@ -215,21 +215,21 @@ const SearchOverlay = ({ isOpen, onClose, isDarkMode }: { isOpen: boolean; onClo
                 setAiSearchResults(apartments);
                 
                 // AI 응답 메시지 생성
-                let responseText = `🔍 **AI 검색 결과**\n\n`;
+                let responseText = `**AI 검색 결과**\n\n`;
                 
                 // 파싱된 조건 표시
                 if (criteria.location) {
-                    responseText += `📍 **지역:** ${criteria.location}\n`;
+                    responseText += `**지역:** ${criteria.location}\n`;
                 }
                 if (criteria.min_area || criteria.max_area) {
                     const minPyeong = criteria.min_area ? Math.round(criteria.min_area / 3.3) : null;
                     const maxPyeong = criteria.max_area ? Math.round(criteria.max_area / 3.3) : null;
                     if (minPyeong && maxPyeong) {
-                        responseText += `📐 **평수:** ${minPyeong}평 ~ ${maxPyeong}평\n`;
+                        responseText += `**평수:** ${minPyeong}평 ~ ${maxPyeong}평\n`;
                     } else if (minPyeong) {
-                        responseText += `📐 **평수:** ${minPyeong}평 이상\n`;
+                        responseText += `**평수:** ${minPyeong}평 이상\n`;
                     } else if (maxPyeong) {
-                        responseText += `📐 **평수:** ${maxPyeong}평 이하\n`;
+                        responseText += `**평수:** ${maxPyeong}평 이하\n`;
                     }
                 }
                 if (criteria.min_price || criteria.max_price) {
@@ -238,28 +238,28 @@ const SearchOverlay = ({ isOpen, onClose, isDarkMode }: { isOpen: boolean; onClo
                         return `${price}만원`;
                     };
                     if (criteria.min_price && criteria.max_price) {
-                        responseText += `💰 **가격:** ${formatPrice(criteria.min_price)} ~ ${formatPrice(criteria.max_price)}\n`;
+                        responseText += `**가격:** ${formatPrice(criteria.min_price)} ~ ${formatPrice(criteria.max_price)}\n`;
                     } else if (criteria.min_price) {
-                        responseText += `💰 **가격:** ${formatPrice(criteria.min_price)} 이상\n`;
+                        responseText += `**가격:** ${formatPrice(criteria.min_price)} 이상\n`;
                     } else if (criteria.max_price) {
-                        responseText += `💰 **가격:** ${formatPrice(criteria.max_price)} 이하\n`;
+                        responseText += `**가격:** ${formatPrice(criteria.max_price)} 이하\n`;
                     }
                 }
                 if (criteria.subway_max_distance_minutes) {
-                    responseText += `🚇 **지하철:** ${criteria.subway_max_distance_minutes}분 이내\n`;
+                    responseText += `**지하철:** ${criteria.subway_max_distance_minutes}분 이내\n`;
                 }
                 if (criteria.has_education_facility) {
-                    responseText += `🏫 **학교:** 근처 학교 있음\n`;
+                    responseText += `**학교:** 근처 학교 있음\n`;
                 }
                 
                 responseText += `\n`;
                 
                 if (apartments.length > 0) {
-                    responseText += `✅ **${total}개 아파트** 중 ${count}개를 찾았습니다.\n\n`;
+                    responseText += `**${total}개 아파트** 중 ${count}개를 찾았습니다.\n\n`;
                     responseText += `아래 목록에서 원하는 아파트를 선택하세요.`;
                 } else {
-                    responseText += `❌ 조건에 맞는 아파트를 찾지 못했습니다.\n\n`;
-                    responseText += `💡 **Tip:** 조건을 완화하거나 다른 지역을 검색해보세요.`;
+                    responseText += `조건에 맞는 아파트를 찾지 못했습니다.\n\n`;
+                    responseText += `**Tip:** 조건을 완화하거나 다른 지역을 검색해보세요.`;
                 }
                 
                 setAiResponse(responseText);
@@ -299,7 +299,17 @@ const SearchOverlay = ({ isOpen, onClose, isDarkMode }: { isOpen: boolean; onClo
                 <div className="p-4 flex flex-col h-full">
                     {/* Search Header */}
                     <div className="flex items-center gap-2 mb-3 flex-shrink-0 pt-safe md:pt-0">
-                        <div className={`relative flex-1 flex items-center h-12 md:h-11 px-4 rounded-xl border-2 transition-all duration-300 ${isAiMode ? 'border-indigo-400 dark:border-indigo-500 bg-white dark:bg-slate-800' : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700'}`}>
+                        <div className={`relative flex-1 flex items-center h-12 md:h-11 px-4 rounded-xl border-2 transition-all duration-700 ${
+                            isSearching || isAiLoading 
+                                ? 'border-transparent bg-clip-padding ring-[2.5px] ring-indigo-400/40 shadow-[0_0_20px_rgba(129,140,248,0.3),0_0_40px_rgba(167,139,250,0.2)]' 
+                                : isAiMode 
+                                    ? 'border-indigo-400 dark:border-indigo-500 bg-white dark:bg-slate-800' 
+                                    : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700'
+                        }`}>
+                            {/* AI Search Gradient Border Effect (Apple Intelligence Style - Slow & Fluid) */}
+                            {(isSearching || isAiLoading) && (
+                                <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-indigo-400 via-purple-400 via-blue-400 to-indigo-400 opacity-50 -z-10 animate-shimmer-slow" style={{backgroundSize: '200% 100%'}}></div>
+                            )}
                             {isAiMode ? (
                                 <Sparkles className="w-4 h-4 text-indigo-500 dark:text-indigo-400" />
                             ) : (
@@ -354,18 +364,18 @@ const SearchOverlay = ({ isOpen, onClose, isDarkMode }: { isOpen: boolean; onClo
                                 {recentSearches.map((search, index) => (
                                     <div
                                         key={index}
-                                        className="group relative flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-700 rounded-full hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors cursor-pointer"
+                                        className="group relative flex items-center gap-2 px-4 py-2.5 bg-slate-100 dark:bg-slate-700 rounded-full hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors cursor-pointer active:scale-95"
                                         onClick={() => {
                                             setSearchQuery(search);
                                             handleSearch(search);
                                         }}
                                     >
-                                        <span className="text-[13px] font-medium text-slate-600 dark:text-slate-300">{search}</span>
+                                        <span className="text-[14px] font-medium text-slate-700 dark:text-slate-200">{search}</span>
                                         <button
                                             onClick={(e) => removeRecentSearch(search, e)}
-                                            className="ml-0.5 p-0.5 hover:bg-slate-300 dark:hover:bg-slate-500 rounded-full transition-colors"
+                                            className="ml-1 p-1 -mr-2 hover:bg-slate-300 dark:hover:bg-slate-500 rounded-full transition-colors"
                                         >
-                                            <X className="w-3 h-3 text-slate-400 dark:text-slate-500" />
+                                            <X className="w-3.5 h-3.5 text-slate-400 dark:text-slate-400" />
                                         </button>
                                     </div>
                                 ))}
@@ -792,6 +802,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onChangeV
           background: `linear-gradient(135deg, #E8F6FC 0%, #D0EBF7 50%, #E0F4FA 100%)`,
           backgroundSize: '100% 100%',
         }}
+        aria-hidden="true"
       />
       
       <div className={`min-h-screen text-slate-900 dark:text-slate-100 selection:bg-brand-blue selection:text-white ${

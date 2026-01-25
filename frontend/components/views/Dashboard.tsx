@@ -2609,8 +2609,8 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                             {/* LEFT COLUMN (Chart) */}
                             <div className="col-span-7 h-full flex flex-col gap-6">
                                 <div className="bg-gradient-to-br from-[#0f172a] via-[#1e293b] to-[#0f172a] bg-noise rounded-[28px] p-10 text-white shadow-deep relative overflow-hidden group flex flex-col flex-1 min-h-0 border border-white/5">
-                                    <div className="absolute top-[-20%] right-[-10%] w-[600px] h-[600px] glow-blue blur-[120px] pointer-events-none"></div>
-                                    <div className="absolute bottom-[-20%] left-[-10%] w-[500px] h-[500px] glow-cyan blur-[100px] pointer-events-none"></div>
+                                    <div className="absolute top-[-20%] right-[-10%] w-[600px] h-[600px] glow-blue blur-[120px] pointer-events-none" aria-hidden="true"></div>
+                                    <div className="absolute bottom-[-20%] left-[-10%] w-[500px] h-[500px] glow-cyan blur-[100px] pointer-events-none" aria-hidden="true"></div>
 
                                     <div className="flex flex-col items-start mb-8 relative z-10">
                                         <div className="flex items-center justify-between w-full mb-2">
@@ -2646,7 +2646,7 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                                         </div>
                                     </div>
 
-                                    <div className="relative z-10 flex-1 flex flex-col">
+                                    <div className="relative z-10 flex-1 flex flex-col chart-container">
                                         <div className="flex justify-between items-start gap-2 mb-4">
                                             {/* 아파트 선택 필터 (왼쪽) */}
                                             <div className="flex flex-col gap-1">
@@ -2826,8 +2826,8 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
             <div className="px-2 space-y-3">
                 {/* 내 자산 카드 */}
                 <div className="bg-gradient-to-br from-[#0f172a] via-[#1e293b] to-[#0f172a] rounded-[20px] p-4 relative overflow-hidden shadow-[0_8px_24px_rgba(0,0,0,0.12),0_2px_8px_rgba(0,0,0,0.08)]">
-                    <div className="absolute top-[-20%] right-[-10%] w-[200px] h-[200px] bg-blue-500/20 blur-[60px] pointer-events-none"></div>
-                    <div className="absolute bottom-[-20%] left-[-10%] w-[150px] h-[150px] bg-cyan-500/20 blur-[50px] pointer-events-none"></div>
+                    <div className="absolute top-[-20%] right-[-10%] w-[200px] h-[200px] bg-blue-500/20 blur-[60px] pointer-events-none" aria-hidden="true"></div>
+                    <div className="absolute bottom-[-20%] left-[-10%] w-[150px] h-[150px] bg-cyan-500/20 blur-[50px] pointer-events-none" aria-hidden="true"></div>
                     
                     <div className="relative z-10">
                         <div className="flex items-center justify-between mb-4">
@@ -2881,7 +2881,7 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                         </div>
                         
                         {/* 차트 */}
-                        <div className="h-[180px] -mx-2">
+                        <div className="h-[180px] -mx-2 chart-container">
                             {isLoading ? (
                                 <div className="w-full h-full flex items-center justify-center">
                                     <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
@@ -2891,6 +2891,8 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                                     series={chartSeries}
                                     height={180}
                                     theme="dark"
+                                    showHighLowInTooltip={false}
+                                    period={selectedPeriod as '1년' | '3년' | '전체'}
                                 />
                             )}
                         </div>

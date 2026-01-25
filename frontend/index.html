@@ -12,6 +12,20 @@
     <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Critical CSS to prevent FOUC -->
+    <style>
+      body {
+        background-color: #F5F7FA; /* Light mode default */
+        margin: 0;
+        padding: 0;
+      }
+      body.dark {
+        background-color: #0f172a; /* Dark mode default */
+      }
+      #root {
+        min-height: 100vh;
+      }
+    </style>
     <!-- Fonts: Pretendard (Sans) -->
     <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css" />
     
@@ -104,6 +118,7 @@
               'pulse-subtle': 'pulseSubtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
               'marquee': 'marquee 30s linear infinite',
               'shimmer': 'shimmer 1.5s infinite',
+              'shimmer-slow': 'shimmer 4s linear infinite',
             },
             keyframes: {
               enter: {
@@ -119,8 +134,8 @@
                 '100%': { opacity: '1', transform: 'translateY(0)' },
               },
               slideDown: {
-                '0%': { opacity: '0', transform: 'translateY(-20px) scale(0.95)' },
-                '100%': { opacity: '1', transform: 'translateY(0) scale(1)' },
+                '0%': { opacity: '1', transform: 'translateY(0)' },
+                '100%': { opacity: '0', transform: 'translateY(100%)' },
               },
               scaleIn: {
                 '0%': { opacity: '0', transform: 'scale(0.95)' },
@@ -281,6 +296,12 @@
       /* Scrollbar */
       .no-scrollbar::-webkit-scrollbar { display: none; }
       .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      
+      /* User Select None for App-like feel */
+      .select-none {
+        user-select: none;
+        -webkit-user-select: none;
+      }
       
       .custom-scrollbar::-webkit-scrollbar {
         width: 8px; 
