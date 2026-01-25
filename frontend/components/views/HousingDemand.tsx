@@ -964,10 +964,15 @@ export const HousingDemand: React.FC = () => {
         </div>
       )}
 
-      <div className="mb-6">
-        <h2 className="text-[33px] font-black text-slate-900 mb-2 pl-2">
-          주택 수요
-        </h2>
+      <div className="mb-10 mt-8">
+        <div>
+          <h2 className="text-3xl font-black text-slate-900 mb-2">
+            주택 수요
+          </h2>
+          <p className="text-slate-500 text-[15px] font-medium">
+            수요 흐름을 한눈에 파악해, 실제로 사람들이 찾는 주택의 방향을 읽어보세요.
+          </p>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-10 gap-8">
