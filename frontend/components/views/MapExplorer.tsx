@@ -742,9 +742,29 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
     }
     
     const bounds = map.getBounds();
+    if (!bounds) {
+      console.log('[Map] loadMapData - bounds not ready yet');
+      // bounds가 준비되지 않았다면 약간의 지연 후 재시도
+      setTimeout(() => {
+        if (mapRef.current) {
+          const retryBounds = mapRef.current.getBounds();
+          if (retryBounds) {
+            loadMapData(mapRef.current);
+          }
+        }
+      }, 200);
+      return;
+    }
+    
     const sw = bounds.getSouthWest();
     const ne = bounds.getNorthEast();
     const level = map.getLevel();
+    
+    // bounds가 유효한지 확인
+    if (!sw || !ne) {
+      console.log('[Map] loadMapData - bounds coordinates not ready');
+      return;
+    }
     
     console.log('[Map] loadMapData - level:', level, 'bounds:', {
       sw: { lat: sw.getLat(), lng: sw.getLng() },
@@ -1039,7 +1059,48 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
     // 지도 이벤트 등록
     kakaoMaps.event.addListener(mapRef.current, 'idle', () => {
       console.log('[Map] idle event triggered');
-      loadMapData(mapRef.current);
+      // 지도가 완전히 로드되고 bounds가 설정된 후에만 데이터 로드
+      if (mapRef.current) {
+        const bounds = mapRef.current.getBounds();
+        if (bounds) {
+          const sw = bounds.getSouthWest();
+          const ne = bounds.getNorthEast();
+          // bounds가 유효한지 확인
+          if (sw && ne) {
+            loadMapData(mapRef.current);
+          } else {
+            console.log('[Map] idle event - bounds coordinates not ready yet, waiting...');
+            // bounds 좌표가 아직 준비되지 않았다면 약간의 지연 후 재시도
+            setTimeout(() => {
+              if (mapRef.current) {
+                const retryBounds = mapRef.current.getBounds();
+                if (retryBounds) {
+                  const retrySw = retryBounds.getSouthWest();
+                  const retryNe = retryBounds.getNorthEast();
+                  if (retrySw && retryNe) {
+                    loadMapData(mapRef.current);
+                  }
+                }
+              }
+            }, 200);
+          }
+        } else {
+          console.log('[Map] idle event - bounds not ready yet, waiting...');
+          // bounds가 아직 준비되지 않았다면 약간의 지연 후 재시도
+          setTimeout(() => {
+            if (mapRef.current) {
+              const retryBounds = mapRef.current.getBounds();
+              if (retryBounds) {
+                const retrySw = retryBounds.getSouthWest();
+                const retryNe = retryBounds.getNorthEast();
+                if (retrySw && retryNe) {
+                  loadMapData(mapRef.current);
+                }
+              }
+            }
+          }, 200);
+        }
+      }
     });
     
     kakaoMaps.event.addListener(mapRef.current, 'zoom_changed', () => {
@@ -1047,10 +1108,6 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
       console.log('[Map] zoom_changed event - new level:', level);
       setCurrentZoomLevel(level);
     });
-    
-    // 초기 데이터 로드 (idle 이벤트가 바로 발생하지 않을 수 있으므로)
-    console.log('[Map] Initial data load');
-    loadMapData(mapRef.current);
     
     // 현재 위치로 이동 시도 (약간의 지연 후)
     setTimeout(() => {

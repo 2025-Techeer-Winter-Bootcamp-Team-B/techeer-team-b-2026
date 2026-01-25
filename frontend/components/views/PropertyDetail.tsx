@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Star, Plus, ArrowRightLeft, Building2, MapPin, Calendar, Car, ChevronDown, X, Check, Home, Trash2, Pencil, Maximize2 } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { ProfessionalChart } from '../ui/ProfessionalChart';
@@ -91,10 +91,10 @@ const propertyDataMap: Record<string, DetailData> = {
         { title: "래미안 원베일리 신고가 갱신", source: "한국경제", time: "1일 전" },
     ],
     neighbors: [
-        { name: '래미안 반포리버뷰', price: 45000, diff: 5.9 },
-        { name: '반포 힐스테이트', price: 48000, diff: 12.9 },
-        { name: '반포 자이', price: 41000, diff: -3.5 },
-        { name: '래미안 반포팰리스', price: 52000, diff: 22.4 },
+        { name: '래미안 반포리버뷰', price: 45000, diff: 5.9, apt_id: 10 },
+        { name: '반포 힐스테이트', price: 48000, diff: 12.9, apt_id: 11 },
+        { name: '반포 자이', price: 41000, diff: -3.5, apt_id: 12 },
+        { name: '래미안 반포팰리스', price: 52000, diff: 22.4, apt_id: 13 },
     ],
   },
   '2': {
@@ -134,10 +134,10 @@ const propertyDataMap: Record<string, DetailData> = {
         { title: "래미안 강남파크 전세가율 상승", source: "한국경제", time: "1일 전" },
     ],
     neighbors: [
-        { name: '래미안 역삼', price: 56000, diff: -3.9 },
-        { name: '역삼 힐스테이트', price: 61000, diff: 4.6 },
-        { name: '역삼 자이', price: 55000, diff: -5.7 },
-        { name: '래미안 강남힐스', price: 65000, diff: 11.5 },
+        { name: '래미안 역삼', price: 56000, diff: -3.9, apt_id: 20 },
+        { name: '역삼 힐스테이트', price: 61000, diff: 4.6, apt_id: 21 },
+        { name: '역삼 자이', price: 55000, diff: -5.7, apt_id: 22 },
+        { name: '래미안 강남힐스', price: 65000, diff: 11.5, apt_id: 23 },
     ],
   }
 };
@@ -179,10 +179,10 @@ const detailData1: DetailData = {
       { title: "GTX-C 착공 호재, 인근 단지 신고가 갱신", source: "한국경제", time: "1일 전" },
   ],
   neighbors: [
-      { name: '황골마을 주공 2단지', price: 31000, diff: 0.5 },
-      { name: '청명마을 주공 4단지', price: 34500, diff: -0.2 },
-      { name: '영통 벽적골 주공', price: 33000, diff: 0.0 },
-      { name: '신나무실 건영 2차', price: 38000, diff: 1.2 },
+      { name: '황골마을 주공 2단지', price: 31000, diff: 0.5, apt_id: 2 },
+      { name: '청명마을 주공 4단지', price: 34500, diff: -0.2, apt_id: 3 },
+      { name: '영통 벽적골 주공', price: 33000, diff: 0.0, apt_id: 4 },
+      { name: '신나무실 건영 2차', price: 38000, diff: 1.2, apt_id: 5 },
   ],
 };
 
@@ -267,6 +267,7 @@ const FormatPriceChangeValue = ({ val, sizeClass = "text-[15px]" }: { val: numbe
 };
 
 const NeighborItem: React.FC<{ item: typeof detailData1.neighbors[0], currentPrice: number }> = ({ item, currentPrice }) => {
+    const navigate = useNavigate();
     // currentPrice가 0이면 diffRatio를 계산하지 않음
     const diffRatio = currentPrice > 0 
         ? ((item.price - currentPrice) / currentPrice) * 100 
@@ -276,10 +277,22 @@ const NeighborItem: React.FC<{ item: typeof detailData1.neighbors[0], currentPri
     // Infinity나 NaN 체크
     const displayDiff = isFinite(diffRatio) ? Math.abs(diffRatio).toFixed(1) : '0.0';
     
+    const handleNameClick = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (item.apt_id) {
+            navigate(`/property/${item.apt_id}`);
+        }
+    };
+    
     return (
         <div className="flex justify-between p-4 text-[15px]">
             <span className="font-medium text-slate-900 flex items-center gap-2">
-                <span className="text-[15px]">{item.name}</span> 
+                <span 
+                    className="text-[15px] hover:text-blue-600 cursor-pointer transition-colors"
+                    onClick={handleNameClick}
+                >
+                    {item.name}
+                </span> 
                 {currentPrice > 0 && item.price > 0 ? (
                     <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${isHigher ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'}`}>
                         {displayDiff}% {isHigher ? '비쌈' : '쌈'}
@@ -316,7 +329,7 @@ type DetailData = {
   info: Array<{ label: string; value: string }>;
   transactions: Transaction[];
   news: Array<{ title: string; source: string; time: string; url?: string }>;
-  neighbors: Array<{ name: string; price: number; diff: number }>;
+  neighbors: Array<{ name: string; price: number; diff: number; apt_id: number }>;
 };
 
 // 날짜를 상대 시간으로 변환하는 함수
@@ -765,7 +778,8 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
               return {
                 name: item.apt_name,
                 price: item.average_price,
-                diff: diff
+                diff: diff,
+                apt_id: item.apt_id
               };
             });
           
