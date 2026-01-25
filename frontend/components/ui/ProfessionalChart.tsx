@@ -84,6 +84,25 @@ export const ProfessionalChart: React.FC<ProfessionalChartProps> = ({
         return `${date.getFullYear()}년 ${date.getMonth() + 1}월`;
     };
 
+    type BusinessDayLike = { year: number; month: number; day: number };
+    const isBusinessDayLike = (v: unknown): v is BusinessDayLike => {
+        if (!v || typeof v !== 'object') return false;
+        const anyV = v as any;
+        return (
+            typeof anyV.year === 'number' &&
+            typeof anyV.month === 'number' &&
+            typeof anyV.day === 'number'
+        );
+    };
+
+    // lightweight-charts Time(유닉스초) / BusinessDay / (커스텀) string 모두 처리
+    const timeToMs = (t: Time | string): number => {
+        if (typeof t === 'number') return t * 1000;
+        if (typeof t === 'string') return new Date(t).getTime();
+        if (isBusinessDayLike(t)) return new Date(t.year, t.month - 1, t.day).getTime();
+        return NaN;
+    };
+
     // 정확한 너비 계산 함수
     const getContainerWidth = () => {
         if (!chartContainerRef.current) return 0;
@@ -286,8 +305,10 @@ export const ProfessionalChart: React.FC<ProfessionalChartProps> = ({
                                 }
                                 
                                 // 보이는 범위 내의 데이터만 필터링
-                                const fromTime = typeof visibleRange.from === 'string' ? new Date(visibleRange.from).getTime() : visibleRange.from * 1000;
-                                const toTime = typeof visibleRange.to === 'string' ? new Date(visibleRange.to).getTime() : visibleRange.to * 1000;
+                                const fromMsRaw = timeToMs(visibleRange.from);
+                                const toMsRaw = timeToMs(visibleRange.to);
+                                const fromTime = Number.isFinite(fromMsRaw) ? fromMsRaw : -Infinity;
+                                const toTime = Number.isFinite(toMsRaw) ? toMsRaw : Infinity;
                                 
                                 const visibleData = sampledData.filter(point => {
                                     const pointTime = new Date(point.time).getTime();
@@ -368,7 +389,7 @@ export const ProfessionalChart: React.FC<ProfessionalChartProps> = ({
                             // 왼쪽 Y축에 최저/최고점 표시를 위한 시리즈
                             const leftSeries = chart.addLineSeries({
                                 color: 'transparent',
-                                lineWidth: 0,
+                                lineWidth: 1,
                                 priceScaleId: 'left',
                                 visible: true,
                                 lastValueVisible: false,
@@ -448,8 +469,10 @@ export const ProfessionalChart: React.FC<ProfessionalChartProps> = ({
                                 }
                                 
                                 // 보이는 범위 내의 데이터만 필터링
-                                const fromTime = typeof visibleRange.from === 'string' ? new Date(visibleRange.from).getTime() : visibleRange.from * 1000;
-                                const toTime = typeof visibleRange.to === 'string' ? new Date(visibleRange.to).getTime() : visibleRange.to * 1000;
+                                const fromMsRaw = timeToMs(visibleRange.from);
+                                const toMsRaw = timeToMs(visibleRange.to);
+                                const fromTime = Number.isFinite(fromMsRaw) ? fromMsRaw : -Infinity;
+                                const toTime = Number.isFinite(toMsRaw) ? toMsRaw : Infinity;
                                 
                                 const visibleData = uniqueData.filter(point => {
                                     const pointTime = new Date(point.time).getTime();
@@ -540,7 +563,7 @@ export const ProfessionalChart: React.FC<ProfessionalChartProps> = ({
                             // 왼쪽 Y축에 최저/최고점 표시를 위한 시리즈
                             const leftSeries = chart.addLineSeries({
                                 color: 'transparent',
-                                lineWidth: 0,
+                                lineWidth: 1,
                                 priceScaleId: 'left',
                                 visible: true,
                                 lastValueVisible: false,
@@ -587,8 +610,10 @@ export const ProfessionalChart: React.FC<ProfessionalChartProps> = ({
                                 }
                                 
                                 // 보이는 범위 내의 데이터만 필터링
-                                const fromTime = typeof visibleRange.from === 'string' ? new Date(visibleRange.from).getTime() : visibleRange.from * 1000;
-                                const toTime = typeof visibleRange.to === 'string' ? new Date(visibleRange.to).getTime() : visibleRange.to * 1000;
+                                const fromMsRaw = timeToMs(visibleRange.from);
+                                const toMsRaw = timeToMs(visibleRange.to);
+                                const fromTime = Number.isFinite(fromMsRaw) ? fromMsRaw : -Infinity;
+                                const toTime = Number.isFinite(toMsRaw) ? toMsRaw : Infinity;
                                 
                                 const visibleData = uniqueData.filter(point => {
                                     const pointTime = new Date(point.time).getTime();
@@ -669,7 +694,7 @@ export const ProfessionalChart: React.FC<ProfessionalChartProps> = ({
                             // 왼쪽 Y축에 최저/최고점 표시를 위한 시리즈
                             const leftSeries = chart.addLineSeries({
                                 color: 'transparent',
-                                lineWidth: 0,
+                                lineWidth: 1,
                                 priceScaleId: 'left',
                                 visible: true,
                                 lastValueVisible: false,
@@ -718,8 +743,10 @@ export const ProfessionalChart: React.FC<ProfessionalChartProps> = ({
                                 }
                                 
                                 // 보이는 범위 내의 데이터만 필터링
-                                const fromTime = typeof visibleRange.from === 'string' ? new Date(visibleRange.from).getTime() : visibleRange.from * 1000;
-                                const toTime = typeof visibleRange.to === 'string' ? new Date(visibleRange.to).getTime() : visibleRange.to * 1000;
+                                const fromMsRaw = timeToMs(visibleRange.from);
+                                const toMsRaw = timeToMs(visibleRange.to);
+                                const fromTime = Number.isFinite(fromMsRaw) ? fromMsRaw : -Infinity;
+                                const toTime = Number.isFinite(toMsRaw) ? toMsRaw : Infinity;
                                 
                                 const visibleData = uniqueData.filter(point => {
                                     const pointTime = new Date(point.time).getTime();
@@ -800,7 +827,7 @@ export const ProfessionalChart: React.FC<ProfessionalChartProps> = ({
                             // 왼쪽 Y축에 최저/최고점 표시를 위한 시리즈
                             const leftSeries = chart.addLineSeries({
                                 color: 'transparent',
-                                lineWidth: 0,
+                                lineWidth: 1,
                                 priceScaleId: 'left',
                                 visible: true,
                                 lastValueVisible: false,

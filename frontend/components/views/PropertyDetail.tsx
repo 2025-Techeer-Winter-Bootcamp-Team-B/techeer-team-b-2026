@@ -20,8 +20,7 @@ import {
   fetchApartmentsByRegion,
   fetchNearbyComparison,
   fetchSameRegionComparison,
-  setAuthToken,
-  fetchApartmentExclusiveAreas
+  setAuthToken
 } from '../../services/api';
 import { MyPropertyModal } from './MyPropertyModal';
 
