@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Sparkles, X, Plus, Building2, Car, Calendar, MapPin, ChevronUp, Filter, Check, RefreshCw, Home, Star } from 'lucide-react';
+import { Search, Sparkles, X, Plus, Building2, Car, Calendar, MapPin, ChevronUp, Filter, Check, RefreshCw, Home, Star, ExternalLink } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell, Legend, LabelList } from 'recharts';
 import { ToggleButtonGroup } from '../ui/ToggleButtonGroup';
 import { ApartmentRow } from '../ui/ApartmentRow';
 import { fetchCompareApartments, fetchPyeongPrices, fetchTrendingApartments, searchApartments, fetchMyProperties, fetchFavoriteApartments } from '../../services/api';
 import { useUser } from '@clerk/clerk-react';
+import { useNavigate } from 'react-router-dom';
 
 const ASSET_COLORS: Record<string, string> = {
   '압구정 현대': '#1E88E5', // Blue
@@ -884,6 +885,8 @@ const SearchAndSelectApart: React.FC<SearchAndSelectApartProps> = ({
 };
 
 export const Comparison: React.FC = () => {
+  const navigate = useNavigate();
+  
   // 1:1 비교와 다수 비교를 위한 별도 상태 관리
   // localStorage에서 초기값 불러오기
   const loadAssetsFromStorage = (): { oneToOne: AssetData[], multi: AssetData[], mode: '1:1' | 'multi' } => {
@@ -1150,11 +1153,26 @@ export const Comparison: React.FC = () => {
     setShowAddAssetModal(false);
   };
 
-  const ComparisonCard = ({ title, price, sub, color, onChangeClick }: { title: string, price: string, sub: string, color: string, onChangeClick?: () => void }) => (
+  const ComparisonCard = ({ title, price, sub, color, aptId, onChangeClick }: { title: string, price: string, sub: string, color: string, aptId?: number, onChangeClick?: () => void }) => (
       <div className="flex-1 p-8 rounded-2xl bg-white border border-slate-200 hover:border-slate-300 transition-colors relative">
           <div className="flex items-start justify-between mb-6">
-              <div className={`p-3 rounded-xl ${color === 'blue' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                  <Building2 className="w-6 h-6" />
+              <div className="flex items-center gap-3">
+                  <div className={`p-3 rounded-xl ${color === 'blue' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                      <Building2 className="w-6 h-6" />
+                  </div>
+                  {aptId && (
+                      <button 
+                          className={`flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors text-[13px] font-bold ${
+                              color === 'blue' 
+                                  ? 'bg-blue-50 hover:bg-blue-100 text-blue-600' 
+                                  : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-600'
+                          }`}
+                          onClick={() => navigate(`/property/${aptId}`)}
+                      >
+                          <ExternalLink className="w-4 h-4" />
+                          상세보기
+                      </button>
+                  )}
               </div>
               <button 
                   className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors text-[13px] font-bold"
@@ -1353,6 +1371,7 @@ export const Comparison: React.FC = () => {
                            sub={leftAsset?.region || '아파트를 선택하세요'}
                            price={leftAsset ? `${formatNumberValue(leftAsset.price, 1)}억` : '-'} 
                            color="blue"
+                           aptId={leftAsset?.aptId}
                            onChangeClick={() => {
                                setEditingCardSide('left');
                                setShowAddAssetModal(true);
@@ -1363,6 +1382,7 @@ export const Comparison: React.FC = () => {
                            sub={rightAsset?.region || '아파트를 선택하세요'}
                            price={rightAsset ? `${formatNumberValue(rightAsset.price, 1)}억` : '-'} 
                            color="emerald"
+                           aptId={rightAsset?.aptId}
                            onChangeClick={() => {
                                setEditingCardSide('right');
                                setShowAddAssetModal(true);
@@ -1866,7 +1886,7 @@ export const Comparison: React.FC = () => {
                   </div>
 
                   {/* Table Section */}
-                  <div className="bg-white rounded-[24px] border border-slate-200 shadow-soft overflow-hidden h-[580px] flex flex-col">
+                  <div className="bg-white rounded-[24px] border border-slate-200 shadow-soft overflow-hidden h-[585px] flex flex-col">
                       <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex-shrink-0">
                           <div className="flex items-center justify-between">
                               <h3 className="font-black text-slate-900 text-[18px]">상세 정보</h3>
@@ -1928,8 +1948,14 @@ export const Comparison: React.FC = () => {
                                   <tr className="bg-slate-50/50 border-b border-slate-100">
                                       <th className="text-left px-6 py-4 text-[13px] font-bold text-slate-600 uppercase tracking-wide">항목</th>
                                       {assets.map((asset) => (
-                                          <th key={asset.id} className="text-center px-6 py-4 text-[13px] font-black text-slate-900">
-                                              {asset.name}
+                                          <th key={asset.id} className="text-center px-6 py-4">
+                                              <button
+                                                  onClick={() => asset.aptId && navigate(`/property/${asset.aptId}`)}
+                                                  className="inline-flex items-center gap-1 text-[13px] font-black text-slate-900 hover:text-indigo-600 transition-colors cursor-pointer group"
+                                              >
+                                                  {asset.name}
+                                                  <span className="text-[18px] text-slate-400 group-hover:text-indigo-400 transition-colors font-normal">›</span>
+                                              </button>
                                           </th>
                                       ))}
                                   </tr>
@@ -2143,7 +2169,7 @@ export const Comparison: React.FC = () => {
                   </div>
 
                   {/* Key Comparison Card */}
-                  <div className="bg-white rounded-[24px] border border-slate-200 shadow-soft flex flex-col overflow-hidden h-[580px]">
+                  <div className="bg-white rounded-[24px] border border-slate-200 shadow-soft flex flex-col overflow-hidden h-[585px]">
                       <div className="p-6 border-b border-slate-100 bg-slate-50/50">
                           <h3 className="font-black text-slate-900 text-[18px]">핵심 비교</h3>
                       </div>
