@@ -4,6 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>스위트홈 - 프리미엄 부동산 자산 관리</title>
+    <!-- PWA -->
+    <meta name="theme-color" content="#3182F6" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="스위트홈" />
+    <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Fonts: Pretendard (Sans) -->
@@ -467,7 +473,8 @@
   }
 }
 </script>
-<!-- CSS는 <style> 태그에 포함되어 있으므로 별도 파일 불필요 -->
+<!-- Manifest + SW injected by vite-plugin-pwa -->
+    <!-- CSS는 <style> 태그에 포함되어 있으므로 별도 파일 불필요 -->
 <!-- <link rel="stylesheet" href="/index.css"> -->
 </head>
   <body>
