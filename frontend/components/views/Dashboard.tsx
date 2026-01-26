@@ -349,7 +349,7 @@ const AssetRow: React.FC<{
                                         {isProfit ? '+' : '-'}
                                         <FormatPriceWithUnit value={priceChange.diff} isDiff />
                                     </span>
-                                    <span className="whitespace-nowrap">({priceChange.rate.toFixed(1)}%)</span>
+                                    <span className="whitespace-nowrap text-[15px]">({priceChange.rate.toFixed(1)}%)</span>
                                 </p>
                             )}
                         </div>
