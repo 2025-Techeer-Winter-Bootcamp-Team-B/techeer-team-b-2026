@@ -285,16 +285,18 @@ const EmptyPropertyCard: React.FC = () => {
   return (
     <Card 
       className="p-4 border border-[#E2E8F0] bg-white opacity-50"
-    <div 
-      className="rounded-[24px] p-4 border border-dashed border-[#E2E8F0]/50 bg-transparent"
     >
-      <div className="flex flex-col items-center justify-center py-6 text-[#94A3B8]">
-        <div className="w-12 h-12 rounded-xl bg-[#F1F5F9]/50 flex items-center justify-center mb-3">
-          <FileText className="w-6 h-6" />
+      <div 
+        className="rounded-[24px] p-4 border border-dashed border-[#E2E8F0]/50 bg-transparent"
+      >
+        <div className="flex flex-col items-center justify-center py-6 text-[#94A3B8]">
+          <div className="w-12 h-12 rounded-xl bg-[#F1F5F9]/50 flex items-center justify-center mb-3">
+            <FileText className="w-6 h-6" />
+          </div>
+          <p className="text-xs font-medium">데이터가 없습니다</p>
         </div>
-        <p className="text-xs font-medium">데이터가 없습니다</p>
       </div>
-    </div>
+    </Card>
   );
 };
 
@@ -450,13 +452,11 @@ export const PortfolioList: React.FC<PortfolioListProps> = ({ onPropertyClick, o
         setTransactionsLoading(true);
         // 에러 메시지는 유지 (거래가 없을 때만 업데이트)
         setShowAllTransactions(false); // 기간 변경 시 더보기 상태 초기화
-        const response = await fetchRecentTransactions(100, transactionFilter, transactionMonths);
-        setTransactionsError(null);
         
         // Layout의 토큰 설정을 기다리기 위한 짧은 지연
         await new Promise(resolve => setTimeout(resolve, 100));
         
-        const response = await fetchRecentTransactions(20); // 최대 20개 가져오기
+        const response = await fetchRecentTransactions(100, transactionFilter, transactionMonths);
         const convertedTransactions = response.transactions.map(convertTransactionResponse);
         setTransactions(convertedTransactions);
         // 거래 내역이 없으면 에러 메시지 설정 (더 보기 버튼을 위해 에러로 표시)
