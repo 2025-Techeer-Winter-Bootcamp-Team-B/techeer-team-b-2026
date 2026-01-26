@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout';
 import { Dashboard } from '../components/views/Dashboard';
 import { MapExplorer } from '../components/views/MapExplorer';
 import { Comparison } from '../components/views/Comparison';
 import { HousingDemand } from '../components/views/HousingDemand';
 import { HousingSupply } from '../components/views/HousingSupply';
+import { Onboarding } from '../components/views/Onboarding';
 import { PropertyDetail } from '../components/views/PropertyDetail';
 import { Ranking } from '../components/views/Ranking';
 import { PortfolioList } from '../components/PortfolioList';
@@ -194,15 +195,51 @@ const PortfolioPage = () => {
 
 export const AppRoutes = () => (
   <Routes>
-    <Route path="/" element={<HomePage />} />
-    <Route path="/map" element={<MapPage />} />
-    <Route path="/compare" element={<ComparePage />} />
-    <Route path="/portfolio" element={<PortfolioPage />} />
-    <Route path="/stats/demand" element={<HousingDemandPage />} />
-    <Route path="/stats/supply" element={<HousingSupplyPage />} />
-    <Route path="/stats/ranking" element={<RankingPage />} />
-    <Route path="/stats" element={<Navigate to="/stats/demand" replace />} />
-    <Route path="/property/:id" element={<AptDetailPage />} />
-    <Route path="*" element={<Navigate to="/" replace />} />
+    <Route
+      path="/onboarding"
+      element={<Onboarding />}
+    />
+    <Route
+      path="/"
+      element={<HomePage />}
+    />
+    <Route
+      path="/map"
+      element={<MapPage />}
+    />
+    <Route
+      path="/compare"
+      element={<ComparePage />}
+    />
+    <Route
+      path="/portfolio"
+      element={<PortfolioPage />}
+    />
+    <Route
+      path="/stats/demand"
+      element={<HousingDemandPage />}
+    />
+    <Route
+      path="/stats/supply"
+      element={<HousingSupplyPage />}
+    />
+    <Route
+      path="/stats/ranking"
+      element={<RankingPage />}
+    />
+    <Route
+      path="/stats"
+      element={<Navigate to="/stats/demand" replace />}
+    />
+    <Route
+      path="/property/:id"
+      element={<AptDetailPage />}
+    />
+
+    {/* 그 외 경로 */}
+    <Route
+      path="*"
+      element={<Navigate to="/stats/demand" replace />}
+    />
   </Routes>
 );
