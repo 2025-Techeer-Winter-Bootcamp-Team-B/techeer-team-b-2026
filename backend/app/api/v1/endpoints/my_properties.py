@@ -6,7 +6,7 @@
 import logging
 import sys
 import traceback
-from datetime import datetime
+from datetime import datetime, date
 from fastapi import APIRouter, Depends, HTTPException, status, Body, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -308,6 +308,14 @@ async def get_my_properties(
                 if prop.apt_id in latest_prices:
                     current_market_price = latest_prices[prop.apt_id]
                 
+                # purchase_date 포맷팅
+                purchase_date_str = None
+                if prop.purchase_date:
+                    if isinstance(prop.purchase_date, datetime):
+                        purchase_date_str = prop.purchase_date.date().isoformat()
+                    else:
+                        purchase_date_str = prop.purchase_date.isoformat() if hasattr(prop.purchase_date, 'isoformat') else str(prop.purchase_date)
+                
                 properties_data.append({
                     "property_id": prop.property_id,
                     "account_id": prop.account_id,
@@ -316,6 +324,7 @@ async def get_my_properties(
                     "exclusive_area": float(prop.exclusive_area) if prop.exclusive_area else None,
                     "current_market_price": current_market_price,
                     "purchase_price": prop.purchase_price,
+                    "purchase_date": purchase_date_str,
                     "risk_checked_at": prop.risk_checked_at if prop.risk_checked_at else None,
                     "memo": prop.memo,
                     "created_at": prop.created_at if prop.created_at else None,
@@ -466,6 +475,9 @@ async def create_my_property(
             "nickname": "우리집",
             "exclusive_area": 84.5,
             "current_market_price": 85000,
+            "purchase_price": 80000,
+            "loan_amount": 40000,
+            "purchase_date": "2024-03-15",
             "memo": "2024년 구매"
         }]
     ),
@@ -689,6 +701,14 @@ async def get_my_property(
             # 지수 조회 실패 시 무시 (None 유지)
             pass
     
+    # purchase_date 포맷팅
+    purchase_date_str = None
+    if property_obj.purchase_date:
+        if isinstance(property_obj.purchase_date, datetime):
+            purchase_date_str = property_obj.purchase_date.date().isoformat()
+        else:
+            purchase_date_str = property_obj.purchase_date.isoformat() if hasattr(property_obj.purchase_date, 'isoformat') else str(property_obj.purchase_date)
+    
     property_data = {
         "property_id": property_obj.property_id,
         "account_id": property_obj.account_id,
@@ -696,6 +716,8 @@ async def get_my_property(
         "nickname": property_obj.nickname,
         "exclusive_area": float(property_obj.exclusive_area) if property_obj.exclusive_area else None,
         "current_market_price": property_obj.current_market_price,
+        "purchase_price": property_obj.purchase_price,
+        "purchase_date": purchase_date_str,
         "risk_checked_at": property_obj.risk_checked_at.isoformat() if property_obj.risk_checked_at else None,
         "memo": property_obj.memo,
         "created_at": property_obj.created_at.isoformat() if property_obj.created_at else None,

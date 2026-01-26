@@ -2,8 +2,8 @@ import React, { useMemo, useRef, useEffect, useState } from 'react';
 import { TrendingUp, TrendingDown, Calendar, DollarSign, FileText, ArrowRight, Percent, Building2 } from 'lucide-react';
 import { Property, ViewProps } from '../types';
 import { Card } from './ui/Card';
-import { myProperties } from './views/Dashboard';
 import { AssetActivityTimeline } from './views/AssetActivityTimeline';
+import { fetchRecentTransactions, type TransactionResponse, fetchMyProperties, type MyProperty } from '../services/api';
 
 // ----------------------------------------------------------------------
 // TYPES & INTERFACES
@@ -13,6 +13,7 @@ interface PortfolioListProps extends ViewProps {
   onBack?: () => void;
 }
 
+// API에서 받아온 거래 내역을 컴포넌트에서 사용하는 형식으로 변환
 interface Transaction {
   id: string;
   propertyId: string;
@@ -23,6 +24,59 @@ interface Transaction {
   area: number;
   location: string;
 }
+
+// MyProperty를 Property 타입으로 변환하는 함수
+const convertMyPropertyToProperty = (myProperty: MyProperty): Property => {
+  try {
+    const currentPrice = myProperty.current_market_price || 0;
+    const purchasePrice = myProperty.purchase_price || 0;
+    const profit = currentPrice - purchasePrice;
+    const profitRate = purchasePrice > 0 ? (profit / purchasePrice) * 100 : 0;
+    
+    // 보유 기간 계산 (개월 단위)
+    let holdingMonths = 0;
+    if (myProperty.purchase_date) {
+      const purchaseDate = new Date(myProperty.purchase_date);
+      if (!isNaN(purchaseDate.getTime())) {
+        const now = new Date();
+        holdingMonths = (now.getFullYear() - purchaseDate.getFullYear()) * 12 + 
+                        (now.getMonth() - purchaseDate.getMonth());
+        holdingMonths = Math.max(0, holdingMonths);
+      }
+    }
+    
+    // 지역 정보 조합
+    const location = [myProperty.city_name, myProperty.region_name]
+      .filter(Boolean)
+      .join(' ') || '알 수 없음';
+    
+    const converted = {
+      id: String(myProperty.property_id),
+      aptId: myProperty.apt_id,
+      name: myProperty.apt_name || myProperty.nickname || '알 수 없음',
+      location: location,
+      area: myProperty.exclusive_area || 0,
+      currentPrice: currentPrice,
+      purchasePrice: purchasePrice,
+      purchaseDate: myProperty.purchase_date || '-',
+      changeRate: profitRate,
+      loan: myProperty.loan_amount,
+    };
+    
+    console.log('[convertMyPropertyToProperty] 변환 결과:', {
+      id: converted.id,
+      name: converted.name,
+      currentPrice: converted.currentPrice,
+      purchasePrice: converted.purchasePrice,
+      profitRate: converted.changeRate,
+    });
+    
+    return converted;
+  } catch (error) {
+    console.error('[convertMyPropertyToProperty] 변환 오류:', error, myProperty);
+    throw error;
+  }
+};
 
 interface AdvancedMetrics {
   incomeTax: number;
@@ -37,34 +91,25 @@ interface AdvancedMetrics {
 // ----------------------------------------------------------------------
 
 
-const generateTransactionHistory = (): Transaction[] => {
-  const transactions: Transaction[] = [];
-  const types: ('매매' | '전세' | '월세')[] = ['매매', '전세', '월세'];
-  const dates = [
-    '2024-12-15', '2024-12-10', '2024-12-05', '2024-11-28', 
-    '2024-11-20', '2024-11-15', '2024-11-08', '2024-11-01',
-    '2024-10-25', '2024-10-18', '2024-10-10', '2024-10-05'
-  ];
-
-  myProperties.forEach((prop, idx) => {
-    dates.forEach((date, dateIdx) => {
-      if (dateIdx < 4) { // 각 부동산당 최근 4개 거래만
-        transactions.push({
-          id: `t-${prop.id}-${dateIdx}`,
-          propertyId: prop.id,
-          propertyName: prop.name,
-          date,
-          type: types[dateIdx % 3],
-          price: prop.currentPrice + (Math.random() - 0.5) * 5000,
-          area: prop.area,
-          location: prop.location,
-        });
-      }
-    });
-  });
-
-  return transactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+// API 응답을 컴포넌트에서 사용하는 형식으로 변환
+const convertTransactionResponse = (apiTransaction: TransactionResponse): Transaction => {
+  // 가격 결정: 매매는 trans_price, 전월세는 deposit_price
+  const price = apiTransaction.transaction_type === '매매' 
+    ? (apiTransaction.trans_price || 0)
+    : (apiTransaction.deposit_price || 0);
+  
+  return {
+    id: `t-${apiTransaction.transaction_type}-${apiTransaction.trans_id}`,
+    propertyId: String(apiTransaction.apt_id),
+    propertyName: apiTransaction.apartment_name || '알 수 없음',
+    date: apiTransaction.deal_date || '',
+    type: apiTransaction.transaction_type,
+    price: price,
+    area: apiTransaction.exclusive_area,
+    location: apiTransaction.apartment_location || '알 수 없음',
+  };
 };
+
 
 const calculateAdvancedMetrics = (properties: Property[]): AdvancedMetrics => {
   const totalProfit = properties.reduce((sum, p) => {
@@ -102,7 +147,7 @@ const FormatPriceWithUnit = ({ value, isDiff = false }: { value: number, isDiff?
     return (
       <span className="tabular-nums tracking-tight">
         <span className="font-bold">{man}</span>
-        <span className="font-medium opacity-70 ml-0.5">만원</span>
+        <span className="font-bold ml-0.5">만원</span>
       </span>
     );
   }
@@ -117,7 +162,7 @@ const FormatPriceWithUnit = ({ value, isDiff = false }: { value: number, isDiff?
       }}
     >
       <span className="font-bold">{eok}</span>
-      <span className="font-medium opacity-70 ml-0.5 mr-1">억</span>
+      <span className="font-bold ml-0.5 mr-1">억</span>
       {man > 0 && (
         <>
           <span className="font-bold">{man}</span>
@@ -135,6 +180,16 @@ const PropertyCard: React.FC<{
 }> = ({ property, rank, onClick, isProfit }) => {
   const profit = property.currentPrice - property.purchasePrice;
   const profitRate = property.purchasePrice > 0 ? (profit / property.purchasePrice) * 100 : 0;
+  
+  // 보유 기간 계산 (개월 단위)
+  let holdingMonths = 0;
+  if (property.purchaseDate && property.purchaseDate !== '-') {
+    const purchaseDate = new Date(property.purchaseDate);
+    const now = new Date();
+    holdingMonths = (now.getFullYear() - purchaseDate.getFullYear()) * 12 + 
+                    (now.getMonth() - purchaseDate.getMonth());
+    holdingMonths = Math.max(0, holdingMonths);
+  }
 
   return (
     <Card 
@@ -166,6 +221,18 @@ const PropertyCard: React.FC<{
       
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
+          <span className="text-xs text-[#64748B] font-medium">매입일</span>
+          <span className="text-xs font-medium text-[#1E293B]">
+            {property.purchaseDate !== '-' ? property.purchaseDate : '-'}
+          </span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-[#64748B] font-medium">매입 가격</span>
+          <span className="font-bold text-sm text-[#1E293B] tabular-nums">
+            {property.purchasePrice > 0 ? <FormatPriceWithUnit value={property.purchasePrice} /> : '-'}
+          </span>
+        </div>
+        <div className="flex items-center justify-between">
           <span className="text-xs text-[#64748B] font-medium">현재 시세</span>
           <span className="font-bold text-base text-[#1E293B] tabular-nums">
             <FormatPriceWithUnit value={property.currentPrice} />
@@ -179,12 +246,18 @@ const PropertyCard: React.FC<{
             {isProfit ? '+' : ''}{profitRate.toFixed(1)}%
           </span>
         </div>
-        <div className="flex items-center justify-between pt-1.5 border-t border-[#E2E8F0]">
+        <div className="flex items-center justify-between">
           <span className="text-xs text-[#64748B] font-medium">수익금</span>
           <span className={`font-bold text-sm tabular-nums ${
             isProfit ? 'text-[#E11D48]' : 'text-[#2563EB]'
           }`}>
             {isProfit ? '+' : ''}<FormatPriceWithUnit value={Math.abs(profit)} isDiff />
+          </span>
+        </div>
+        <div className="flex items-center justify-between pt-1.5 border-t border-[#E2E8F0]">
+          <span className="text-xs text-[#64748B] font-medium">보유 기간</span>
+          <span className="text-xs font-medium text-[#1E293B]">
+            {holdingMonths > 0 ? `${holdingMonths}개월` : '-'}
           </span>
         </div>
       </div>
@@ -259,24 +332,103 @@ const TransactionItem: React.FC<{
 // ----------------------------------------------------------------------
 
 export const PortfolioList: React.FC<PortfolioListProps> = ({ onPropertyClick, onBack }) => {
-  const transactions = useMemo(() => generateTransactionHistory(), []);
-  const advancedMetrics = useMemo(() => calculateAdvancedMetrics(myProperties), []);
+  // API에서 내 집 목록 가져오기
+  const [properties, setProperties] = useState<Property[]>([]);
+  const [propertiesLoading, setPropertiesLoading] = useState(true);
+  const [propertiesError, setPropertiesError] = useState<string | null>(null);
+  
+  // API에서 거래 내역 가져오기
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [transactionsLoading, setTransactionsLoading] = useState(true);
+  const [transactionsError, setTransactionsError] = useState<string | null>(null);
+  
+  // 내 집 목록 API 호출
+  useEffect(() => {
+    const loadProperties = async () => {
+      try {
+        setPropertiesLoading(true);
+        setPropertiesError(null);
+        const response = await fetchMyProperties(0, 100);
+        
+        // 디버깅: API 응답 구조 확인
+        console.log('[PortfolioList] API 응답 전체:', response);
+        console.log('[PortfolioList] response.data:', response.data);
+        console.log('[PortfolioList] response.data.properties:', response.data?.properties);
+        console.log('[PortfolioList] properties 개수:', response.data?.properties?.length);
+        
+        if (!response.data || !response.data.properties) {
+          console.error('[PortfolioList] 응답 구조 오류:', response);
+          setPropertiesError('응답 데이터 구조가 올바르지 않습니다.');
+          setProperties([]);
+          return;
+        }
+        
+        // 각 property 데이터 확인
+        response.data.properties.forEach((prop, idx) => {
+          console.log(`[PortfolioList] Property ${idx}:`, {
+            property_id: prop.property_id,
+            apt_name: prop.apt_name,
+            current_market_price: prop.current_market_price,
+            purchase_price: prop.purchase_price,
+            purchase_date: prop.purchase_date,
+            city_name: prop.city_name,
+            region_name: prop.region_name,
+          });
+        });
+        
+        const convertedProperties = response.data.properties.map(convertMyPropertyToProperty);
+        console.log('[PortfolioList] 변환된 properties:', convertedProperties);
+        setProperties(convertedProperties);
+      } catch (error) {
+        console.error('[PortfolioList] 내 집 목록 조회 오류:', error);
+        setPropertiesError('내 집 목록을 불러오는 중 오류가 발생했습니다.');
+        setProperties([]);
+      } finally {
+        setPropertiesLoading(false);
+      }
+    };
+    
+    loadProperties();
+  }, []);
+  
+  // 거래 내역 API 호출
+  useEffect(() => {
+    const loadTransactions = async () => {
+      try {
+        setTransactionsLoading(true);
+        setTransactionsError(null);
+        const response = await fetchRecentTransactions(20); // 최대 20개 가져오기
+        const convertedTransactions = response.transactions.map(convertTransactionResponse);
+        setTransactions(convertedTransactions);
+      } catch (error) {
+        console.error('거래 내역 조회 오류:', error);
+        setTransactionsError('거래 내역을 불러오는 중 오류가 발생했습니다.');
+        setTransactions([]);
+      } finally {
+        setTransactionsLoading(false);
+      }
+    };
+    
+    loadTransactions();
+  }, []);
+  
+  const advancedMetrics = useMemo(() => calculateAdvancedMetrics(properties), [properties]);
   
   // 가장 수익률 높은 부동산 3개
   const topProfitProperties = useMemo(() => {
-    return [...myProperties]
+    return [...properties]
       .filter(p => p.changeRate > 0)
       .sort((a, b) => b.changeRate - a.changeRate)
       .slice(0, 3);
-  }, []);
+  }, [properties]);
 
   // 가장 손해 높은 부동산 3개
   const topLossProperties = useMemo(() => {
-    return [...myProperties]
+    return [...properties]
       .filter(p => p.changeRate < 0)
       .sort((a, b) => a.changeRate - b.changeRate)
       .slice(0, 3);
-  }, []);
+  }, [properties]);
 
   const leftColumnRef = useRef<HTMLDivElement>(null);
   const [rightCardHeight, setRightCardHeight] = useState<number | undefined>(undefined);
@@ -335,25 +487,65 @@ export const PortfolioList: React.FC<PortfolioListProps> = ({ onPropertyClick, o
 
   // 포트폴리오 성과 지표 계산
   const portfolioMetrics = useMemo(() => {
-    const totalValue = myProperties.reduce((sum, p) => sum + p.currentPrice, 0);
-    const totalPurchaseValue = myProperties.reduce((sum, p) => sum + p.purchasePrice, 0);
+    console.log('[PortfolioList] portfolioMetrics 계산 시작, properties 개수:', properties.length);
+    console.log('[PortfolioList] properties 데이터:', properties);
+    
+    if (properties.length === 0) {
+      console.log('[PortfolioList] properties가 비어있음, 기본값 반환');
+      return {
+        totalValue: 0,
+        totalPurchaseValue: 0,
+        totalProfit: 0,
+        avgProfitRate: 0,
+        maxProfitRate: 0,
+        minProfitRate: 0,
+        profitCount: 0,
+        lossCount: 0,
+        totalCount: 0,
+        avgHoldingMonths: 0,
+      };
+    }
+    
+    // 총 자산 가치: 모든 아파트의 현재 시세 합
+    const totalValue = properties.reduce((sum, p) => sum + p.currentPrice, 0);
+    console.log('[PortfolioList] 총 자산 가치:', totalValue);
+    
+    // 매입 가격 총합
+    const totalPurchaseValue = properties.reduce((sum, p) => sum + p.purchasePrice, 0);
+    console.log('[PortfolioList] 매입 가격 총합:', totalPurchaseValue);
+    
+    // 총 수익/손실: 현재 시세 총합 - 매입가격 총합
     const totalProfit = totalValue - totalPurchaseValue;
-    const avgProfitRate = totalPurchaseValue > 0 ? (totalProfit / totalPurchaseValue) * 100 : 0;
-    const maxProfitRate = Math.max(...myProperties.map(p => p.changeRate));
-    const minProfitRate = Math.min(...myProperties.map(p => p.changeRate));
-    const profitCount = myProperties.filter(p => p.changeRate > 0).length;
-    const lossCount = myProperties.filter(p => p.changeRate < 0).length;
+    console.log('[PortfolioList] 총 수익/손실:', totalProfit);
+    
+    // 평균 수익률: 각 자산의 수익률 평균
+    const profitRates = properties
+      .filter(p => p.purchasePrice > 0)
+      .map(p => p.changeRate);
+    console.log('[PortfolioList] 수익률 배열:', profitRates);
+    const avgProfitRate = profitRates.length > 0 
+      ? profitRates.reduce((sum, rate) => sum + rate, 0) / profitRates.length 
+      : 0;
+    console.log('[PortfolioList] 평균 수익률:', avgProfitRate);
+    
+    const maxProfitRate = properties.length > 0 ? Math.max(...properties.map(p => p.changeRate)) : 0;
+    const minProfitRate = properties.length > 0 ? Math.min(...properties.map(p => p.changeRate)) : 0;
+    const profitCount = properties.filter(p => p.changeRate > 0).length;
+    const lossCount = properties.filter(p => p.changeRate < 0).length;
     
     // 평균 보유 기간 계산 (월 단위)
-    const avgHoldingMonths = myProperties.reduce((sum, p) => {
-      if (p.purchaseDate === '-') return sum;
-      const purchaseDate = new Date(p.purchaseDate + '-01');
-      const now = new Date();
-      const months = (now.getFullYear() - purchaseDate.getFullYear()) * 12 + (now.getMonth() - purchaseDate.getMonth());
-      return sum + Math.max(0, months);
-    }, 0) / myProperties.filter(p => p.purchaseDate !== '-').length;
+    const propertiesWithDate = properties.filter(p => p.purchaseDate && p.purchaseDate !== '-');
+    const avgHoldingMonths = propertiesWithDate.length > 0
+      ? propertiesWithDate.reduce((sum, p) => {
+          const purchaseDate = new Date(p.purchaseDate);
+          const now = new Date();
+          const months = (now.getFullYear() - purchaseDate.getFullYear()) * 12 + 
+                         (now.getMonth() - purchaseDate.getMonth());
+          return sum + Math.max(0, months);
+        }, 0) / propertiesWithDate.length
+      : 0;
 
-    return {
+    const metrics = {
       totalValue,
       totalPurchaseValue,
       totalProfit,
@@ -362,10 +554,13 @@ export const PortfolioList: React.FC<PortfolioListProps> = ({ onPropertyClick, o
       minProfitRate,
       profitCount,
       lossCount,
-      totalCount: myProperties.length,
-      avgHoldingMonths: Math.round(avgHoldingMonths) || 0,
+      totalCount: properties.length,
+      avgHoldingMonths: Math.round(avgHoldingMonths),
     };
-  }, []);
+    
+    console.log('[PortfolioList] 계산된 메트릭:', metrics);
+    return metrics;
+  }, [properties]);
 
   return (
     <div className="relative">
@@ -412,10 +607,10 @@ export const PortfolioList: React.FC<PortfolioListProps> = ({ onPropertyClick, o
                       {portfolioMetrics.avgProfitRate >= 0 ? '+' : ''}{portfolioMetrics.avgProfitRate.toFixed(1)}%
                     </p>
                   </div>
-                </div>
+                    </div>
 
-                {/* 추가 지표 */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                    {/* 추가 지표 */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
                   <div className="bg-white rounded-lg p-3 border border-[#E2E8F0] shadow-[0_1px_3px_0_rgba(0,0,0,0.1),0_1px_2px_0_rgba(0,0,0,0.06)]">
                     <p className="text-sm text-[#64748B] font-bold mb-1">총 수익/손실</p>
                     <p className={`text-lg font-black tabular-nums ${
@@ -445,114 +640,88 @@ export const PortfolioList: React.FC<PortfolioListProps> = ({ onPropertyClick, o
                 </div>
 
                 {/* 최고/최저 수익 부동산 */}
-                <div className="mb-6">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-xl font-black text-white">최고 수익 부동산</h3>
-                    <span className="text-sm text-slate-300 font-bold">상위 3개</span>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    {topProfitProperties.length > 0 ? (
-                      topProfitProperties.map((prop, idx) => (
-                        <PropertyCard
-                          key={prop.id}
-                          property={prop}
-                          rank={idx + 1}
-                          onClick={() => onPropertyClick(prop.id)}
-                          isProfit={true}
-                        />
-                      ))
-                    ) : (
-                      <>
-                        <EmptyPropertyCard />
-                        <EmptyPropertyCard />
-                        <EmptyPropertyCard />
-                      </>
-                    )}
-                    {topProfitProperties.length < 3 && Array.from({ length: 3 - topProfitProperties.length }).map((_, idx) => (
-                      <EmptyPropertyCard key={`empty-profit-${idx}`} />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mb-6">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-xl font-black text-white">최대 손실 부동산</h3>
-                    <span className="text-sm text-slate-300 font-bold">하위 3개</span>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    {topLossProperties.length > 0 ? (
-                      topLossProperties.map((prop, idx) => (
-                        <PropertyCard
-                          key={prop.id}
-                          property={prop}
-                          rank={idx + 1}
-                          onClick={() => onPropertyClick(prop.id)}
-                          isProfit={false}
-                        />
-                      ))
-                    ) : (
-                      <>
-                        <EmptyPropertyCard />
-                        <EmptyPropertyCard />
-                        <EmptyPropertyCard />
-                      </>
-                    )}
-                    {topLossProperties.length < 3 && Array.from({ length: 3 - topLossProperties.length }).map((_, idx) => (
-                      <EmptyPropertyCard key={`empty-loss-${idx}`} />
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Advanced 지표 (소득세 등) */}
-            <div className="bg-white rounded-[24px] p-6 shadow-[0_1px_3px_0_rgba(0,0,0,0.1),0_1px_2px_0_rgba(0,0,0,0.06)] border border-[#E2E8F0]">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-xl font-black text-[#0F172A]">세금 및 수익 분석</h2>
-                <div className="w-8 h-8 rounded-full bg-[#F1F5F9] flex items-center justify-center">
-                  <DollarSign className="w-4 h-4 text-[#64748B]" />
-                </div>
-              </div>
-              
-              <div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0]">
-                    <p className="text-xs text-[#64748B] font-medium mb-2">종합소득세</p>
-                    <p className="text-lg font-black text-[#1E293B] tabular-nums">
-                      <FormatPriceWithUnit value={advancedMetrics.incomeTax} />
-                    </p>
-                  </div>
-                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0]">
-                    <p className="text-xs text-[#64748B] font-medium mb-2">양도소득세</p>
-                    <p className="text-lg font-black text-[#1E293B] tabular-nums">
-                      <FormatPriceWithUnit value={advancedMetrics.capitalGainsTax} />
-                    </p>
-                  </div>
-                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0]">
-                    <p className="text-xs text-[#64748B] font-medium mb-2">재산세</p>
-                    <p className="text-lg font-black text-[#1E293B] tabular-nums">
-                      <FormatPriceWithUnit value={advancedMetrics.propertyTax} />
-                    </p>
-                  </div>
-                  <div className="p-4 rounded-xl bg-[#DBEAFE] border border-[#BFDBFE]">
-                    <p className="text-xs text-[#2563EB] font-medium mb-2">총 세금</p>
-                    <p className="text-lg font-black text-[#2563EB] tabular-nums">
-                      <FormatPriceWithUnit value={advancedMetrics.totalTax} />
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-4 p-4 rounded-xl bg-[#FEE2E2] border border-[#FECACA]">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs text-[#E11D48] font-medium mb-1">순수익 (세후)</p>
-                      <p className="text-2xl font-black text-[#E11D48] tabular-nums">
-                        <FormatPriceWithUnit value={advancedMetrics.netProfit} />
-                      </p>
+                {propertiesLoading ? (
+                  <div className="text-center py-12 text-slate-300">
+                    <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center mx-auto mb-3 animate-pulse">
+                      <Building2 className="w-6 h-6" />
                     </div>
-                    <TrendingUp className="w-8 h-8 text-[#E11D48] opacity-50" />
+                    <p className="text-sm font-medium">내 집 목록을 불러오는 중...</p>
                   </div>
-                </div>
+                ) : propertiesError ? (
+                  <div className="text-center py-12 text-slate-300">
+                    <div className="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center mx-auto mb-3">
+                      <FileText className="w-6 h-6 text-red-400" />
+                    </div>
+                    <p className="text-sm font-medium text-red-400">{propertiesError}</p>
+                  </div>
+                ) : properties.length === 0 ? (
+                  <div className="text-center py-12 text-slate-300">
+                    <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center mx-auto mb-3">
+                      <FileText className="w-6 h-6" />
+                    </div>
+                    <p className="text-sm font-medium">등록된 내 집이 없습니다</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="mb-6">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-xl font-black text-white">최고 수익 부동산</h3>
+                        <span className="text-sm text-slate-300 font-bold">상위 3개</span>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {topProfitProperties.length > 0 ? (
+                          topProfitProperties.map((prop, idx) => (
+                            <PropertyCard
+                              key={prop.id}
+                              property={prop}
+                              rank={idx + 1}
+                              onClick={() => onPropertyClick(prop.id)}
+                              isProfit={true}
+                            />
+                          ))
+                        ) : (
+                          <>
+                            <EmptyPropertyCard />
+                            <EmptyPropertyCard />
+                            <EmptyPropertyCard />
+                          </>
+                        )}
+                        {topProfitProperties.length < 3 && Array.from({ length: 3 - topProfitProperties.length }).map((_, idx) => (
+                          <EmptyPropertyCard key={`empty-profit-${idx}`} />
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="mb-6">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-xl font-black text-white">최대 손실 부동산</h3>
+                        <span className="text-sm text-slate-300 font-bold">하위 3개</span>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {topLossProperties.length > 0 ? (
+                          topLossProperties.map((prop, idx) => (
+                            <PropertyCard
+                              key={prop.id}
+                              property={prop}
+                              rank={idx + 1}
+                              onClick={() => onPropertyClick(prop.id)}
+                              isProfit={false}
+                            />
+                          ))
+                        ) : (
+                          <>
+                            <EmptyPropertyCard />
+                            <EmptyPropertyCard />
+                            <EmptyPropertyCard />
+                          </>
+                        )}
+                        {topLossProperties.length < 3 && Array.from({ length: 3 - topLossProperties.length }).map((_, idx) => (
+                          <EmptyPropertyCard key={`empty-loss-${idx}`} />
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -568,10 +737,6 @@ export const PortfolioList: React.FC<PortfolioListProps> = ({ onPropertyClick, o
             >
               <div className="flex items-center justify-between mb-6 flex-shrink-0">
                 <h2 className="text-xl font-black text-[#0F172A]">최근 거래 내역</h2>
-                <button className="text-sm text-[#2563EB] font-bold hover:text-[#1D4ED8] flex items-center gap-1">
-                  전체보기
-                  <ArrowRight className="w-4 h-4" />
-                </button>
               </div>
 
               <div className="overflow-y-auto flex-1 min-h-0 pr-2 custom-scrollbar" style={{ 
@@ -579,7 +744,21 @@ export const PortfolioList: React.FC<PortfolioListProps> = ({ onPropertyClick, o
                 overflowY: 'scroll',
                 height: rightCardHeight ? `calc(${rightCardHeight}px - 100px)` : 'auto'
               }}>
-                {transactions.length > 0 ? (
+                {transactionsLoading ? (
+                  <div className="text-center py-12 text-[#94A3B8]">
+                    <div className="w-12 h-12 rounded-full bg-[#F1F5F9] flex items-center justify-center mx-auto mb-3 animate-pulse">
+                      <FileText className="w-6 h-6" />
+                    </div>
+                    <p className="text-sm font-medium">거래 내역을 불러오는 중...</p>
+                  </div>
+                ) : transactionsError ? (
+                  <div className="text-center py-12 text-[#94A3B8]">
+                    <div className="w-12 h-12 rounded-full bg-[#FEE2E2] flex items-center justify-center mx-auto mb-3">
+                      <FileText className="w-6 h-6 text-[#E11D48]" />
+                    </div>
+                    <p className="text-sm font-medium text-[#E11D48]">{transactionsError}</p>
+                  </div>
+                ) : transactions.length > 0 ? (
                   <div className="space-y-0">
                     {transactions.map(transaction => (
                       <TransactionItem
