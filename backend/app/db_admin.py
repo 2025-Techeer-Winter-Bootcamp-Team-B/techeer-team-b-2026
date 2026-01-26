@@ -546,16 +546,20 @@ DUMMY_MARKER = "더미"  # 명시적 식별자로 변경
 # Tier 1: 독립적인 테이블 (가장 먼저 복원)
 # Tier 2: Tier 1에 의존하는 테이블
 # Tier 3: Tier 2에 의존하는 테이블
+# 큰 테이블(sales, rents)은 리소스 제약을 고려하여 별도 처리
 TABLE_GROUPS = [
     # Tier 1: 독립적인 테이블 (가장 먼저 복원)
     ['states', 'accounts', 'interest_rates', '_migrations'],
     # Tier 2: Tier 1에 의존하는 테이블 (states가 완전히 복원된 후)
     ['apartments', 'house_scores', 'house_volumes', 'recent_searches', 'population_movements'],
-    # Tier 3: Tier 2에 의존하는 테이블
-    ['apart_details', 'sales', 'rents', 'favorite_locations', 'recent_views', 'my_properties', 'favorite_apartments', 'asset_activity_logs'],
+    # Tier 3: Tier 2에 의존하는 테이블 (작은 테이블들만 병렬 처리)
+    ['apart_details', 'favorite_locations', 'recent_views', 'my_properties', 'favorite_apartments', 'asset_activity_logs'],
     # Tier 4: Tier 3에 의존하는 테이블
     ['daily_statistics']
 ]
+
+# 큰 테이블은 순차적으로 복원 (리소스 제약 고려)
+LARGE_TABLES = ['sales', 'rents']  # 파일 크기가 큰 테이블들
 
 
 class DatabaseAdmin:
@@ -785,27 +789,38 @@ class DatabaseAdmin:
                             no_progress_count = 0
                             check_interval = 5  # 5초마다 확인
                             
-                            while True:
-                                await asyncio.sleep(check_interval)
-                                try:
-                                    async with self.engine.connect() as conn2:
-                                        result = await conn2.execute(
-                                            text(f'SELECT COUNT(*) FROM "{table_name}"')
-                                        )
-                                        current_count = result.scalar() or 0
-                                        
-                                        if current_count > last_count:
-                                            progress_pct = (current_count / estimated_rows * 100) if estimated_rows > 0 else 0
-                                            print(f"       진행 중... {current_count:,}/{estimated_rows:,} 행 ({progress_pct:.1f}%)", flush=True)
-                                            last_count = current_count
-                                            no_progress_count = 0
-                                        else:
-                                            no_progress_count += 1
-                                            if no_progress_count >= 6:  # 30초 동안 진행 없으면 종료
-                                                break
-                                except:
-                                    # 테이블이 아직 없거나 다른 오류
-                                    pass
+                            try:
+                                while True:
+                                    await asyncio.sleep(check_interval)
+                                    try:
+                                        async with self.engine.connect() as conn2:
+                                            result = await conn2.execute(
+                                                text(f'SELECT COUNT(*) FROM "{table_name}"')
+                                            )
+                                            current_count = result.scalar() or 0
+                                            
+                                            if current_count > last_count:
+                                                progress_pct = (current_count / estimated_rows * 100) if estimated_rows > 0 else 0
+                                                print(f"       진행 중... {current_count:,}/{estimated_rows:,} 행 ({progress_pct:.1f}%)", flush=True)
+                                                last_count = current_count
+                                                no_progress_count = 0
+                                                
+                                                # 100%에 도달하면 종료
+                                                if progress_pct >= 99.9:
+                                                    break
+                                            else:
+                                                no_progress_count += 1
+                                                if no_progress_count >= 12:  # 60초 동안 진행 없으면 종료
+                                                    print(f"       경고: 진행이 멈춘 것 같습니다. 확인이 필요합니다.", flush=True)
+                                                    break
+                                    except Exception as e:
+                                        # 테이블이 아직 없거나 다른 오류
+                                        no_progress_count += 1
+                                        if no_progress_count >= 12:
+                                            break
+                            except asyncio.CancelledError:
+                                # 정상적으로 취소됨 (COPY 완료)
+                                pass
                         
                         # COPY와 모니터링을 병렬로 실행
                         try:
@@ -1701,26 +1716,49 @@ class DatabaseAdmin:
             tier_tables = [t for t in group if t in all_tables]
             if not tier_tables:
                 continue
+            
+            # 큰 테이블은 제외 (별도 처리)
+            small_tables = [t for t in tier_tables if t not in LARGE_TABLES]
+            large_tables_in_tier = [t for t in tier_tables if t in LARGE_TABLES]
+            
+            # 작은 테이블들 병렬 복원
+            if small_tables:
+                print(f"\n Tier {i} 복원 시작 ({len(small_tables)}개 테이블 병렬 처리)...")
+                print(f"   대상: {', '.join(small_tables)}")
                 
-            print(f"\n Tier {i} 복원 시작 ({len(tier_tables)}개 테이블 병렬 처리)...")
-            print(f"   대상: {', '.join(tier_tables)}")
+                tasks = []
+                for table in small_tables:
+                    tasks.append(self.restore_table(table, confirm=True))
+                
+                # 병렬 실행
+                results = await asyncio.gather(*tasks)
+                
+                # 결과 집계
+                for table, success in zip(small_tables, results):
+                    if success:
+                        restored_tables.add(table)
+                        success_count += 1
+                    else:
+                        failed_tables.append(table)
+                
+                print(f" Tier {i} 완료")
             
-            tasks = []
-            for table in tier_tables:
-                tasks.append(self.restore_table(table, confirm=True))
-            
-            # 병렬 실행
-            results = await asyncio.gather(*tasks)
-            
-            # 결과 집계
-            for table, success in zip(tier_tables, results):
-                if success:
-                    restored_tables.add(table)
-                    success_count += 1
-                else:
-                    failed_tables.append(table)
-            
-            print(f" Tier {i} 완료")
+            # 큰 테이블은 순차적으로 복원 (리소스 제약 고려)
+            if large_tables_in_tier:
+                print(f"\n Tier {i} 큰 테이블 복원 시작 ({len(large_tables_in_tier)}개 테이블 순차 처리)...")
+                print(f"   대상: {', '.join(large_tables_in_tier)}")
+                print(f"   ⚠️  리소스 제약을 고려하여 순차적으로 복원합니다.")
+                
+                for table in large_tables_in_tier:
+                    print(f"\n   → '{table}' 복원 시작...")
+                    success = await self.restore_table(table, confirm=True)
+                    if success:
+                        restored_tables.add(table)
+                        success_count += 1
+                    else:
+                        failed_tables.append(table)
+                
+                print(f" Tier {i} 큰 테이블 복원 완료")
 
         # 2. 그룹에 포함되지 않은 나머지 테이블 복원 (Tier 4)
         remaining_tables = [t for t in all_tables if t not in restored_tables]
