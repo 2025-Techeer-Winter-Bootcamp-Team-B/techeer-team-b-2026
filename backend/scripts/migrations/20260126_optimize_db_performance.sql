@@ -5,7 +5,10 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE INDEX IF NOT EXISTS idx_apt_name_trgm ON apartments USING GIN (apt_name gin_trgm_ops);
 
 -- 3. 매매 통계 Materialized View 생성 (랭킹/차트 쿼리 속도 20초 -> 0.1초)
-CREATE MATERIALIZED VIEW IF NOT EXISTS mv_sales_monthly_stats AS
+-- 기존 View가 다른 구조로 존재할 수 있으므로 DROP 후 재생성
+DROP MATERIALIZED VIEW IF EXISTS mv_sales_monthly_stats CASCADE;
+
+CREATE MATERIALIZED VIEW mv_sales_monthly_stats AS
 SELECT 
     apt_id,
     DATE_TRUNC('month', contract_date) AS month,
@@ -16,6 +19,8 @@ SELECT
     AVG(exclusive_area) AS avg_area
 FROM sales
 WHERE is_canceled = FALSE
+  AND (is_deleted = FALSE OR is_deleted IS NULL)
+  AND contract_date IS NOT NULL
 GROUP BY apt_id, DATE_TRUNC('month', contract_date);
 
 -- 4. Materialized View 인덱스 생성
