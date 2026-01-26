@@ -20,6 +20,7 @@ from app.models.recent_search import RecentSearch
 from app.models.recent_view import RecentView
 from app.models.interest_rate import InterestRate
 from app.models.asset_activity_log import AssetActivityLog
+from app.models.daily_statistics import DailyStatistics
 
 __all__ = [
     "Account",
@@ -38,4 +39,5 @@ __all__ = [
     "RecentView",
     "InterestRate",
     "AssetActivityLog",
+    "DailyStatistics",
 ]

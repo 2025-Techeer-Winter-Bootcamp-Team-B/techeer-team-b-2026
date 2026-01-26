@@ -76,18 +76,41 @@ jobs:
             
             # FastAPI 애플리케이션이 완전히 시작될 때까지 대기
             echo "⏳ FastAPI 애플리케이션 시작 대기 중..."
-            MAX_STARTUP_WAIT=60
+            echo "   (마이그레이션이 있다면 최대 300초까지 대기합니다)"
+            MAX_STARTUP_WAIT=300
             STARTUP_WAIT_COUNT=0
             APP_READY=false
+            LAST_LOG_LINE=""
             
             while [ $STARTUP_WAIT_COUNT -lt $MAX_STARTUP_WAIT ]; do
               sleep 3
               STARTUP_WAIT_COUNT=$((STARTUP_WAIT_COUNT + 3))
               
-              # 로그에서 "Application startup complete" 확인
-              LOGS=$(docker compose -f docker-compose.prod.yml logs backend 2>&1 | tail -30)
+              # 최근 로그 가져오기
+              LOGS=$(docker compose -f docker-compose.prod.yml logs backend 2>&1 | tail -50)
               
-              if echo "$LOGS" | grep -qE "(Application startup complete|서버가 요청을 받을 준비가 되었습니다)"; then
+              # 새로운 로그 라인 확인 (변경사항만 표시)
+              CURRENT_LOG_LINE=$(echo "$LOGS" | tail -1)
+              if [ "$CURRENT_LOG_LINE" != "$LAST_LOG_LINE" ] && [ -n "$CURRENT_LOG_LINE" ]; then
+                echo "  📋 [${STARTUP_WAIT_COUNT}초] $CURRENT_LOG_LINE"
+                LAST_LOG_LINE="$CURRENT_LOG_LINE"
+              fi
+              
+              # 마이그레이션 진행 상황 확인
+              if echo "$LOGS" | grep -qE "(마이그레이션 실행|마이그레이션 완료|마이그레이션 실패)"; then
+                MIGRATION_STATUS=$(echo "$LOGS" | grep -E "(마이그레이션 실행|마이그레이션 완료|마이그레이션 실패)" | tail -1)
+                if echo "$MIGRATION_STATUS" | grep -q "마이그레이션 실행"; then
+                  MIGRATION_FILE=$(echo "$MIGRATION_STATUS" | sed -n 's/.*마이그레이션 실행: \([^ ]*\).*/\1/p')
+                  echo "  🔄 마이그레이션 진행 중: $MIGRATION_FILE"
+                elif echo "$MIGRATION_STATUS" | grep -q "마이그레이션 완료"; then
+                  echo "  ✅ 마이그레이션 완료 감지"
+                elif echo "$MIGRATION_STATUS" | grep -q "마이그레이션 실패"; then
+                  echo "  ⚠️ 마이그레이션 실패 감지 (서버는 계속 시작합니다)"
+                fi
+              fi
+              
+              # 로그에서 "Application startup complete" 확인
+              if echo "$LOGS" | grep -qE "(Application startup complete|서버가 요청을 받을 준비가 되었습니다|FastAPI 서버 시작)"; then
                 echo "✅ 애플리케이션 시작 완료 감지! (${STARTUP_WAIT_COUNT}초 경과)"
                 APP_READY=true
                 break
@@ -103,9 +126,17 @@ jobs:
                 elif [ "$HTTP_CODE" != "000" ]; then
                   echo "  ℹ️ HTTP 응답 받음 (코드: $HTTP_CODE, 계속 대기 중...)"
                 fi
+              else
+                # 포트가 아직 열리지 않음
+                if [ $((STARTUP_WAIT_COUNT % 15)) -eq 0 ]; then
+                  echo "  ⏳ 포트 8000 대기 중... (${STARTUP_WAIT_COUNT}/${MAX_STARTUP_WAIT}초)"
+                fi
               fi
               
-              echo "  ⏳ 애플리케이션 시작 대기 중... (${STARTUP_WAIT_COUNT}/${MAX_STARTUP_WAIT}초)"
+              # 주기적으로 진행 상황 표시 (15초마다)
+              if [ $((STARTUP_WAIT_COUNT % 15)) -eq 0 ]; then
+                echo "  ⏳ 애플리케이션 시작 대기 중... (${STARTUP_WAIT_COUNT}/${MAX_STARTUP_WAIT}초)"
+              fi
             done
             
             if [ "$APP_READY" = false ]; then
