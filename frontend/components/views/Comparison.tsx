@@ -1460,7 +1460,7 @@ export const Comparison: React.FC = () => {
         </div>
       )}
       
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-6 md:mb-10 gap-4 md:mt-8">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 gap-4">
           <div>
               <h1 className="hidden md:block text-3xl font-black text-slate-900 mb-2">아파트 비교 분석</h1>
               <p className="hidden md:block text-slate-500 text-[15px] font-medium">관심 있는 단지들의 가격 구조와 투자 가치를 입체적으로 비교하세요.</p>
