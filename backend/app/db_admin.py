@@ -552,7 +552,9 @@ TABLE_GROUPS = [
     # Tier 2
     ['apartments', 'house_scores', 'house_volumes', 'recent_searches'],
     # Tier 3
-    ['apart_details', 'sales', 'rents', 'favorite_locations', 'recent_views', 'my_properties', 'favorite_apartments']
+    ['apart_details', 'sales', 'rents', 'favorite_locations', 'recent_views', 'my_properties', 'favorite_apartments', 'asset_activity_logs'],
+    # Tier 4 (Tier 3에 의존)
+    ['daily_statistics']
 ]
 
 
@@ -941,8 +943,11 @@ class DatabaseAdmin:
         table_specific_types = {
             'accounts': {
                 'account_id': 'integer',
-                'is_admin': 'boolean',
+                'clerk_user_id': 'string',
+                'email': 'string',
+                'is_admin': 'string',  # VARCHAR로 저장됨 (boolean이 아님)
                 'is_dark_mode': 'boolean',
+                'dashboard_bottom_panel_view': 'string',  # 마이그레이션으로 추가됨
             },
             'sales': {
                 'trans_id': 'integer',
@@ -1071,6 +1076,34 @@ class DatabaseAdmin:
                 'trend': 'string',
                 'base_date': 'date',
                 'description': 'string',
+            },
+            'asset_activity_logs': {
+                'id': 'integer',
+                'account_id': 'integer',
+                'apt_id': 'integer',
+                'category': 'string',
+                'event_type': 'string',
+                'price_change': 'integer',
+                'previous_price': 'integer',
+                'current_price': 'integer',
+                'metadata': 'string',
+            },
+            'daily_statistics': {
+                'stat_date': 'date',
+                'region_id': 'integer',
+                'transaction_type': 'string',
+                'transaction_count': 'integer',
+                'avg_price': 'decimal',
+                'total_amount': 'decimal',
+                'avg_area': 'decimal',
+            },
+            'accounts': {
+                'account_id': 'integer',
+                'clerk_user_id': 'string',
+                'email': 'string',
+                'is_admin': 'string',  # VARCHAR로 저장됨 (boolean이 아님)
+                'is_dark_mode': 'boolean',
+                'dashboard_bottom_panel_view': 'string',  # 마이그레이션으로 추가됨
             },
         }
         
