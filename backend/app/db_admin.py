@@ -807,7 +807,42 @@ class DatabaseAdmin:
                                 # COPY 시작 후 초기 대기 (큰 테이블은 5초, 작은 테이블은 3초)
                                 # COPY가 실제로 데이터를 삽입하기 시작할 때까지 기다림
                                 initial_wait = 5 if is_large_table else 3
-                                await asyncio.sleep(initial_wait)
+                                
+                                # 초기 대기 중에도 상태 확인 및 메시지 출력
+                                wait_elapsed = 0
+                                while wait_elapsed < initial_wait and not copy_task_ref.done():
+                                    await asyncio.sleep(1)
+                                    wait_elapsed += 1
+                                    
+                                    # 1초마다 상태 확인
+                                    try:
+                                        async with self.engine.connect() as conn2:
+                                            result = await conn2.execute(
+                                                text(f'SELECT COUNT(*) FROM "{table_name}"')
+                                            )
+                                            current_count = result.scalar() or 0
+                                            
+                                            # 첫 행이 삽입되면 즉시 모니터링 시작
+                                            if current_count > 0:
+                                                initial_wait_done = True
+                                                print(f"       ✓ COPY 시작됨! 첫 행 삽입 확인: {current_count:,}행", flush=True)
+                                                last_count = current_count
+                                                break
+                                    except:
+                                        pass
+                                
+                                # 초기 대기 완료 후에도 데이터가 없으면 메시지 출력
+                                if not initial_wait_done:
+                                    try:
+                                        async with self.engine.connect() as conn2:
+                                            result = await conn2.execute(
+                                                text(f'SELECT COUNT(*) FROM "{table_name}"')
+                                            )
+                                            current_count = result.scalar() or 0
+                                            if current_count == 0:
+                                                print(f"       ⏳ COPY 초기화 중... (잠시만 기다려주세요)", flush=True)
+                                    except:
+                                        pass
                                 
                                 while not copy_task_ref.done():
                                     await asyncio.sleep(check_interval)
@@ -818,9 +853,15 @@ class DatabaseAdmin:
                                             )
                                             current_count = result.scalar() or 0
                                             
-                                            # 첫 번째 행이 삽입되기 전까지는 대기
-                                            if not initial_wait_done and current_count == 0:
-                                                # 아직 데이터가 없으면 계속 대기 (COPY가 시작 중일 수 있음)
+                                            # 첫 번째 행이 삽입되면 모니터링 시작
+                                            if not initial_wait_done and current_count > 0:
+                                                initial_wait_done = True
+                                                print(f"       ✓ COPY 시작됨! 첫 행 삽입 확인: {current_count:,}행", flush=True)
+                                                last_count = current_count
+                                                continue
+                                            
+                                            # 아직 첫 행이 없으면 계속 대기
+                                            if not initial_wait_done:
                                                 continue
                                             
                                             initial_wait_done = True
