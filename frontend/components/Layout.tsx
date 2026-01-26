@@ -742,7 +742,8 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onChangeV
                   {[
                     { label: '주택 수요', path: '/stats/demand' },
                     { label: '주택 공급', path: '/stats/supply' },
-                    { label: '주택 랭킹', path: '/stats/ranking' }
+                    { label: '주택 랭킹', path: '/stats/ranking' },
+                    { label: '정부정책', path: '/policy' }
                   ].map((tab) => {
                     const isActive = location.pathname === tab.path;
                     return (

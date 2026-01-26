@@ -26,7 +26,7 @@ const GovernmentPolicy: React.FC = () => {
   }, []);
 
   return (
-    <div className="space-y-6 md:space-y-8 pb-32 animate-fade-in px-2 md:px-0 pt-2 md:pt-10">
+    <div className="space-y-4 md:space-y-8 pb-32 animate-fade-in px-2 md:px-0 pt-2 md:pt-10 min-h-screen">
       {/* 헤더 */}
       <div className="mb-8">
         <h1 className="text-2xl md:text-3xl font-black text-slate-900 dark:text-white mb-6">정부정책</h1>
@@ -69,6 +69,7 @@ const GovernmentPolicy: React.FC = () => {
       {/* 규제지역 탭 */}
       {activeTab === 'regulated' && (
         <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 md:p-8 shadow-sm">
+          <h2 className="text-2xl md:text-3xl font-black text-slate-900 dark:text-white mb-8">규제지역</h2>
           <div className="space-y-6">
             {/* 투기지역 */}
             <div>
