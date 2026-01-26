@@ -542,24 +542,31 @@ def select_realistic_floor_from_distribution(floor_distribution: List[int]) -> i
 DUMMY_MARKER = "더미"  # 명시적 식별자로 변경
 
 
-# 테이블 의존성 그룹 (병렬 복원용)
-# Tier 1: 독립적인 테이블 (가장 먼저 복원)
-# Tier 2: Tier 1에 의존하는 테이블
-# Tier 3: Tier 2에 의존하는 테이블
-# 큰 테이블(sales, rents)은 리소스 제약을 고려하여 별도 처리
-TABLE_GROUPS = [
-    # Tier 1: 독립적인 테이블 (가장 먼저 복원)
+# 테이블 의존성 순서 (외래키 관계 기반, 순차 복원)
+# 모델 파일의 ForeignKey 관계를 기반으로 의존성 순서 결정
+# 각 Tier는 이전 Tier가 완전히 복원된 후에만 복원 시작
+TABLE_RESTORE_ORDER = [
+    # Tier 1: 독립적인 테이블 (외래키 없음)
     ['states', 'accounts', 'interest_rates', '_migrations'],
-    # Tier 2: Tier 1에 의존하는 테이블 (states가 완전히 복원된 후)
-    ['apartments', 'house_scores', 'house_volumes', 'recent_searches', 'population_movements'],
-    # Tier 3: Tier 2에 의존하는 테이블 (작은 테이블들만 병렬 처리)
-    ['apart_details', 'favorite_locations', 'recent_views', 'my_properties', 'favorite_apartments', 'asset_activity_logs'],
-    # Tier 4: Tier 3에 의존하는 테이블
+    
+    # Tier 2: states에만 의존하는 테이블
+    ['apartments', 'house_scores', 'house_volumes', 'population_movements'],
+    
+    # Tier 3: apartments에 의존하는 테이블 (apartments 복원 완료 후)
+    ['apart_details', 'sales', 'rents'],
+    
+    # Tier 4: accounts에 의존하는 테이블 (accounts 복원 완료 후)
+    ['recent_searches'],
+    
+    # Tier 5: accounts와 apartments 모두에 의존하는 테이블
+    ['favorite_apartments', 'my_properties', 'recent_views', 'asset_activity_logs'],
+    
+    # Tier 6: accounts와 states 모두에 의존하는 테이블
+    ['favorite_locations'],
+    
+    # Tier 7: states에 의존하지만 nullable FK인 테이블 (마지막)
     ['daily_statistics']
 ]
-
-# 큰 테이블은 순차적으로 복원 (리소스 제약 고려)
-LARGE_TABLES = ['sales', 'rents']  # 파일 크기가 큰 테이블들
 
 
 class DatabaseAdmin:
@@ -1760,72 +1767,46 @@ class DatabaseAdmin:
         success_count = 0
         failed_tables = []
         
-        # 1. 정의된 Tier별 병렬 복원
-        for i, group in enumerate(TABLE_GROUPS, 1):
+        # 1. 정의된 Tier별 순차 복원 (외래키 관계 기반)
+        for i, group in enumerate(TABLE_RESTORE_ORDER, 1):
             tier_tables = [t for t in group if t in all_tables]
             if not tier_tables:
                 continue
             
-            # 큰 테이블은 제외 (별도 처리)
-            small_tables = [t for t in tier_tables if t not in LARGE_TABLES]
-            large_tables_in_tier = [t for t in tier_tables if t in LARGE_TABLES]
+            print(f"\n Tier {i} 복원 시작 ({len(tier_tables)}개 테이블 순차 처리)...")
+            print(f"   대상: {', '.join(tier_tables)}")
+            print(f"   📌 외래키 관계를 고려하여 순차적으로 복원합니다.")
             
-            # 작은 테이블들 병렬 복원
-            if small_tables:
-                print(f"\n Tier {i} 복원 시작 ({len(small_tables)}개 테이블 병렬 처리)...")
-                print(f"   대상: {', '.join(small_tables)}")
-                
-                tasks = []
-                for table in small_tables:
-                    tasks.append(self.restore_table(table, confirm=True))
-                
-                # 병렬 실행
-                results = await asyncio.gather(*tasks)
-                
-                # 결과 집계
-                for table, success in zip(small_tables, results):
-                    if success:
-                        restored_tables.add(table)
-                        success_count += 1
-                    else:
-                        failed_tables.append(table)
-                
-                print(f" Tier {i} 완료")
-            
-            # 큰 테이블은 순차적으로 복원 (리소스 제약 고려)
-            if large_tables_in_tier:
-                print(f"\n Tier {i} 큰 테이블 복원 시작 ({len(large_tables_in_tier)}개 테이블 순차 처리)...")
-                print(f"   대상: {', '.join(large_tables_in_tier)}")
-                print(f"   ⚠️  리소스 제약을 고려하여 순차적으로 복원합니다.")
-                
-                for table in large_tables_in_tier:
-                    print(f"\n   → '{table}' 복원 시작...")
-                    success = await self.restore_table(table, confirm=True)
-                    if success:
-                        restored_tables.add(table)
-                        success_count += 1
-                    else:
-                        failed_tables.append(table)
-                
-                print(f" Tier {i} 큰 테이블 복원 완료")
-
-        # 2. 그룹에 포함되지 않은 나머지 테이블 복원 (Tier 4)
-        remaining_tables = [t for t in all_tables if t not in restored_tables]
-        if remaining_tables:
-            print(f"\n 기타 테이블(Tier 4) 복원 시작 ({len(remaining_tables)}개)...")
-            print(f"   대상: {', '.join(remaining_tables)}")
-            
-            tasks = []
-            for table in remaining_tables:
-                tasks.append(self.restore_table(table, confirm=True))
-            
-            results = await asyncio.gather(*tasks)
-            
-            for table, success in zip(remaining_tables, results):
+            # 순차적으로 하나씩 복원
+            for table in tier_tables:
+                print(f"\n   → '{table}' 복원 시작...")
+                success = await self.restore_table(table, confirm=True)
                 if success:
+                    restored_tables.add(table)
                     success_count += 1
+                    print(f"   ✓ '{table}' 복원 완료")
                 else:
                     failed_tables.append(table)
+                    print(f"   ✗ '{table}' 복원 실패")
+            
+            print(f" Tier {i} 완료")
+
+        # 2. 그룹에 포함되지 않은 나머지 테이블 복원 (순차 처리)
+        remaining_tables = [t for t in all_tables if t not in restored_tables]
+        if remaining_tables:
+            print(f"\n 기타 테이블 복원 시작 ({len(remaining_tables)}개)...")
+            print(f"   대상: {', '.join(remaining_tables)}")
+            print(f"   📌 순차적으로 복원합니다.")
+            
+            for table in remaining_tables:
+                print(f"\n   → '{table}' 복원 시작...")
+                success = await self.restore_table(table, confirm=True)
+                if success:
+                    success_count += 1
+                    print(f"   ✓ '{table}' 복원 완료")
+                else:
+                    failed_tables.append(table)
+                    print(f"   ✗ '{table}' 복원 실패")
             
         print("\n" + "=" * 60)
         print(f" 전체 복원 완료: {success_count}/{len(all_tables)}개 테이블")
