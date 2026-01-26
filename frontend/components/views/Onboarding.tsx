@@ -571,18 +571,15 @@ export const Onboarding: React.FC = () => {
 
                                             // 신규 유저 첫 진입 시 기본 탭 유도 (1회성)
                                             try {
-                                              window.localStorage.setItem(
-                                                'onboarding.defaultTab',
-                                                hasHome === true ? 'my' : 'favorites'
-                                              );
+                                              // NOTE: 이 블록은 "아직 없어요"(관심단지 등록) 흐름에서만 실행됨
+                                              window.localStorage.setItem('onboarding.defaultTab', 'favorites');
                                               // 가드 레이스 방지용 1회성 플래그
                                               window.localStorage.setItem('onboarding.completedJustNow', '1');
                                             } catch {
                                               // ignore
                                             }
 
-                                            if (hasHome === true) setHasRegisteredMyProperty(true);
-                                            else setHasRegisteredFavorite(true);
+                                            setHasRegisteredFavorite(true);
 
                                             setQuery(apt.apt_name);
                                             setSearchResults([]);
