@@ -67,9 +67,16 @@ CREATE INDEX IF NOT EXISTS idx_sales_apt_date_price
 ON sales(apt_id, contract_date DESC, trans_price)
 WHERE is_canceled = FALSE AND (is_deleted = FALSE OR is_deleted IS NULL);
 
+<<<<<<< Updated upstream
 -- 통계 조회용 복합 인덱스 (매매)
 CREATE INDEX IF NOT EXISTS idx_sales_region_date_canceled
 ON sales(region_id, contract_date DESC, is_canceled)
+=======
+-- 통계 조회용 복합 인덱스 (매매) - region_id는 sales 테이블에 없으므로 제거
+-- 대신 apt_id와 contract_date를 활용한 인덱스 사용
+CREATE INDEX IF NOT EXISTS idx_sales_apt_date_canceled
+ON sales(apt_id, contract_date DESC, is_canceled)
+>>>>>>> Stashed changes
 WHERE (is_deleted = FALSE OR is_deleted IS NULL);
 
 -- 전세/월세 구분 인덱스
