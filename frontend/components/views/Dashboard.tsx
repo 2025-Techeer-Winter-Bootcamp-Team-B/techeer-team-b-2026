@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { ChevronRight, Plus, MoreHorizontal, ArrowUpDown, Eye, EyeOff, X, Check, LogIn, Settings, ChevronDown, Layers, Edit2, CheckCircle2, Home } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useUser, useAuth as useClerkAuth, SignIn, SignedIn, SignedOut } from '@clerk/clerk-react';
+import { useUser, useAuth as useClerkAuth, useClerk, SignIn, SignedIn, SignedOut } from '@clerk/clerk-react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { Property, ViewProps } from '../../types';
 import { ProfessionalChart, ChartSeriesData } from '../ui/ProfessionalChart';
@@ -399,6 +399,7 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
   // Clerk 인증 상태
   const { isLoaded: isClerkLoaded, isSignedIn, user: clerkUser } = useUser();
   const { getToken } = useClerkAuth();
+  const { openSignIn } = useClerk();
 
   // 홈에서 로그인 모달
   const [isHomeSignInOpen, setIsHomeSignInOpen] = useState(false);
@@ -1689,7 +1690,10 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
 
   // 아파트 추가 핸들러 (내 자산, 관심 단지, 또는 사용자 추가 그룹에 추가)
   const handleAddApartment = async (aptId: number, aptName: string, address?: string) => {
-      if (!isSignedIn) return;
+      if (!isSignedIn) {
+          openSignIn();
+          return;
+      }
       
       try {
           if (activeGroupId === 'my') {
@@ -2007,8 +2011,12 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
   // 내 자산 추가 제출 (PropertyDetail과 동일)
   const handleMyPropertySubmit = async () => {
       if (!isSignedIn || !selectedApartmentForAdd) {
-          setToast({ message: '로그인이 필요합니다.', type: 'error' });
-          setTimeout(() => setToast(null), 3000);
+          if (!isSignedIn) {
+              openSignIn();
+          } else {
+              setToast({ message: '아파트를 선택해주세요.', type: 'error' });
+              setTimeout(() => setToast(null), 3000);
+          }
           return;
       }
 
@@ -2237,7 +2245,10 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
       }
       
       // 3. 내 자산/관심 단지는 백그라운드에서 API 호출
-      if (!isSignedIn) return;
+      if (!isSignedIn) {
+          openSignIn();
+          return;
+      }
       
       try {
           const token = await getToken();

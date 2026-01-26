@@ -268,7 +268,7 @@ const PropertyCard: React.FC<{
 const EmptyPropertyCard: React.FC = () => {
   return (
     <Card 
-      className="p-4 border border-[#E2E8F0] bg-white"
+      className="p-4 border border-[#E2E8F0] bg-white opacity-50"
     >
       <div className="flex flex-col items-center justify-center py-6 text-[#94A3B8]">
         <div className="w-12 h-12 rounded-xl bg-[#F1F5F9] flex items-center justify-center mb-3">
@@ -341,6 +341,10 @@ export const PortfolioList: React.FC<PortfolioListProps> = ({ onPropertyClick, o
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [transactionsLoading, setTransactionsLoading] = useState(true);
   const [transactionsError, setTransactionsError] = useState<string | null>(null);
+  const [transactionFilter, setTransactionFilter] = useState<'all' | 'my_assets' | 'favorites'>('my_assets'); // 기본값: 내 자산
+  const [showAllTransactions, setShowAllTransactions] = useState(false); // 더보기 상태 (PC/모바일 공용)
+  const [transactionMonths, setTransactionMonths] = useState(6); // 조회 기간 (개월)
+  const initialTransactionLimit = 10; // 초기 표시 개수
   
   // 내 집 목록 API 호출
   useEffect(() => {
@@ -391,18 +395,38 @@ export const PortfolioList: React.FC<PortfolioListProps> = ({ onPropertyClick, o
     loadProperties();
   }, []);
   
+  // 필터 변경 시 기간 초기화
+  useEffect(() => {
+    setTransactionMonths(6);
+    setShowAllTransactions(false);
+  }, [transactionFilter]);
+
   // 거래 내역 API 호출
   useEffect(() => {
     const loadTransactions = async () => {
       try {
         setTransactionsLoading(true);
-        setTransactionsError(null);
-        const response = await fetchRecentTransactions(20); // 최대 20개 가져오기
+        // 에러 메시지는 유지 (거래가 없을 때만 업데이트)
+        setShowAllTransactions(false); // 기간 변경 시 더보기 상태 초기화
+        const response = await fetchRecentTransactions(100, transactionFilter, transactionMonths);
         const convertedTransactions = response.transactions.map(convertTransactionResponse);
         setTransactions(convertedTransactions);
-      } catch (error) {
+        // 거래 내역이 없으면 에러 메시지 설정 (더 보기 버튼을 위해 에러로 표시)
+        if (convertedTransactions.length === 0) {
+          setTransactionsError(`최근 ${transactionMonths}개월 거래가 없습니다`);
+        } else {
+          setTransactionsError(null); // 거래 내역이 있으면 에러 메시지 제거
+        }
+      } catch (error: any) {
         console.error('거래 내역 조회 오류:', error);
-        setTransactionsError('거래 내역을 불러오는 중 오류가 발생했습니다.');
+        // 최근 N개월 거래 데이터가 없는 경우
+        if (error?.message?.includes('거래 데이터가 없습니다') || 
+            error?.details?.detail?.includes('거래 데이터가 없습니다') ||
+            (error?.message?.includes('최근') && error?.message?.includes('거래'))) {
+          setTransactionsError(`최근 ${transactionMonths}개월 거래가 없습니다`);
+        } else {
+          setTransactionsError('거래 내역을 불러오는 중 오류가 발생했습니다.');
+        }
         setTransactions([]);
       } finally {
         setTransactionsLoading(false);
@@ -410,7 +434,7 @@ export const PortfolioList: React.FC<PortfolioListProps> = ({ onPropertyClick, o
     };
     
     loadTransactions();
-  }, []);
+  }, [transactionFilter, transactionMonths]);
   
   const advancedMetrics = useMemo(() => calculateAdvancedMetrics(properties), [properties]);
   
@@ -670,15 +694,20 @@ export const PortfolioList: React.FC<PortfolioListProps> = ({ onPropertyClick, o
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                         {topProfitProperties.length > 0 ? (
-                          topProfitProperties.map((prop, idx) => (
-                            <PropertyCard
-                              key={prop.id}
-                              property={prop}
-                              rank={idx + 1}
-                              onClick={() => onPropertyClick(prop.id)}
-                              isProfit={true}
-                            />
-                          ))
+                          <>
+                            {topProfitProperties.map((prop, idx) => (
+                              <PropertyCard
+                                key={prop.id}
+                                property={prop}
+                                rank={idx + 1}
+                                onClick={() => onPropertyClick(prop.id)}
+                                isProfit={true}
+                              />
+                            ))}
+                            {topProfitProperties.length < 3 && Array.from({ length: 3 - topProfitProperties.length }).map((_, idx) => (
+                              <EmptyPropertyCard key={`empty-profit-${idx}`} />
+                            ))}
+                          </>
                         ) : (
                           <>
                             <EmptyPropertyCard />
@@ -686,9 +715,6 @@ export const PortfolioList: React.FC<PortfolioListProps> = ({ onPropertyClick, o
                             <EmptyPropertyCard />
                           </>
                         )}
-                        {topProfitProperties.length < 3 && Array.from({ length: 3 - topProfitProperties.length }).map((_, idx) => (
-                          <EmptyPropertyCard key={`empty-profit-${idx}`} />
-                        ))}
                       </div>
                     </div>
 
@@ -699,15 +725,20 @@ export const PortfolioList: React.FC<PortfolioListProps> = ({ onPropertyClick, o
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                         {topLossProperties.length > 0 ? (
-                          topLossProperties.map((prop, idx) => (
-                            <PropertyCard
-                              key={prop.id}
-                              property={prop}
-                              rank={idx + 1}
-                              onClick={() => onPropertyClick(prop.id)}
-                              isProfit={false}
-                            />
-                          ))
+                          <>
+                            {topLossProperties.map((prop, idx) => (
+                              <PropertyCard
+                                key={prop.id}
+                                property={prop}
+                                rank={idx + 1}
+                                onClick={() => onPropertyClick(prop.id)}
+                                isProfit={false}
+                              />
+                            ))}
+                            {topLossProperties.length < 3 && Array.from({ length: 3 - topLossProperties.length }).map((_, idx) => (
+                              <EmptyPropertyCard key={`empty-loss-${idx}`} />
+                            ))}
+                          </>
                         ) : (
                           <>
                             <EmptyPropertyCard />
@@ -715,9 +746,6 @@ export const PortfolioList: React.FC<PortfolioListProps> = ({ onPropertyClick, o
                             <EmptyPropertyCard />
                           </>
                         )}
-                        {topLossProperties.length < 3 && Array.from({ length: 3 - topLossProperties.length }).map((_, idx) => (
-                          <EmptyPropertyCard key={`empty-loss-${idx}`} />
-                        ))}
                       </div>
                     </div>
                   </>
@@ -729,21 +757,36 @@ export const PortfolioList: React.FC<PortfolioListProps> = ({ onPropertyClick, o
           {/* 우측 컬럼 - 거래 내역 리스트 */}
           <div className="col-span-12 lg:col-span-5 flex flex-col">
             <div 
-              className="bg-white rounded-[24px] p-6 shadow-[0_1px_3px_0_rgba(0,0,0,0.1),0_1px_2px_0_rgba(0,0,0,0.06)] border border-[#E2E8F0] flex flex-col overflow-hidden" 
+              className="bg-white rounded-[24px] p-6 shadow-[0_1px_3px_0_rgba(0,0,0,0.1),0_1px_2px_0_rgba(0,0,0,0.06)] border border-[#E2E8F0] flex flex-col overflow-hidden lg:overflow-hidden" 
               style={rightCardHeight ? { 
                 height: `${rightCardHeight}px`, 
                 maxHeight: `${rightCardHeight}px`
-              } : {}}
+              } : undefined}
             >
               <div className="flex items-center justify-between mb-6 flex-shrink-0">
                 <h2 className="text-xl font-black text-[#0F172A]">최근 거래 내역</h2>
+                <select
+                  value={transactionFilter}
+                  onChange={(e) => setTransactionFilter(e.target.value as 'all' | 'my_assets' | 'favorites')}
+                  className="px-3 py-1.5 rounded-lg text-sm font-medium bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="all">전체</option>
+                  <option value="my_assets">내 자산</option>
+                  <option value="favorites">즐겨찾기</option>
+                </select>
               </div>
 
-              <div className="overflow-y-auto flex-1 min-h-0 pr-2 custom-scrollbar" style={{ 
-                maxHeight: rightCardHeight ? `calc(${rightCardHeight}px - 100px)` : 'none',
-                overflowY: 'scroll',
-                height: rightCardHeight ? `calc(${rightCardHeight}px - 100px)` : 'auto'
-              }}>
+              <div 
+                className="flex-1 min-h-0 pr-2 custom-scrollbar overflow-y-auto"
+                style={rightCardHeight ? { 
+                  maxHeight: `calc(${rightCardHeight}px - 100px)`,
+                  overflowY: 'auto',
+                  height: `calc(${rightCardHeight}px - 100px)`
+                } : {
+                  maxHeight: '500px',
+                  overflowY: 'auto'
+                }}
+              >
                 {transactionsLoading ? (
                   <div className="text-center py-12 text-[#94A3B8]">
                     <div className="w-12 h-12 rounded-full bg-[#F1F5F9] flex items-center justify-center mx-auto mb-3 animate-pulse">
@@ -751,30 +794,51 @@ export const PortfolioList: React.FC<PortfolioListProps> = ({ onPropertyClick, o
                     </div>
                     <p className="text-sm font-medium">거래 내역을 불러오는 중...</p>
                   </div>
-                ) : transactionsError ? (
-                  <div className="text-center py-12 text-[#94A3B8]">
-                    <div className="w-12 h-12 rounded-full bg-[#FEE2E2] flex items-center justify-center mx-auto mb-3">
-                      <FileText className="w-6 h-6 text-[#E11D48]" />
-                    </div>
-                    <p className="text-sm font-medium text-[#E11D48]">{transactionsError}</p>
-                  </div>
-                ) : transactions.length > 0 ? (
-                  <div className="space-y-0">
-                    {transactions.map(transaction => (
-                      <TransactionItem
-                        key={transaction.id}
-                        transaction={transaction}
-                        onClick={() => onPropertyClick(transaction.propertyId)}
-                      />
-                    ))}
-                  </div>
                 ) : (
-                  <div className="text-center py-12 text-[#94A3B8]">
-                    <div className="w-12 h-12 rounded-full bg-[#F1F5F9] flex items-center justify-center mx-auto mb-3">
-                      <FileText className="w-6 h-6" />
-                    </div>
-                    <p className="text-sm font-medium">거래 내역이 없습니다</p>
-                  </div>
+                  <>
+                    {transactions.length > 0 ? (
+                      <div className="space-y-0">
+                        {transactions.slice(0, showAllTransactions ? transactions.length : initialTransactionLimit).map(transaction => (
+                          <TransactionItem
+                            key={transaction.id}
+                            transaction={transaction}
+                            onClick={() => onPropertyClick(transaction.propertyId)}
+                          />
+                        ))}
+                        {transactions.length > initialTransactionLimit && !showAllTransactions && (
+                          <button
+                            onClick={() => {
+                              setShowAllTransactions(true);
+                            }}
+                            className="w-full py-3 mt-2 text-sm font-bold text-[#2563EB] hover:text-[#1d4ed8] transition-colors border-t border-[#E2E8F0]"
+                          >
+                            더 보기 ({transactions.length - initialTransactionLimit}개)
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-center py-12 text-[#94A3B8]">
+                        <div className="w-12 h-12 rounded-full bg-[#F1F5F9] flex items-center justify-center mx-auto mb-3">
+                          <FileText className="w-6 h-6" />
+                        </div>
+                        <p className="text-sm font-medium">{transactionsError || `최근 ${transactionMonths}개월 거래가 없습니다`}</p>
+                      </div>
+                    )}
+                    {/* 더 보기 버튼 (기간 확장) - 거래 내역이 없을 때 항상 표시 */}
+                    {transactions.length === 0 && (
+                      <div className="border-t border-[#E2E8F0] pt-2">
+                        <button
+                          onClick={() => {
+                            setTransactionMonths(prev => prev + 3);
+                            setShowAllTransactions(false);
+                          }}
+                          className="w-full py-3 text-sm font-bold text-[#2563EB] hover:text-[#1d4ed8] transition-colors"
+                        >
+                          더 보기 (최근 {transactionMonths + 3}개월 조회)
+                        </button>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -783,7 +847,7 @@ export const PortfolioList: React.FC<PortfolioListProps> = ({ onPropertyClick, o
         
         {/* 자산 활동 타임라인 */}
         <div className="col-span-12 mt-6">
-          <AssetActivityTimeline />
+          <AssetActivityTimeline onPropertyClick={onPropertyClick} />
         </div>
       </div>
     </div>
