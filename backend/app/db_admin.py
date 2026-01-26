@@ -752,19 +752,85 @@ class DatabaseAdmin:
             
             if use_copy:
                 try:
+                    # CSV 파일의 예상 행 수 계산 (진행률 표시용)
+                    estimated_rows = 0
+                    try:
+                        with open(file_path, 'r', encoding='utf-8', newline='') as f:
+                            estimated_rows = sum(1 for _ in f) - 1  # 헤더 제외
+                    except:
+                        pass
+                    
                     async with self.engine.connect() as conn:
                         raw_conn = await conn.get_raw_connection()
                         pg_conn = raw_conn.driver_connection
                         
-                        # COPY 명령 실행 (진행률 표시 불가, 파일 크기로만 표시)
-                        await pg_conn.copy_to_table(
-                            table_name,
-                            source=file_path,
-                            format='csv',
-                            header=True
-                        )
-                        print(f"       [COPY 완료] ({file_size:,} bytes)")
-                        restored_via_copy = True
+                        # COPY 명령을 백그라운드 태스크로 실행하고 진행 상황 모니터링
+                        print(f"       COPY 실행 중... (예상 행 수: {estimated_rows:,})", flush=True)
+                        
+                        # COPY 명령 실행 태스크
+                        async def run_copy():
+                            await pg_conn.copy_to_table(
+                                table_name,
+                                source=file_path,
+                                format='csv',
+                                header=True
+                            )
+                        
+                        # 진행 상황 모니터링 태스크 (큰 파일의 경우)
+                        async def monitor_progress():
+                            if estimated_rows < 10000:  # 작은 파일은 모니터링 스킵
+                                return
+                            
+                            last_count = 0
+                            no_progress_count = 0
+                            check_interval = 5  # 5초마다 확인
+                            
+                            while True:
+                                await asyncio.sleep(check_interval)
+                                try:
+                                    async with self.engine.connect() as conn2:
+                                        result = await conn2.execute(
+                                            text(f'SELECT COUNT(*) FROM "{table_name}"')
+                                        )
+                                        current_count = result.scalar() or 0
+                                        
+                                        if current_count > last_count:
+                                            progress_pct = (current_count / estimated_rows * 100) if estimated_rows > 0 else 0
+                                            print(f"       진행 중... {current_count:,}/{estimated_rows:,} 행 ({progress_pct:.1f}%)", flush=True)
+                                            last_count = current_count
+                                            no_progress_count = 0
+                                        else:
+                                            no_progress_count += 1
+                                            if no_progress_count >= 6:  # 30초 동안 진행 없으면 종료
+                                                break
+                                except:
+                                    # 테이블이 아직 없거나 다른 오류
+                                    pass
+                        
+                        # COPY와 모니터링을 병렬로 실행
+                        try:
+                            if estimated_rows >= 10000:
+                                copy_task = asyncio.create_task(run_copy())
+                                monitor_task = asyncio.create_task(monitor_progress())
+                                await copy_task
+                                monitor_task.cancel()  # COPY 완료 시 모니터링 중지
+                            else:
+                                await run_copy()
+                            
+                            # 최종 행 수 확인
+                            async with self.engine.connect() as conn2:
+                                result = await conn2.execute(
+                                    text(f'SELECT COUNT(*) FROM "{table_name}"')
+                                )
+                                final_count = result.scalar() or 0
+                                print(f"       [COPY 완료] {final_count:,}개 행 삽입됨 ({file_size:,} bytes)", flush=True)
+                            
+                            restored_via_copy = True
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception as e:
+                            raise
+                            
                 except Exception as e:
                     error_msg = str(e)
                     # 에러 메시지에서 파라미터 부분 제거
