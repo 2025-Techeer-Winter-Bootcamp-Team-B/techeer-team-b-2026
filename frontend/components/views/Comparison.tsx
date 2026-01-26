@@ -311,7 +311,7 @@ const SearchAndSelectApart: React.FC<SearchAndSelectApartProps> = ({
     const [searchError, setSearchError] = useState<string | null>(null);
     const [pyeongOptions, setPyeongOptions] = useState<PyeongOption[]>([]);
     const [isPyeongLoading, setIsPyeongLoading] = useState(false);
-    const [searchLimit, setSearchLimit] = useState(15);
+    const [searchLimit, setSearchLimit] = useState(10);
     const [hasMoreResults, setHasMoreResults] = useState(false);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const modalRef = useRef<HTMLDivElement>(null);
@@ -325,7 +325,7 @@ const SearchAndSelectApart: React.FC<SearchAndSelectApartProps> = ({
         return isNotAdded;
     });
 
-    const enrichSearchAssets = async (query: string, limit: number = 15): Promise<{ assets: AssetData[], hasMore: boolean }> => {
+    const enrichSearchAssets = async (query: string, limit: number = 10): Promise<{ assets: AssetData[], hasMore: boolean }> => {
         const response = await searchApartments(query, limit);
         const results = response.data.results;
         // Filter out non-numeric IDs (places) as comparison API only supports apartments
@@ -397,7 +397,7 @@ const SearchAndSelectApart: React.FC<SearchAndSelectApartProps> = ({
             setSearchError(null);
             setPyeongOptions([]);
             setIsPyeongLoading(false);
-            setSearchLimit(15);
+            setSearchLimit(10);
             setHasMoreResults(false);
             setIsLoadingMore(false);
         } else {
@@ -504,11 +504,11 @@ const SearchAndSelectApart: React.FC<SearchAndSelectApartProps> = ({
         }
         let isActive = true;
         // 새 검색어 입력 시 limit 초기화
-        setSearchLimit(15);
+        setSearchLimit(10);
         const timer = setTimeout(async () => {
             try {
                 setIsSearching(true);
-                const { assets, hasMore } = await enrichSearchAssets(query, 15);
+                const { assets, hasMore } = await enrichSearchAssets(query, 10);
                 if (!isActive) return;
                 setSearchAssets(assets);
                 setHasMoreResults(hasMore);
@@ -535,7 +535,7 @@ const SearchAndSelectApart: React.FC<SearchAndSelectApartProps> = ({
         
         setIsLoadingMore(true);
         try {
-            const newLimit = searchLimit + 15;
+            const newLimit = searchLimit + 10;
             const { assets, hasMore } = await enrichSearchAssets(query, newLimit);
             setSearchAssets(assets);
             setSearchLimit(newLimit);
@@ -555,7 +555,7 @@ const SearchAndSelectApart: React.FC<SearchAndSelectApartProps> = ({
         setSearchError(null);
         setPyeongOptions([]);
         setIsPyeongLoading(false);
-        setSearchLimit(15);
+        setSearchLimit(10);
         setHasMoreResults(false);
         setIsLoadingMore(false);
         onClose();
@@ -647,7 +647,7 @@ const SearchAndSelectApart: React.FC<SearchAndSelectApartProps> = ({
                 </div>
                 
                 {/* 아파트 목록 또는 평형 선택 */}
-                <div className="flex-1 overflow-y-auto p-4">
+                <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
                     {selectedAssetForPyeong ? (
                         /* 평형 선택 화면 */
                         <div className="space-y-4">
@@ -1220,16 +1220,16 @@ export const Comparison: React.FC = () => {
           <div className="flex flex-col pt-4 md:pt-8 pb-3 md:pb-5 border-b border-slate-50 last:border-0 hover:bg-slate-50 px-3 md:px-6 transition-colors">
               {/* 값 표시 행 */}
               <div className="flex items-center justify-between mb-2 md:mb-3" style={{ marginTop: '10px' }}>
-                  <span className={`font-bold tabular-nums flex-1 text-left text-xl md:text-2xl flex items-center justify-start gap-0.5 md:gap-1 min-w-0 ${isLeftHigher ? 'text-red-500' : 'text-slate-900'}`}>
+                  <span className={`font-bold tabular-nums flex-1 text-left text-[15px] md:text-2xl flex items-center justify-start gap-0.5 md:gap-1 min-w-0 ${isLeftHigher ? 'text-red-500' : 'text-slate-900'}`}>
                       <span className="truncate">{left}</span>
-                      <span className={`font-bold text-xl md:text-2xl -ml-1 flex-shrink-0 ${isLeftHigher ? 'text-red-500' : 'text-slate-900'}`}>{unit}</span>
-                      {isLeftHigher && <ChevronUp className="w-4 h-4 md:w-5 md:h-5 text-red-500 flex-shrink-0" />}
+                      <span className={`font-bold text-[15px] md:text-2xl ml-0.5 md:ml-0 flex-shrink-0 ${isLeftHigher ? 'text-red-500' : 'text-slate-900'}`}>{unit}</span>
+                      {isLeftHigher && <ChevronUp className="hidden md:block w-5 h-5 text-red-500 flex-shrink-0" />}
                   </span>
-                  <span className="text-sm md:text-lg font-black text-slate-400 flex-1 text-center uppercase tracking-wide truncate px-1">{label}</span>
-                  <span className={`font-bold tabular-nums flex-1 text-right text-xl md:text-2xl flex items-center justify-end gap-0.5 md:gap-1 min-w-0 ${isRightHigher ? 'text-red-500' : 'text-slate-900'}`}>
-                      {isRightHigher && <ChevronUp className="w-4 h-4 md:w-5 md:h-5 text-red-500 flex-shrink-0" />}
+                  <span className="text-[11px] md:text-lg font-black text-slate-400 flex-1 text-center uppercase tracking-wide truncate px-1">{label}</span>
+                  <span className={`font-bold tabular-nums flex-1 text-right text-[15px] md:text-2xl flex items-center justify-end gap-0.5 md:gap-1 min-w-0 ${isRightHigher ? 'text-red-500' : 'text-slate-900'}`}>
+                      {isRightHigher && <ChevronUp className="hidden md:block w-5 h-5 text-red-500 flex-shrink-0" />}
                       <span className="truncate">{right}</span>
-                      <span className={`font-bold text-xl md:text-2xl -ml-1 flex-shrink-0 ${isRightHigher ? 'text-red-500' : 'text-slate-900'}`}>{unit}</span>
+                      <span className={`font-bold text-[15px] md:text-2xl ml-0.5 md:ml-0 flex-shrink-0 ${isRightHigher ? 'text-red-500' : 'text-slate-900'}`}>{unit}</span>
                   </span>
               </div>
               
@@ -1345,10 +1345,55 @@ export const Comparison: React.FC = () => {
         }
       `}</style>
     <div className="pb-32 animate-fade-in px-2 md:px-0 pt-2 md:pt-10">
-      {/* Mobile Header */}
-      <div className="md:hidden mb-4 pb-3">
-        <h1 className="text-xl font-black text-slate-900 mb-1">비교</h1>
+      {/* 모바일: Pill 탭 선택기 */}
+      <div className="md:hidden mb-4">
+        <div className="flex items-center gap-2">
+          {[
+            { label: '1:1 정밀 비교', value: '1:1' as const },
+            { label: '다수 아파트 분석', value: 'multi' as const }
+          ].map((tab) => {
+            const isActive = comparisonMode === tab.value;
+            return (
+              <button
+                key={tab.value}
+                onClick={() => {
+                  setComparisonMode(tab.value);
+                  setEditingCardSide(null);
+                }}
+                className={`px-4 py-2 rounded-full text-[13px] font-bold transition-all whitespace-nowrap ${
+                  isActive
+                    ? 'bg-brand-blue text-white shadow-lg shadow-brand-blue/30'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
+      
+      {/* 모바일: 다수 아파트 분석에서만 비교군 탭을 맨 위에 */}
+      {comparisonMode === 'multi' && (
+        <div className="md:hidden mb-4">
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-black text-slate-900 text-[16px]">비교군</h3>
+              <span className="px-2 py-0.5 bg-slate-200 text-slate-600 rounded text-[11px] font-bold">
+                {assets.length}/{MAX_COMPARE}개
+              </span>
+            </div>
+            {assets.length < MAX_COMPARE && (
+              <button 
+                onClick={() => setShowAddAssetModal(true)}
+                className="w-full mt-3 py-2.5 bg-slate-50 border border-slate-300 text-slate-700 rounded-lg font-bold text-[13px] flex items-center justify-center gap-2 hover:bg-slate-100 hover:border-slate-400 transition-all active:scale-95"
+              >
+                <Plus className="w-4 h-4" /> 아파트 추가하기
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-6 md:mb-10 gap-4 md:mt-8">
           <div>
@@ -1356,14 +1401,31 @@ export const Comparison: React.FC = () => {
               <p className="hidden md:block text-slate-500 text-[15px] font-medium">관심 있는 단지들의 가격 구조와 투자 가치를 입체적으로 비교하세요.</p>
           </div>
           
-          <ToggleButtonGroup
-              options={['1:1 정밀 비교', '다수 아파트 분석']}
-              value={comparisonMode === '1:1' ? '1:1 정밀 비교' : '다수 아파트 분석'}
-              onChange={(value) => {
-                setComparisonMode(value === '1:1 정밀 비교' ? '1:1' : 'multi');
-                setEditingCardSide(null); // 모드 전환 시 편집 상태 초기화
-              }}
-          />
+          {/* PC: Pill 탭 선택기 */}
+          <div className="hidden md:flex items-center gap-2">
+            {[
+              { label: '1:1 정밀 비교', value: '1:1' as const },
+              { label: '다수 아파트 분석', value: 'multi' as const }
+            ].map((tab) => {
+              const isActive = comparisonMode === tab.value;
+              return (
+                <button
+                  key={tab.value}
+                  onClick={() => {
+                    setComparisonMode(tab.value);
+                    setEditingCardSide(null);
+                  }}
+                  className={`px-4 py-2 rounded-full text-[13px] font-bold transition-all whitespace-nowrap ${
+                    isActive
+                      ? 'bg-brand-blue text-white shadow-lg shadow-brand-blue/30'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
       </div>
 
       {comparisonMode === '1:1' ? (
@@ -1429,11 +1491,11 @@ export const Comparison: React.FC = () => {
                        <h3 className="font-black text-slate-900 text-[16px] md:text-lg mb-3 md:mb-6">핵심 특징</h3>
                        {leftAsset && rightAsset ? (
                            generateCharacteristics(rightAsset, leftAsset).length > 0 ? (
-                               <ul className="space-y-5">
+                               <ul className="space-y-3 md:space-y-5">
                                    {generateCharacteristics(rightAsset, leftAsset).map((strength, index) => (
-                                       <li key={index} className="flex items-start gap-4">
-                                           <div className="w-6 h-6 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0 mt-0.5 text-[12px]">✓</div>
-                                           <span className="text-[15px] font-bold text-slate-700">{strength}</span>
+                                       <li key={index} className="flex items-start gap-2 md:gap-4">
+                                           <div className="w-5 h-5 md:w-6 md:h-6 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0 mt-0.5 text-[11px] md:text-[12px]">✓</div>
+                                           <span className="text-[13px] md:text-[15px] font-bold text-slate-700 break-words">{strength}</span>
                                        </li>
                                    ))}
                                </ul>
@@ -1545,7 +1607,7 @@ export const Comparison: React.FC = () => {
                                   </button>
                                   
                                   {showChartFilterDropdown && (
-                                      <div className="absolute right-0 top-full mt-2 bg-white border border-slate-200 rounded-xl shadow-lg w-[240px] z-50 max-h-[400px] overflow-y-auto">
+                                      <div className="absolute right-0 top-full mt-2 bg-white border border-slate-200 rounded-xl shadow-lg w-[240px] z-50 max-h-[400px] overflow-y-auto custom-scrollbar">
                                           <div className="p-3">
                                               {/* 차트 표시 섹션 */}
                                               <div>
@@ -1905,7 +1967,7 @@ export const Comparison: React.FC = () => {
                                   </button>
                                   
                                   {showTableFilterDropdown && (
-                                      <div className="absolute right-0 top-full mt-2 bg-white border border-slate-200 rounded-xl shadow-lg w-[240px] z-50 max-h-[400px] overflow-y-auto">
+                                      <div className="absolute right-0 top-full mt-2 bg-white border border-slate-200 rounded-xl shadow-lg w-[240px] z-50 max-h-[400px] overflow-y-auto custom-scrollbar">
                                           <div className="p-3">
                                               <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wide px-3 mb-2">테이블 표시</p>
                                               <div className="space-y-1">
@@ -2114,8 +2176,8 @@ export const Comparison: React.FC = () => {
                   </Card>
               </div>
 
-              {/* RIGHT: Asset List */}
-              <div className="lg:col-span-4 flex flex-col gap-4 md:gap-6">
+              {/* RIGHT: Asset List - 모바일에서는 숨김 (상단으로 이동) */}
+              <div className="hidden md:block lg:col-span-4 flex flex-col gap-4 md:gap-6">
                   <Card className="flex flex-col overflow-hidden h-[400px] md:h-[560px]">
                       <div className="p-3 md:p-6 md:border-b border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
                           <h3 className="font-black text-slate-900 text-[16px] md:text-[18px]">비교군</h3>
@@ -2182,7 +2244,7 @@ export const Comparison: React.FC = () => {
                           <h3 className="font-black text-slate-900 text-[18px]">핵심 비교</h3>
                       </div>
 
-                      <div className="p-4 space-y-3 flex-1 overflow-y-auto">
+                      <div className="p-4 space-y-3 flex-1 overflow-y-auto custom-scrollbar">
                           {assets.length === 0 ? (
                               <div className="flex items-center justify-center h-full text-slate-400">
                                   <div className="text-center">

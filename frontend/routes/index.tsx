@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
 import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import React, { useState, useRef, useEffect } from 'react';
+import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { AnimatePresence } from 'framer-motion';
 import { Layout } from '../components/Layout';
 import { Dashboard } from '../components/views/Dashboard';
 import { MapExplorer } from '../components/views/MapExplorer';
@@ -10,6 +13,7 @@ import { Onboarding } from '../components/views/Onboarding';
 import { PropertyDetail } from '../components/views/PropertyDetail';
 import { Ranking } from '../components/views/Ranking';
 import { PortfolioList } from '../components/PortfolioList';
+import { useLocationPrefetch } from '../hooks';
 import type { PropertyClickOptions } from '../types';
 
 // 주택 수요 페이지
@@ -98,6 +102,7 @@ const AptDetailPage = () => {
 // 홈 페이지
 const HomePage = () => {
   const [isDockVisible, setIsDockVisible] = useState(true);
+  const handleSettingsClickRef = useRef<(() => void) | null>(null);
   const navigate = useNavigate();
 
   const handlePropertyClick = (id: string, options?: PropertyClickOptions) => {
@@ -109,14 +114,27 @@ const HomePage = () => {
     navigate('/portfolio');
   };
 
+  const handleSettingsClick = () => {
+    if (handleSettingsClickRef.current) {
+      handleSettingsClickRef.current();
+    }
+  };
+
   return (
     <Layout 
       currentView="dashboard" 
       onChangeView={() => {}}
       isDetailOpen={false}
       isDockVisible={isDockVisible}
+      onSettingsClick={handleSettingsClick}
     >
-      <Dashboard onPropertyClick={handlePropertyClick} onViewAllPortfolio={handleViewAllPortfolio} />
+      <Dashboard 
+        onPropertyClick={handlePropertyClick} 
+        onViewAllPortfolio={handleViewAllPortfolio}
+        onSettingsClickRef={(handler) => {
+          handleSettingsClickRef.current = handler;
+        }}
+      />
     </Layout>
   );
 };
@@ -243,3 +261,38 @@ export const AppRoutes = () => (
     />
   </Routes>
 );
+export const AppRoutes = () => {
+  const location = useLocation();
+  
+  // 사이트 로드 시 백그라운드로 현재 위치 수집 및 주변 데이터 prefetch
+  // 이렇게 하면 지도 페이지로 이동했을 때 오버레이가 바로 표시됩니다
+  useLocationPrefetch({
+    autoRun: true,
+    onLocationSuccess: (loc) => {
+      console.log('[App] Location prefetch started:', loc);
+    },
+    onPrefetchComplete: (cache) => {
+      console.log('[App] Map data prefetched:', {
+        nearbyApartments: cache.nearbyApartments?.length || 0,
+        dongRegions: cache.regionData?.dong?.length || 0,
+      });
+    },
+  });
+  
+  return (
+    <AnimatePresence mode="wait">
+      <Routes location={location} key={location.pathname}>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/map" element={<MapPage />} />
+        <Route path="/compare" element={<ComparePage />} />
+        <Route path="/portfolio" element={<PortfolioPage />} />
+        <Route path="/stats/demand" element={<HousingDemandPage />} />
+        <Route path="/stats/supply" element={<HousingSupplyPage />} />
+        <Route path="/stats/ranking" element={<RankingPage />} />
+        <Route path="/stats" element={<Navigate to="/stats/demand" replace />} />
+        <Route path="/property/:id" element={<AptDetailPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </AnimatePresence>
+  );
+};
