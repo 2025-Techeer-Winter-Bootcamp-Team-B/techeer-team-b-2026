@@ -54,6 +54,7 @@ const SearchOverlay = ({ isOpen, onClose, isDarkMode }: { isOpen: boolean; onClo
     const [aiResponse, setAiResponse] = useState<string>('');
     const [isAiLoading, setIsAiLoading] = useState(false);
     const navigate = useNavigate();
+    const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
     
     // 인기 아파트 로드 함수
     const loadTrendingApartments = async () => {
@@ -161,6 +162,12 @@ const SearchOverlay = ({ isOpen, onClose, isDarkMode }: { isOpen: boolean; onClo
     };
 
     useEffect(() => {
+        // 기존 debounce 타이머 취소
+        if (debounceTimerRef.current) {
+            clearTimeout(debounceTimerRef.current);
+            debounceTimerRef.current = null;
+        }
+        
         if (!searchQuery.trim()) {
             setHasSearched(false);
             setSearchResults([]);
@@ -173,15 +180,29 @@ const SearchOverlay = ({ isOpen, onClose, isDarkMode }: { isOpen: boolean; onClo
             return;
         }
         
-        const debounceTimer = setTimeout(() => {
+        debounceTimerRef.current = setTimeout(() => {
             handleSearch(searchQuery, false);
+            debounceTimerRef.current = null;
         }, 500);
         
-        return () => clearTimeout(debounceTimer);
+        return () => {
+            if (debounceTimerRef.current) {
+                clearTimeout(debounceTimerRef.current);
+                debounceTimerRef.current = null;
+            }
+        };
     }, [searchQuery]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter') {
+            e.preventDefault(); // 폼 제출 방지
+            
+            // debounce 타이머 취소
+            if (debounceTimerRef.current) {
+                clearTimeout(debounceTimerRef.current);
+                debounceTimerRef.current = null;
+            }
+            
             if (isAiMode) {
                 handleAiSearch(searchQuery);
             } else {

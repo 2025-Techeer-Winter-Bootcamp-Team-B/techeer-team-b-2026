@@ -1941,6 +1941,9 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
     saveRecentSearchToCookie(searchQuery.trim());
     setRecentSearches(getRecentSearchesFromCookie());
     
+    // 드롭다운 열기
+    setIsSearchExpanded(true);
+    
     try {
       setLoadError(null);
       
@@ -1949,6 +1952,10 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
         setIsAiSearching(true);
         const response = await aiSearchApartments(searchQuery.trim());
         const results = response.data.apartments;
+        
+        // 드롭다운에 표시할 결과 설정
+        setAiResults(results);
+        setAiCriteria(response.data.criteria || null);
         
         if (!results.length) {
           setMapApartments([]);
@@ -1987,6 +1994,7 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
         }
       } else {
         // 일반 검색 (아파트 + 장소)
+        setIsSearching(true);
         const [aptResponse, placeResponse] = await Promise.all([
             searchApartments(searchQuery.trim(), 10),
             fetchPlacesByKeyword(searchQuery.trim(), { size: 5 })
@@ -2003,8 +2011,12 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
         const apartmentResults = aptResponse.data.results;
         const allResults = [...places, ...apartmentResults];
         
+        // 드롭다운에 표시할 결과 설정
+        setSearchResults(allResults);
+        
         if (!allResults.length) {
           setMapApartments([]);
+          setIsSearching(false);
           return;
         }
         
@@ -2039,6 +2051,8 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
             setMapApartments([]);
         }
         
+        setIsSearching(false);
+        
         // 첫 번째 결과로 이동 (장소 포함)
         const first = allResults[0];
         if (first && first.location && mapRef.current) {
@@ -2047,8 +2061,6 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
           mapRef.current.setLevel(5);
         }
       }
-      
-      setIsSearchExpanded(false);
     } catch (error) {
       const errorMessage = error instanceof Error 
         ? error.message 
@@ -2117,6 +2129,7 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
                         onKeyDown={(e) => {
                           // IME 조합 중에는 Enter 키 무시 (한글 입력 시 조합 완료로 인한 의도치 않은 검색 방지)
                           if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                            e.preventDefault(); // 폼 제출 방지
                             handleSearchSubmit();
                           }
                           if (e.key === 'Escape') {
