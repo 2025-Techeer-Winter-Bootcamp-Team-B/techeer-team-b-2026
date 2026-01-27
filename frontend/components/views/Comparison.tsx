@@ -1285,8 +1285,8 @@ export const Comparison: React.FC = () => {
       let leftValue = leftNum;
       let rightValue = rightNum;
       
-      // 입주년도의 경우 2000년대 기준으로 계산 (23년 기준)
-      if (label === '입주년도') {
+      // 준공년도의 경우 2000년대 기준으로 계산 (23년 기준)
+      if (label === '준공년도') {
           maxValue = 23; // 2023년 기준
           leftValue = leftNum - 2000;
           rightValue = rightNum - 2000;
@@ -1627,7 +1627,7 @@ export const Comparison: React.FC = () => {
                       <StatRow label="전세가율" left={formatNumberValue(leftAsset?.jeonseRate, 1)} right={formatNumberValue(rightAsset?.jeonseRate, 1)} unit="%" />
                       <StatRow label="평당가" left={formatNumberValue(leftAsset?.pricePerPyeong, 2)} right={formatNumberValue(rightAsset?.pricePerPyeong, 2)} unit="억" />
                       <StatRow label="세대수" left={formatValue(leftAsset?.households)} right={formatValue(rightAsset?.households)} unit="세대" />
-                      <StatRow label="입주년도" left={formatValue(leftAsset?.buildYear)} right={formatValue(rightAsset?.buildYear)} unit="년" />
+                      <StatRow label="준공년도" left={formatValue(leftAsset?.buildYear)} right={formatValue(rightAsset?.buildYear)} unit="년" />
                       <StatRow label="주차대수" left={formatNumberValue(leftAsset?.parkingSpaces, 2)} right={formatNumberValue(rightAsset?.parkingSpaces, 2)} unit="대" />
                       <StatRow 
                           label="역 도보시간" 

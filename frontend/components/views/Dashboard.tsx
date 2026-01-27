@@ -986,7 +986,14 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                                   }
                                   
                                   console.log(`🔄 차트 데이터 로드 시작: apt_id=${asset.aptId}, name=${asset.name}, period=${selectedPeriod}, months=${months}`);
-                                  const transRes = await fetchApartmentTransactions(asset.aptId, 'sale', 50, months);
+                                  // 전용면적(평형)별로 가격이 크게 달라질 수 있어, 가능한 경우 area를 넘겨서 해당 자산 평형 기준으로 조회
+                                  const transRes = await fetchApartmentTransactions(
+                                      asset.aptId,
+                                      'sale',
+                                      50,
+                                      months,
+                                      typeof asset.area === 'number' ? asset.area : undefined
+                                  );
                                   console.log(`📊 차트 데이터 조회 완료 (apt_id: ${asset.aptId}):`, {
                                       success: transRes.success,
                                       hasData: !!transRes.data,
@@ -1359,7 +1366,13 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
               let regionAverageRate = 0;
 
               try {
-                  const transRes = await fetchApartmentTransactions(aptId, 'sale', 50, 12);
+                  const transRes = await fetchApartmentTransactions(
+                      aptId,
+                      'sale',
+                      50,
+                      12,
+                      typeof asset.area === 'number' ? asset.area : undefined
+                  );
                   if (transRes.success && transRes.data?.price_trend?.length) {
                       const trend = transRes.data.price_trend;
                       const oneYearAgoPrice = trend[0]?.avg_price;
@@ -1860,7 +1873,13 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                           } else if (selectedPeriod === '전체') {
                               months = 120; // 최대값 (10년)
                           }
-                          fetchApartmentTransactions(newAsset.aptId, 'sale', 50, months)
+                          fetchApartmentTransactions(
+                              newAsset.aptId,
+                              'sale',
+                              50,
+                              months,
+                              typeof newAsset.area === 'number' ? newAsset.area : undefined
+                          )
                               .then(transRes => {
                                   if (transRes.success && transRes.data.price_trend && transRes.data.price_trend.length > 0) {
                                       const chartData = transRes.data.price_trend.map((item: any) => ({
@@ -2001,7 +2020,13 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                   } else if (selectedPeriod === '전체') {
                       months = 120; // 최대값 (10년)
                   }
-                  fetchApartmentTransactions(aptId, 'sale', 50, months)
+                  fetchApartmentTransactions(
+                      aptId,
+                      'sale',
+                      50,
+                      months,
+                      typeof newAsset.area === 'number' ? newAsset.area : undefined
+                  )
                       .then(transRes => {
                           if (transRes.success && transRes.data.price_trend && transRes.data.price_trend.length > 0) {
                               const chartData = transRes.data.price_trend.map((item: any) => ({
@@ -2116,8 +2141,9 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
               nickname: myPropertyForm.nickname || selectedApartmentForAdd.apt_name,
               exclusive_area: myPropertyForm.exclusive_area,
               purchase_price: myPropertyForm.purchase_price ? Number(myPropertyForm.purchase_price) : undefined,
-              // 현재 시세는 입력받지 않으므로, 초기값은 구매가격을 사용 (없으면 undefined)
-              current_market_price: myPropertyForm.purchase_price ? Number(myPropertyForm.purchase_price) : undefined,
+              // 현재 시세는 입력받지 않으므로 서버에서 계산/보강되도록 비워둔다
+              // (기존 로직은 구매가를 current_market_price로 넣어서 "구매가가 시세로 보이는" 버그가 발생)
+              current_market_price: undefined,
               purchase_date: myPropertyForm.purchase_date || undefined,
               memo: myPropertyForm.memo || undefined
           };
@@ -2145,6 +2171,18 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
 
                   const formattedLocation = `${normalizeCity(rawCity)} ${rawRegion || ''}`.trim() || '위치 정보 없음';
                   const purchasePriceNum = myPropertyForm.purchase_price ? Number(myPropertyForm.purchase_price) : 0;
+                  // 즉시 UI 반영 시 현재 시세는 compare로 보강 (실패하면 0으로 두고 loadData에서 갱신)
+                  let currentPriceNum = 0;
+                  try {
+                      const compareRes = await fetchCompareApartments([selectedApartmentForAdd.apt_id]);
+                      const aptData = compareRes?.apartments?.[0];
+                      if (aptData?.price != null) {
+                          // compare는 억 단위(float) → Dashboard는 만원 단위(int)
+                          currentPriceNum = Math.round(Number(aptData.price) * 10000);
+                      }
+                  } catch {
+                      // ignore
+                  }
 
                   const newAsset: DashboardAsset = {
                       id: String((response as any)?.data?.property_id ?? `local-${Date.now()}`),
@@ -2152,7 +2190,7 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                       name: myPropertyForm.nickname || selectedApartmentForAdd.apt_name,
                       location: formattedLocation,
                       area: myPropertyForm.exclusive_area || 84,
-                      currentPrice: purchasePriceNum,
+                      currentPrice: currentPriceNum,
                       purchasePrice: purchasePriceNum,
                       purchaseDate: myPropertyForm.purchase_date || '-',
                       changeRate: 0,
@@ -2185,7 +2223,13 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                       else if (selectedPeriod === '3년') months = 36;
                       else if (selectedPeriod === '전체') months = 120;
 
-                      fetchApartmentTransactions(newAsset.aptId, 'sale', 50, months)
+                      fetchApartmentTransactions(
+                          newAsset.aptId,
+                          'sale',
+                          50,
+                          months,
+                          typeof newAsset.area === 'number' ? newAsset.area : undefined
+                      )
                           .then(transRes => {
                               if (transRes.success && transRes.data?.price_trend?.length) {
                                   const chartData = transRes.data.price_trend
