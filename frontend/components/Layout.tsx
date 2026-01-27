@@ -738,10 +738,10 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onChangeV
                 </div>
             </div>
             
-            {/* 모바일 통계 탭 선택기 */}
+            {/* 모바일 통계 탭 선택기 - 고정 */}
             {derivedView === 'stats' && (
-              <div className="md:hidden sticky top-[57px] z-20 bg-transparent px-4 py-3">
-                <div className="flex items-center gap-2">
+              <div className="md:hidden sticky top-[57px] z-30 bg-transparent px-4 py-3">
+                <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide">
                   {[
                     { label: '주택 수요', path: '/stats/demand' },
                     { label: '주택 공급', path: '/stats/supply' },
@@ -753,7 +753,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onChangeV
                       <Link
                         key={tab.path}
                         to={tab.path}
-                        className={`px-4 py-2 rounded-full text-[13px] font-bold transition-all whitespace-nowrap ${
+                        className={`px-4 py-2 rounded-full text-[13px] font-bold transition-all whitespace-nowrap flex-shrink-0 ${
                           isActive
                             ? 'bg-brand-blue text-white shadow-lg shadow-brand-blue/30'
                             : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
