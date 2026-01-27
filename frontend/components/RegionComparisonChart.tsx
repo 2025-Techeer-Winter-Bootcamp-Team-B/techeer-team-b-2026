@@ -17,7 +17,6 @@ import {
   ReferenceLine,
 } from 'recharts';
 import { SlidersHorizontal, ExternalLink, X, RefreshCw } from 'lucide-react';
-import { Select } from './ui/Select';
 import {
   fetchNews,
   fetchQuadrant,
@@ -309,7 +308,7 @@ export const RegionComparisonChart: React.FC<RegionComparisonChartProps> = ({
               <p className="text-[13px] text-slate-500 font-medium">{headerSubtitle}</p>
             </div>
 
-            {/* 헤더 드롭다운 (PolicyNewsList / ControlsContent와 같은 톤) */}
+            {/* 헤더 드롭다운 */}
             <div className="flex items-center gap-2 flex-shrink-0">
               <div className="relative w-full md:w-[240px] flex-shrink-0">
                 <SlidersHorizontal className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -325,20 +324,6 @@ export const RegionComparisonChart: React.FC<RegionComparisonChartProps> = ({
                   <option value="regionComparison">지역 대비 수익률 비교</option>
                 </select>
               </div>
-            <div className="flex items-center justify-end gap-2">
-              <Select
-                value={activeSection}
-                onChange={(value) => onSelectSection(value as RegionComparisonChartProps['activeSection'])}
-                options={[
-                  { value: 'policyNews', label: '정책 및 뉴스' },
-                  { value: 'transactionVolume', label: '거래량' },
-                  { value: 'marketPhase', label: '시장 국면지표' },
-                  { value: 'regionComparison', label: '지역 대비 수익률 비교' }
-                ]}
-                icon={<SlidersHorizontal className="w-4 h-4 text-slate-500" />}
-                width="w-[240px] flex-shrink-0"
-                ariaLabel="대시보드 콘텐츠 선택"
-              />
 
               {/* 새로고침 버튼(뉴스일 때만) */}
               {activeSection === 'policyNews' && (
@@ -568,106 +553,110 @@ export const RegionComparisonChart: React.FC<RegionComparisonChartProps> = ({
                     </ResponsiveContainer>
                   )}
                 </div>
-              ) : isLoading ? (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center">
-                <div className="w-8 h-8 border-2 border-slate-200 border-t-blue-500 rounded-full animate-spin mx-auto mb-3"></div>
-                <p className="text-[13px] text-slate-500 font-medium">데이터 로딩 중...</p>
-              </div>
-            </div>
-          ) : !hasValidData ? (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center">
-                <p className="text-[14px] text-slate-500 font-medium mb-1">데이터가 없습니다</p>
-                <p className="text-[12px] text-slate-400">내 자산 정보를 추가하면 비교 데이터를 확인할 수 있습니다</p>
-              </div>
-            </div>
-          ) : (
-          <div className="w-full h-full overflow-visible">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart
-              data={chartData}
-              margin={{ top: 10, right: 20, left: 0, bottom: 100 }}
-              barCategoryGap="10%"
-              barGap={0}
-            >
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-              <XAxis 
-                dataKey="region" 
-                axisLine={false}
-                tickLine={false}
-                tick={{ fontSize: 11, fill: '#64748b', fontWeight: 'bold' }}
-                height={120}
-                angle={-35}
-                textAnchor="end"
-                interval={0}
-                dy={10}
-              />
-              <YAxis 
-                axisLine={false}
-                tickLine={false}
-                tick={{ fontSize: 11, fill: '#94a3b8', fontWeight: 'bold' }}
-                tickFormatter={(val) => `${val > 0 ? '+' : ''}${Number(val).toFixed(1)}%`}
-                width={55}
-              />
-              <Tooltip 
-                active={false}
-                content={({ active, payload }) => {
-                  if (!active || !payload || payload.length === 0) return null;
-                  const entry = payload[0].payload as ComparisonData;
-                  return (
-                    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-lg border border-slate-200 dark:border-slate-700 px-4 py-3">
-                      <p className="text-[13px] font-black text-slate-900 dark:text-white mb-2">{entry.aptName || entry.region}</p>
-                      <div className="space-y-1.5">
-                        <div className="flex items-center justify-between gap-4">
-                          <span className="text-[12px] font-bold text-slate-600 dark:text-slate-400">내 단지 상승률</span>
-                          <span className={`text-[13px] font-black ${entry.myProperty >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
-                            {entry.myProperty > 0 ? '+' : ''}{entry.myProperty.toFixed(1)}%
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between gap-4">
-                          <span className="text-[12px] font-bold text-slate-600 dark:text-slate-400">행정구역 평균 상승률</span>
-                          <span className={`text-[13px] font-black ${entry.regionAverage >= 0 ? 'text-purple-600' : 'text-amber-600'}`}>
-                            {entry.regionAverage > 0 ? '+' : ''}{entry.regionAverage.toFixed(1)}%
-                          </span>
-                        </div>
+              ) : activeSection === 'regionComparison' ? (
+                <div className="w-full h-full">
+                  {isLoading ? (
+                    <div className="flex items-center justify-center h-full">
+                      <div className="text-center">
+                        <div className="w-8 h-8 border-2 border-slate-200 border-t-blue-500 rounded-full animate-spin mx-auto mb-3"></div>
+                        <p className="text-[13px] text-slate-500 font-medium">데이터 로딩 중...</p>
                       </div>
                     </div>
-                  );
-                }}
-              />
-              <Bar 
-                dataKey="myProperty" 
-                name="myProperty"
-                radius={[8, 8, 0, 0]}
-                isAnimationActive={false}
-                maxBarSize={40}
-              >
-                {chartData.map((entry, index) => (
-                  <Cell 
-                    key={`cell-my-${index}`} 
-                    fill={entry.myProperty >= 0 ? '#3b82f6' : '#ef4444'} 
-                  />
-                ))}
-              </Bar>
-              <Bar 
-                dataKey="regionAverage" 
-                name="regionAverage"
-                radius={[8, 8, 0, 0]}
-                isAnimationActive={false}
-                maxBarSize={40}
-              >
-                {chartData.map((entry, index) => (
-                  <Cell 
-                    key={`cell-avg-${index}`} 
-                    fill={entry.regionAverage >= 0 ? '#8b5cf6' : '#f59e0b'} 
-                  />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-          </div>
-              )}
+                  ) : !hasValidData ? (
+                    <div className="flex items-center justify-center h-full">
+                      <div className="text-center">
+                        <p className="text-[14px] text-slate-500 font-medium mb-1">데이터가 없습니다</p>
+                        <p className="text-[12px] text-slate-400">내 자산 정보를 추가하면 비교 데이터를 확인할 수 있습니다</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="w-full h-full overflow-visible">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart
+                          data={chartData}
+                          margin={{ top: 10, right: 20, left: 0, bottom: 100 }}
+                          barCategoryGap="10%"
+                          barGap={0}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                          <XAxis 
+                            dataKey="region" 
+                            axisLine={false}
+                            tickLine={false}
+                            tick={{ fontSize: 11, fill: '#64748b', fontWeight: 'bold' }}
+                            height={120}
+                            angle={-35}
+                            textAnchor="end"
+                            interval={0}
+                            dy={10}
+                          />
+                          <YAxis 
+                            axisLine={false}
+                            tickLine={false}
+                            tick={{ fontSize: 11, fill: '#94a3b8', fontWeight: 'bold' }}
+                            tickFormatter={(val) => `${val > 0 ? '+' : ''}${Number(val).toFixed(1)}%`}
+                            width={55}
+                          />
+                          <Tooltip 
+                            active={false}
+                            content={({ active, payload }) => {
+                              if (!active || !payload || payload.length === 0) return null;
+                              const entry = payload[0].payload as ComparisonData;
+                              return (
+                                <div className="bg-white dark:bg-slate-800 rounded-xl shadow-lg border border-slate-200 dark:border-slate-700 px-4 py-3">
+                                  <p className="text-[13px] font-black text-slate-900 dark:text-white mb-2">{entry.aptName || entry.region}</p>
+                                  <div className="space-y-1.5">
+                                    <div className="flex items-center justify-between gap-4">
+                                      <span className="text-[12px] font-bold text-slate-600 dark:text-slate-400">내 단지 상승률</span>
+                                      <span className={`text-[13px] font-black ${entry.myProperty >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                                        {entry.myProperty > 0 ? '+' : ''}{entry.myProperty.toFixed(1)}%
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-4">
+                                      <span className="text-[12px] font-bold text-slate-600 dark:text-slate-400">행정구역 평균 상승률</span>
+                                      <span className={`text-[13px] font-black ${entry.regionAverage >= 0 ? 'text-purple-600' : 'text-amber-600'}`}>
+                                        {entry.regionAverage > 0 ? '+' : ''}{entry.regionAverage.toFixed(1)}%
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            }}
+                          />
+                          <Bar 
+                            dataKey="myProperty" 
+                            name="myProperty"
+                            radius={[8, 8, 0, 0]}
+                            isAnimationActive={false}
+                            maxBarSize={40}
+                          >
+                            {chartData.map((entry, index) => (
+                              <Cell 
+                                key={`cell-my-${index}`} 
+                                fill={entry.myProperty >= 0 ? '#3b82f6' : '#ef4444'} 
+                              />
+                            ))}
+                          </Bar>
+                          <Bar 
+                            dataKey="regionAverage" 
+                            name="regionAverage"
+                            radius={[8, 8, 0, 0]}
+                            isAnimationActive={false}
+                            maxBarSize={40}
+                          >
+                            {chartData.map((entry, index) => (
+                              <Cell 
+                                key={`cell-avg-${index}`} 
+                                fill={entry.regionAverage >= 0 ? '#8b5cf6' : '#f59e0b'} 
+                              />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                </div>
+              ) : null}
             </motion.div>
           </AnimatePresence>
         </div>

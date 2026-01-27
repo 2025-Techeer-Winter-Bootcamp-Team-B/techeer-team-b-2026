@@ -330,25 +330,8 @@ export const PolicyNewsList: React.FC<PolicyNewsListProps> = ({
               </div>
               <p className="text-[13px] text-slate-500 font-medium">{headerSubtitle}</p>
             </div>
-        <div className="flex items-center justify-between mb-4 flex-shrink-0">
-          <h2 className="text-xl font-black text-slate-900 tracking-tight">{headerTitle}</h2>
-          <div className="flex items-center gap-2">
-            {/* 이동 드롭다운 (4개만 노출) */}
-            <Select
-              value={activeSection}
-              onChange={(value) => onSelectSection(value as DashboardBottomView)}
-              options={[
-                { value: 'policyNews', label: '정책 및 뉴스' },
-                { value: 'transactionVolume', label: '거래량' },
-                { value: 'marketPhase', label: '시장 국면지표' },
-                { value: 'regionComparison', label: '지역 대비 수익률 비교' }
-              ]}
-              icon={<SlidersHorizontal className="w-4 h-4 text-slate-500" />}
-              width="w-[240px] flex-shrink-0"
-              ariaLabel="대시보드 콘텐츠 선택"
-            />
 
-            {/* 이동 드롭다운 (4개만 노출) */}
+            {/* 이동 드롭다운 */}
             <div className="flex items-center gap-2 flex-shrink-0">
               <div className="relative w-full md:w-[240px] flex-shrink-0">
                 <SlidersHorizontal className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />

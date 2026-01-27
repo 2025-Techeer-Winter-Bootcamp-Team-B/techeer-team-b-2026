@@ -1766,8 +1766,6 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
                         ? detailData.jeonsePrice 
                         : 0;
                       return <NeighborItem key={i} item={item} currentPrice={currentPriceForComparison} onClick={handleNeighborClickInternal} />;
-                      const currentPriceForComparison = getLatestTransactionPrice(filteredTransactions, chartType);
-                      return <NeighborItem key={i} item={item} currentPrice={currentPriceForComparison} />;
                     })}
                   </div>
                   {detailData.neighbors.length > displayedNeighborsCount && (
