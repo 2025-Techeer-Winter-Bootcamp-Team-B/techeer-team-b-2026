@@ -439,18 +439,21 @@ export const ProfileWidgetsCard: React.FC<ProfileWidgetsCardProps> = ({
       <div className="bg-white rounded-[20px] p-4 shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-slate-100/80">
         <div className="flex items-center justify-between">
           <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2">
-              <h3 className="text-[13px] font-black text-slate-900 whitespace-nowrap">금리 지표</h3>
-              {!isRatesLoading && interestRates.length > 0 && (
-                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${ 
-                  interestRates[selectedRateIndex ?? 0]?.trend === 'stable' ? 'bg-slate-800 text-white' : 
-                  interestRates[selectedRateIndex ?? 0]?.change > 0 ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'
-                }`}>
-                  {interestRates[selectedRateIndex ?? 0]?.trend === 'stable' ? '동결' : 
-                   interestRates[selectedRateIndex ?? 0]?.change > 0 ? `+${interestRates[selectedRateIndex ?? 0]?.change.toFixed(2)}%` : 
-                   `${interestRates[selectedRateIndex ?? 0]?.change.toFixed(2)}%`}
-                </span>
-              )}
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <h3 className="text-[13px] font-black text-slate-900 whitespace-nowrap">금리 지표</h3>
+                {!isRatesLoading && interestRates.length > 0 && (
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${ 
+                    interestRates[selectedRateIndex ?? 0]?.trend === 'stable' ? 'bg-slate-800 text-white' : 
+                    interestRates[selectedRateIndex ?? 0]?.change > 0 ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'
+                  }`}>
+                    {interestRates[selectedRateIndex ?? 0]?.trend === 'stable' ? '동결' : 
+                     interestRates[selectedRateIndex ?? 0]?.change > 0 ? `+${interestRates[selectedRateIndex ?? 0]?.change.toFixed(2)}%` : 
+                     `${interestRates[selectedRateIndex ?? 0]?.change.toFixed(2)}%`}
+                  </span>
+                )}
+              </div>
+              <span className="text-[10px] text-slate-400 font-medium whitespace-nowrap">(KB부동산 기준)</span>
             </div>
             
             {!isRatesLoading && interestRates.length > 0 ? (
@@ -709,7 +712,10 @@ export const ProfileWidgetsCard: React.FC<ProfileWidgetsCardProps> = ({
         {/* 금리 지표 Section */}
         {showInterestRates && (
           <div className="mb-4 pb-4 border-b border-slate-100">
-            <h3 className="text-[15px] font-black text-slate-900 mb-3">금리 지표</h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-[15px] font-black text-slate-900">금리 지표</h3>
+              <span className="text-[11px] text-slate-400 font-medium whitespace-nowrap">(KB부동산 기준)</span>
+            </div>
             
             {isRatesLoading ? (
               <div className="flex flex-col items-center justify-center py-4">
