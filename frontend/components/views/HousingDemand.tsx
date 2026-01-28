@@ -1428,7 +1428,7 @@ export const HousingDemand: React.FC = () => {
   const regionOptions: ExtendedRegionType[] = ['전국', '수도권', '서울특별시', '지방 5대광역시'];
 
   return (
-    <div className="space-y-4 md:space-y-8 pb-32 animate-fade-in min-h-screen w-full px-2 md:px-0 pt-2 md:pt-8">
+    <div className="space-y-4 md:space-y-8 pb-32 animate-fade-in min-h-screen w-full pl-5 pr-4 md:pl-0 md:pr-0 pt-2 md:pt-8">
       {error && (
         <div className="mb-3 md:mb-4 px-3 md:px-4 py-2 md:py-2.5 md:py-3 rounded-xl bg-red-50 text-red-600 text-[12px] md:text-[13px] font-bold border border-red-100">
           {error}
@@ -1444,14 +1444,14 @@ export const HousingDemand: React.FC = () => {
         <Card id="section-transaction-volume" className="lg:col-span-6 flex flex-col">
           <div className="p-3 md:p-6 md:border-b md:border-slate-100 border-b border-slate-200 mb-2 md:mb-4">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 md:gap-4 mb-2 md:mb-4">
-              <div className="flex items-center gap-2 md:gap-3 min-w-0">
-                <div className="min-w-0 flex-1">
+              <div className="flex flex-row flex-wrap md:flex-row items-center gap-2 md:gap-3 min-w-0 flex-1 md:flex-initial">
+                <div className="min-w-0 flex-shrink-0">
                     <h3 className="font-black text-slate-900 text-[16px] md:text-[18px] truncate">거래량</h3>
                     <p className="hidden md:block text-[14px] text-slate-500 mt-1 font-medium">
                     {viewMode === 'yearly' ? '연도별 거래량 추이' : '월별 거래량 추이'}
                     </p>
                 </div>
-                <div className="relative" ref={transactionRegionRef}>
+                <div className="relative flex-shrink-0" ref={transactionRegionRef}>
                     <button
                         onClick={() => setIsTransactionRegionOpen(!isTransactionRegionOpen)}
                         className="bg-slate-50 border border-slate-200 text-slate-700 text-[12px] md:text-[13px] rounded-lg px-2 md:px-3 py-1 md:py-1.5 font-bold hover:bg-slate-100 transition-all flex items-center gap-1 flex-shrink-0"
@@ -1460,7 +1460,7 @@ export const HousingDemand: React.FC = () => {
                         <ChevronDown className={`w-3 h-3 md:w-3.5 md:h-3.5 text-slate-400 transition-transform flex-shrink-0 ${isTransactionRegionOpen ? 'rotate-180' : ''}`} />
                     </button>
                     {isTransactionRegionOpen && (
-                        <div className="absolute left-0 top-full mt-2 w-[140px] bg-white rounded-xl shadow-deep border border-slate-200 overflow-hidden z-50 animate-enter">
+                        <div className="absolute left-0 top-full mt-2 w-[140px] min-w-[140px] bg-white rounded-xl shadow-deep border border-slate-200 overflow-hidden z-[100] animate-enter origin-top-left">
                             {regionOptions.map((region) => (
                                 <button
                                     key={region}
@@ -1478,10 +1478,8 @@ export const HousingDemand: React.FC = () => {
                         </div>
                     )}
                 </div>
-              </div>
-              <div className="flex items-center gap-3">
-                {/* 모바일: 드롭다운 */}
-                <div className="md:hidden flex items-center gap-2">
+                {/* 모바일: 1년·월별 — 같은 가로줄에 */}
+                <div className="md:hidden flex items-center gap-2 flex-shrink-0">
                   {viewMode === 'monthly' && (
                     <div className="relative">
                       <select
@@ -1508,10 +1506,11 @@ export const HousingDemand: React.FC = () => {
                     <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
                   </div>
                 </div>
-                {/* PC: ToggleButtonGroup */}
-                <div className="hidden md:flex items-center gap-3">
-                  {viewMode === 'monthly' && (
-                    <ToggleButtonGroup
+              </div>
+              {/* PC: ToggleButtonGroup — 모바일에서는 위 가로줄에 1년·월별 포함 */}
+              <div className="hidden md:flex items-center gap-3">
+                {viewMode === 'monthly' && (
+                  <ToggleButtonGroup
                       options={['1년', '3년', '5년']}
                       value={`${yearRange}년`}
                       onChange={(value) => setYearRange(parseInt(value.replace('년', '')) as 1 | 3 | 5)}
@@ -1529,7 +1528,6 @@ export const HousingDemand: React.FC = () => {
                       }
                     }}
                   />
-                </div>
               </div>
             </div>
           </div>

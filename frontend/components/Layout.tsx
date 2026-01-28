@@ -690,7 +690,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onChangeV
                         </div>
                     ) : derivedView === 'stats' ? (
                         <h1 className="text-[22px] font-black text-slate-900 dark:text-white tracking-tight ml-1">
-                          {location.pathname.startsWith('/policy') ? '정부정책' : '통계'}
+                          통계
                         </h1>
                     ) : derivedView === 'compare' ? (
                         <h1 className="text-[22px] font-black text-slate-900 dark:text-white tracking-tight ml-1">비교</h1>
@@ -703,7 +703,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onChangeV
                         <div className="flex items-center gap-3"><Logo className="scale-90 origin-left" /></div>
                     ) : derivedView === 'stats' ? (
                         <h1 className="text-[22px] font-black text-slate-900 dark:text-white tracking-tight ml-1">
-                          {location.pathname.startsWith('/policy') ? '정부정책' : '통계'}
+                          통계
                         </h1>
                     ) : derivedView === 'compare' ? (
                         <h1 className="text-[22px] font-black text-slate-900 dark:text-white tracking-tight ml-1">비교</h1>
@@ -760,7 +760,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onChangeV
                   mobileStatsTabBarVisible ? 'max-h-16 opacity-100' : 'max-h-0 opacity-0 pointer-events-none'
                 }`}
               >
-                <div className="sticky top-[57px] z-30 bg-transparent px-4 py-3">
+                <div className="sticky top-[57px] z-30 bg-transparent pl-5 pr-4 py-3">
                   <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide">
                     {[
                       { label: '주택 수요', path: '/stats/demand' },
@@ -773,9 +773,9 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentView, onChangeV
                         <Link
                           key={tab.path}
                           to={tab.path}
-                          className={`px-4 py-2 rounded-full text-[13px] font-bold transition-all whitespace-nowrap flex-shrink-0 ${
+                          className={`px-4 py-2 rounded-full text-[13px] font-bold transition-all whitespace-nowrap flex-shrink-0 overflow-hidden [transform:translateZ(0)] [backface-visibility:hidden] ${
                             isActive
-                              ? 'bg-brand-blue text-white shadow-lg shadow-brand-blue/30'
+                              ? 'bg-brand-blue text-white'
                               : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                           }`}
                         >
