@@ -1554,15 +1554,53 @@ export const Comparison: React.FC = () => {
         </div>
       </div>
       
-      {/* 모바일: 다수 아파트 분석에서만 비교군 탭을 맨 위에 */}
+      {/* 모바일: 다수 아파트 분석에서 비교군을 풀폭으로 표시 (선택된 아파트 목록 + 추가 버튼) */}
       {comparisonMode === 'multi' && (
-        <div className="md:hidden mb-4">
-          <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
+        <div className="md:hidden mb-4 w-full">
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 w-full">
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-black text-slate-900 text-[16px]">비교군</h3>
               <span className="px-2 py-0.5 bg-slate-200 text-slate-600 rounded text-[11px] font-bold">
                 {assets.length}/{MAX_COMPARE}개
               </span>
+            </div>
+            {/* 선택된 아파트 목록 — 모바일에서는 1열 풀폭 */}
+            <div className="space-y-2 max-h-[280px] overflow-y-auto custom-scrollbar">
+              {assets.map((asset) => {
+                const isSelected = selectedAssetId === asset.id;
+                const isDimmed = selectedAssetId !== null && !isSelected;
+                return (
+                  <div key={asset.id} className="w-full">
+                    <ApartmentRow
+                      name={asset.name.replace(/ \d+평형$/, '')}
+                      location={asset.region}
+                      area={asset.area || 84}
+                      price={asset.price * 10000}
+                      color={asset.color}
+                      showColorDot={true}
+                      isSelected={isSelected}
+                      isDimmed={isDimmed}
+                      onClick={() => handleAssetClick(asset.id)}
+                      onRemove={(e) => handleRemoveAsset(asset.id, e)}
+                      variant="selected"
+                      showChevron={false}
+                      className="h-full w-full"
+                      rightContent={
+                        <div className="flex items-center gap-2">
+                          <span className="text-[13px] font-black text-slate-800 tabular-nums truncate">{asset.price}억</span>
+                          <button
+                            onClick={(e) => handleRemoveAsset(asset.id, e)}
+                            className="p-1.5 text-slate-300 hover:bg-slate-100 hover:text-red-500 rounded-lg transition-colors flex-shrink-0"
+                            title="삭제"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      }
+                    />
+                  </div>
+                );
+              })}
             </div>
             {assets.length < MAX_COMPARE && (
               <button 
@@ -1611,9 +1649,9 @@ export const Comparison: React.FC = () => {
 
       {comparisonMode === '1:1' ? (
           <div className="space-y-10">
-              {/* 1:1 Layout */}
+              {/* 1:1 Layout — 모바일/태블릿에서는 카드가 세로로 풀폭, lg 이상에서만 2열 */}
               <div className="relative">
-                   <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
                        <ComparisonCard 
                            title={leftAsset?.name || '비교 대상 선택'}
                            sub={leftAsset?.region || '아파트를 선택하세요'}
@@ -1637,13 +1675,13 @@ export const Comparison: React.FC = () => {
                            }}
                        />
                    </div>
-                   <div className="hidden md:block absolute left-1/2 top-0 bottom-0 w-px bg-slate-200 -ml-px"></div>
+                   <div className="hidden lg:block absolute left-1/2 top-0 bottom-0 w-px bg-slate-200 -ml-px"></div>
               </div>
 
-              {/* PC에서만: 6각형 스펙 비교 + 핵심 특징을 한 행에 배치 */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-10">
-                  {/* 왼쪽: 6각형(레이다) 스펙 비교 그래프 */}
-                  <Card className="overflow-hidden w-full order-2 md:order-1">
+              {/* PC: 6각형 스펙 비교 + 핵심 특징 한 행 | 모바일: 핵심 → 상세 스펙 → 옵션별 비교 순 */}
+              <div className="flex flex-col gap-4 md:gap-10 md:grid md:grid-cols-2">
+                  {/* 왼쪽: 6각형(레이다) 스펙 비교 그래프 — 모바일에서는 맨 아래 */}
+                  <Card className="overflow-hidden w-full order-1 md:order-1">
                   <div className="p-3 md:p-6 border-b border-slate-200 md:border-slate-100 bg-slate-50/50 min-h-[93px] flex flex-col justify-center">
                       <div className="flex items-center justify-between gap-2">
                           <h3 className="font-black text-slate-900 text-[16px] md:text-lg">아파트 옵션별 비교</h3>
@@ -1774,8 +1812,8 @@ export const Comparison: React.FC = () => {
                   </div>
               </Card>
 
-                  {/* 오른쪽: 핵심 특징 통합 카드 (아파트 선택 + 높이 6각형과 맞춤) */}
-                  <Card interactive={false} className="order-1 md:order-2 flex flex-col overflow-hidden z-10 relative">
+                  {/* 오른쪽: 핵심 특징 통합 카드 (아파트 선택 + 높이 6각형과 맞춤) — 모바일 최상단 */}
+                  <Card interactive={false} className="order-2 md:order-2 flex flex-col overflow-hidden z-10 relative">
                       <div className="p-3 md:p-6 border-b border-slate-200 md:border-slate-100 bg-slate-50/50 flex-shrink-0 min-h-[93px] flex flex-col justify-center">
                           {leftAsset && rightAsset ? (
                               (() => {
@@ -1789,7 +1827,7 @@ export const Comparison: React.FC = () => {
                                           options={opts}
                                           value={val}
                                           onChange={(value) => setKeyFeaturesSide(value === opts[0] ? 'left' : 'right')}
-                                          className="bg-slate-100/80 w-fit max-w-[50%]"
+                                          className="bg-slate-100/80 w-full md:w-fit md:max-w-[50%]"
                                       />
                                   );
                               })()
@@ -1826,31 +1864,31 @@ export const Comparison: React.FC = () => {
                           )}
                       </div>
                   </Card>
-              </div>
 
-              {/* Detailed Specs Table */}
-              <Card className="overflow-hidden">
-                  <div className="p-3 md:p-6 border-b border-slate-200 md:border-slate-100 bg-slate-50/50">
-                      <h3 className="font-black text-slate-900 text-[16px] md:text-lg">상세 스펙 비교</h3>
-                  </div>
-                  <div className="divide-y divide-slate-50">
-                      <StatRow label="매매가" left={formatNumberValue(leftAsset?.price, 1)} right={formatNumberValue(rightAsset?.price, 1)} unit="억" />
-                      <StatRow label="전세가" left={formatNumberValue(leftAsset?.jeonse, 1)} right={formatNumberValue(rightAsset?.jeonse, 1)} unit="억" />
-                      <StatRow label="전세가율" left={formatNumberValue(leftAsset?.jeonseRate, 1)} right={formatNumberValue(rightAsset?.jeonseRate, 1)} unit="%" />
-                      <StatRow label="평당가" left={formatNumberValue(leftAsset?.pricePerPyeong, 2)} right={formatNumberValue(rightAsset?.pricePerPyeong, 2)} unit="억" />
-                      <StatRow label="세대수" left={formatValue(leftAsset?.households)} right={formatValue(rightAsset?.households)} unit="세대" />
-                      <StatRow label="준공년도" left={formatValue(leftAsset?.buildYear)} right={formatValue(rightAsset?.buildYear)} unit="년" />
-                      <StatRow label="주차대수" left={formatNumberValue(leftAsset?.parkingSpaces, 2)} right={formatNumberValue(rightAsset?.parkingSpaces, 2)} unit="대" />
-                      <StatRow 
-                          label="역 도보시간" 
-                          left={leftAsset?.walkingTimeText || getWalkingTimeRange(leftAsset?.walkingTime)} 
-                          right={rightAsset?.walkingTimeText || getWalkingTimeRange(rightAsset?.walkingTime)} 
-                          unit=""
-                          leftNumValue={leftAsset?.walkingTime}
-                          rightNumValue={rightAsset?.walkingTime}
-                      />
-                  </div>
-              </Card>
+                  {/* 상세 스펙 비교 — 모바일에서는 핵심·옵션별 사이(order-2), PC에서는 하단 풀폭 */}
+                  <Card className="overflow-hidden order-3 md:order-3 md:col-span-2">
+                      <div className="p-3 md:p-6 border-b border-slate-200 md:border-slate-100 bg-slate-50/50">
+                          <h3 className="font-black text-slate-900 text-[16px] md:text-lg">상세 스펙 비교</h3>
+                      </div>
+                      <div className="divide-y divide-slate-50">
+                          <StatRow label="매매가" left={formatNumberValue(leftAsset?.price, 1)} right={formatNumberValue(rightAsset?.price, 1)} unit="억" />
+                          <StatRow label="전세가" left={formatNumberValue(leftAsset?.jeonse, 1)} right={formatNumberValue(rightAsset?.jeonse, 1)} unit="억" />
+                          <StatRow label="전세가율" left={formatNumberValue(leftAsset?.jeonseRate, 1)} right={formatNumberValue(rightAsset?.jeonseRate, 1)} unit="%" />
+                          <StatRow label="평당가" left={formatNumberValue(leftAsset?.pricePerPyeong, 2)} right={formatNumberValue(rightAsset?.pricePerPyeong, 2)} unit="억" />
+                          <StatRow label="세대수" left={formatValue(leftAsset?.households)} right={formatValue(rightAsset?.households)} unit="세대" />
+                          <StatRow label="준공년도" left={formatValue(leftAsset?.buildYear)} right={formatValue(rightAsset?.buildYear)} unit="년" />
+                          <StatRow label="주차대수" left={formatNumberValue(leftAsset?.parkingSpaces, 2)} right={formatNumberValue(rightAsset?.parkingSpaces, 2)} unit="대" />
+                          <StatRow 
+                              label="역 도보시간" 
+                              left={leftAsset?.walkingTimeText || getWalkingTimeRange(leftAsset?.walkingTime)} 
+                              right={rightAsset?.walkingTimeText || getWalkingTimeRange(rightAsset?.walkingTime)} 
+                              unit=""
+                              leftNumValue={leftAsset?.walkingTime}
+                              rightNumValue={rightAsset?.walkingTime}
+                          />
+                      </div>
+                  </Card>
+              </div>
               
               {/* School Information Section */}
               <Card className="overflow-hidden">
@@ -1905,7 +1943,7 @@ export const Comparison: React.FC = () => {
               
               {/* LEFT: Chart Section */}
               <div className="lg:col-span-8 flex flex-col gap-6">
-                  <Card className="p-3 md:p-8 h-[400px] md:h-[560px] flex flex-col relative overflow-hidden">
+                  <Card className="p-3 md:p-8 h-[540px] md:h-[560px] flex flex-col relative overflow-hidden">
                       <div className="mb-4 md:mb-8 pb-3 md:pb-6 border-b border-slate-200 md:border-slate-100">
                           <div className="flex items-center justify-between mb-2 md:mb-4">
                               <div className="flex items-center gap-1.5 md:gap-2 min-w-0 flex-1">
@@ -2269,9 +2307,9 @@ export const Comparison: React.FC = () => {
                       </div>
                   </Card>
 
-                  {/* Table Section */}
+                  {/* Table Section — 카드 높이가 내용에 맞게 늘어나며 스크롤 없음(PC/모바일 공통) */}
                   <div ref={setDetailInfoEl}>
-                  <Card className="overflow-hidden h-[585px] flex flex-col">
+                  <Card className="overflow-hidden h-auto min-h-0 flex flex-col">
                       <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex-shrink-0">
                           <div className="flex items-center justify-between">
                               <h3 className="font-black text-slate-900 text-[18px]">상세 정보</h3>
@@ -2327,19 +2365,19 @@ export const Comparison: React.FC = () => {
                               </div>
                           </div>
                       ) : (
-                      <div className="overflow-x-auto overflow-y-hidden flex-1 scrollbar-hide" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', transform: 'translateY(-20px)' }}>
-                          <table className="w-full">
+                      <div className="overflow-x-auto overflow-y-visible flex-1 min-h-0 custom-scrollbar">
+                          <table className="w-full table-auto [&_td]:break-words [&_th]:break-words">
                               <thead>
                                   <tr className="bg-slate-50/50 border-b border-slate-100">
-                                      <th className="text-left px-6 py-4 text-[13px] font-bold text-slate-600 uppercase tracking-wide">항목</th>
+                                      <th className="text-left px-6 py-4 text-[13px] font-bold text-slate-600 uppercase tracking-wide whitespace-nowrap">항목</th>
                                       {assets.map((asset) => (
-                                          <th key={asset.id} className="text-center px-6 py-4">
+                                          <th key={asset.id} className="text-center px-6 py-4 min-w-0 max-w-[140px]">
                                               <button
                                                   onClick={() => asset.aptId && navigate(`/property/${asset.aptId}`)}
-                                                  className="inline-flex items-center gap-1 text-[13px] font-black text-slate-900 hover:text-indigo-600 transition-colors cursor-pointer group"
+                                                  className="inline-flex items-center gap-1 text-[13px] font-black text-slate-900 hover:text-indigo-600 transition-colors cursor-pointer group break-words text-center justify-center w-full"
                                               >
-                                                  {asset.name}
-                                                  <span className="text-[18px] text-slate-400 group-hover:text-indigo-400 transition-colors font-normal">›</span>
+                                                  <span className="break-words">{asset.name}</span>
+                                                  <span className="text-[18px] text-slate-400 group-hover:text-indigo-400 transition-colors font-normal flex-shrink-0">›</span>
                                               </button>
                                           </th>
                                       ))}
