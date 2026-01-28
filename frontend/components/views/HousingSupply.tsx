@@ -194,6 +194,33 @@ const generateHousingSupplyData = (): HousingSupplyItem[] => {
 
 const DETAIL_PAGE_SIZE = 40;
 
+// 첫 80건 캐시 (빠른 초기 로딩용)
+const HOUSING_SUPPLY_CACHE_KEY = 'housing_supply_cache';
+const HOUSING_SUPPLY_CACHE_SIZE = 80;
+const HOUSING_SUPPLY_CACHE_TTL_MS = 60 * 60 * 1000; // 1시간
+
+function getHousingSupplyCache(): HousingSupplyItem[] | null {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem(HOUSING_SUPPLY_CACHE_KEY) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { items: HousingSupplyItem[]; savedAt: number };
+    if (!parsed?.items || !Array.isArray(parsed.items) || typeof parsed.savedAt !== 'number') return null;
+    if (Date.now() - parsed.savedAt > HOUSING_SUPPLY_CACHE_TTL_MS) return null;
+    return parsed.items;
+  } catch {
+    return null;
+  }
+}
+
+function setHousingSupplyCache(items: HousingSupplyItem[]): void {
+  try {
+    const toSave = items.slice(0, HOUSING_SUPPLY_CACHE_SIZE);
+    localStorage.setItem(HOUSING_SUPPLY_CACHE_KEY, JSON.stringify({ items: toSave, savedAt: Date.now() }));
+  } catch {
+    /* ignore */
+  }
+}
+
 export const HousingSupply: React.FC = () => {
   const [data, setData] = useState<HousingSupplyItem[]>([]);
   const [filteredData, setFilteredData] = useState<HousingSupplyItem[]>([]);
@@ -248,15 +275,15 @@ export const HousingSupply: React.FC = () => {
           }
         }
 
-        // use_approval_date에서 입주예정월 추출 (YYYY-MM-DD -> YYYYMM)
-        let moveInDate = '202601'; // 기본값을 2026년 1월로 변경
-        if (apt.use_approval_date) {
-          const date = new Date(apt.use_approval_date);
-          const year = date.getFullYear();
-          const month = String(date.getMonth() + 1).padStart(2, '0');
-          // 2026-2029년 모든 데이터 사용
-          if (year >= 2026 && year <= 2029) {
-            moveInDate = `${year}${month}`;
+        // use_approval_date(사용승인일)에서 입주예정월 추출 (YYYY-MM-DD -> YYYYMM), 문자열 파싱으로 타임존 영향 제거
+        let moveInDate = '202601'; // 기본값: 값이 없을 때만 사용
+        const dateStr = apt.use_approval_date ? String(apt.use_approval_date).trim() : '';
+        if (dateStr) {
+          const match = dateStr.match(/^(\d{4})-(\d{1,2})/);
+          if (match) {
+            const y = match[1];
+            const m = match[2].padStart(2, '0');
+            moveInDate = `${y}${m}`;
           }
         }
 
@@ -279,10 +306,16 @@ export const HousingSupply: React.FC = () => {
       });
   };
 
-  // 주택 공급 데이터 로딩
+  // 주택 공급 데이터 로딩: 캐시 있으면 즉시 표시 후 백그라운드에서 전체 로드
   useEffect(() => {
+    const cached = getHousingSupplyCache();
+    if (cached && cached.length > 0) {
+      setData(cached);
+    }
+    const hasCache = !!(cached && cached.length > 0);
+
     const loadHousingSupplyData = async () => {
-      setIsLoading(true);
+      if (!hasCache) setIsLoading(true);
       try {
         const allData: HousingSupplyItem[] = [];
         const regionsToLoad = ['강원', '경기', '서울', '인천', '부산', '대구', '광주', '대전', '울산', '세종'];
@@ -312,20 +345,23 @@ export const HousingSupply: React.FC = () => {
           return year >= 2026 && year <= 2029;
         });
         
+        let sortedData: HousingSupplyItem[];
         // API 데이터가 없거나 적으면 CSV 기반 통계 데이터 추가 (2026-2029년 모든 데이터)
         if (filteredData.length < 50) {
           const statsData = generateHousingSupplyData();
           const combinedData = [...filteredData, ...statsData];
-          const sortedData = combinedData.sort((a, b) => a.moveInDate.localeCompare(b.moveInDate));
-          setData(sortedData);
+          sortedData = combinedData.sort((a, b) => a.moveInDate.localeCompare(b.moveInDate));
         } else {
-          const sortedData = filteredData.sort((a, b) => a.moveInDate.localeCompare(b.moveInDate));
-          setData(sortedData);
+          sortedData = filteredData.sort((a, b) => a.moveInDate.localeCompare(b.moveInDate));
         }
+        setData(sortedData);
+        setHousingSupplyCache(sortedData);
       } catch (err) {
         console.error('주택 공급 데이터 로딩 실패:', err);
         // 실패 시 통계 데이터 사용
-        setData(generateHousingSupplyData());
+        const fallback = generateHousingSupplyData();
+        setData(fallback);
+        setHousingSupplyCache(fallback);
       } finally {
         setIsLoading(false);
       }
@@ -444,7 +480,7 @@ export const HousingSupply: React.FC = () => {
   };
   
   return (
-    <div className="space-y-4 md:space-y-8 pb-32 animate-fade-in min-h-screen w-full px-2 md:px-0 pt-4 md:pt-10">
+    <div className="space-y-4 md:space-y-8 pb-32 animate-fade-in min-h-screen w-full pl-5 pr-4 md:pl-0 md:pr-0 pt-4 md:pt-10">
       {/* 제목 섹션 */}
       <div className="mb-8">
         <h1 className="text-2xl md:text-3xl font-black text-slate-900 dark:text-white mb-8">주택 공급</h1>
@@ -818,7 +854,7 @@ export const HousingSupply: React.FC = () => {
       </div>
 
       {/* 테이블 */}
-      <div className="rounded-[20px] md:rounded-[24px] border border-slate-200 shadow-[0_2px_8px_rgba(0,0,0,0.04)] md:shadow-soft bg-white">
+      <div className="rounded-[20px] md:rounded-[24px] border border-slate-200 shadow-[0_2px_8px_rgba(0,0,0,0.04)] md:shadow-soft bg-white overflow-hidden min-w-0 max-w-full">
         <div className="p-4 md:p-6 border-b border-slate-200 md:border-slate-100 flex justify-between items-start gap-2">
           <div className="min-w-0">
             <h3 className="font-black text-slate-900 text-[15px] md:text-[17px]">상세내역</h3>
@@ -829,7 +865,7 @@ export const HousingSupply: React.FC = () => {
             <span>엑셀 다운로드</span>
           </button>
         </div>
-        <div className="overflow-x-auto scrollbar-hide -mx-4 px-4 md:mx-0 md:px-0">
+        <div className="overflow-x-auto overflow-y-hidden scrollbar-hide -mx-4 px-4 md:mx-0 md:px-0 w-full min-w-0">
           <table className="w-full min-w-[600px]">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
@@ -874,8 +910,8 @@ export const HousingSupply: React.FC = () => {
                       {item.businessType}
                     </span>
                   </td>
-                  <td className="px-2 md:px-4 py-2 md:py-3 text-[12px] md:text-[14px] font-medium text-slate-600 truncate max-w-[120px] md:max-w-none">
-                    {item.address}
+                  <td className="px-2 md:px-4 py-2 md:py-3 text-[12px] md:text-[14px] font-medium text-slate-600 overflow-hidden">
+                    <span className="block truncate min-w-0 max-w-[140px] md:max-w-none" title={item.address}>{item.address}</span>
                   </td>
                   <td className="px-2 md:px-4 py-2 md:py-3 text-[12px] md:text-[14px] font-bold text-slate-900 truncate max-w-[150px] md:max-w-none">
                     {item.propertyName}

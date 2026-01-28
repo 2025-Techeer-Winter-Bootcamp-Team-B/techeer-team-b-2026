@@ -26,7 +26,7 @@ const GovernmentPolicy: React.FC = () => {
   }, []);
 
   return (
-    <div className="space-y-4 md:space-y-8 pb-32 animate-fade-in min-h-screen w-full px-2 md:px-0 pt-4 md:pt-10">
+    <div className="space-y-4 md:space-y-8 pb-32 animate-fade-in min-h-screen w-full pl-5 pr-4 md:pl-0 md:pr-0 pt-4 md:pt-10">
       {/* 헤더 */}
       <div className="mb-8">
         <h1 className="text-2xl md:text-3xl font-black text-slate-900 dark:text-white mb-8">정부정책</h1>
