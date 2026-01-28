@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Search, Sparkles, SlidersHorizontal, Map, X, Clock, TrendingUp, Building2, MapPin, Loader2, Navigation, ChevronDown, Car, Timer, Route, Circle, TrainFront, Eye, EyeOff } from 'lucide-react';
+import { Search, Sparkles, SlidersHorizontal, Map, X, Clock, TrendingUp, Building2, MapPin, Loader2, Navigation, ChevronDown, Car, Timer, Route, Circle, TrainFront, Eye, EyeOff, GraduationCap } from 'lucide-react';
 import { ViewProps } from '../../types';
 import { MapSideDetail } from '../MapSideDetail';
+import { PlaceSideDetail } from '../PlaceSideDetail';
 import { useKakaoLoader } from '../../hooks/useKakaoLoader';
 import { getPrefetchCache, getPrefetchedLocation } from '../../hooks';
 import { PercentileBadge } from '../ui/PercentileBadge';
@@ -21,7 +22,8 @@ import {
   fetchDirections,
   fetchPlacesByCategory,
   fetchPlacesByKeyword,
-  fetchApartmentDetail
+  fetchApartmentDetail,
+  fetchNearbyApartments
 } from '../../services/api';
 
 // 쿠키 관련 상수
@@ -179,6 +181,7 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
   const [isAiSearching, setIsAiSearching] = useState(false);
   
   const [aiCriteria, setAiCriteria] = useState<AISearchCriteria | null>(null);
+  const [foundAptId, setFoundAptId] = useState<string | null>(null);
   
   // 검색 필터 상태
   const [filterMinPrice, setFilterMinPrice] = useState<string>('');
@@ -201,6 +204,19 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
   const mapDataDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const userMarkerRef = useRef<any>(null);
   const { isLoaded: kakaoLoaded } = useKakaoLoader();
+
+  // 역/학교 사이드바 상태
+  const [selectedPlace, setSelectedPlace] = useState<{
+    id: string;
+    name: string;
+    address: string;
+    category?: string;
+    lineName?: string;
+    lineColor?: string;
+    type: 'station' | 'school' | 'place';
+    location: { lat: number; lng: number };
+  } | null>(null);
+  const [placeNearbyApartments, setPlaceNearbyApartments] = useState<MapApartment[]>([]);
 
   // 쿠키에서 최근 검색어 로드
   useEffect(() => {
@@ -250,6 +266,7 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
       setSearchResults([]);
       setAiResults([]);
       setAiCriteria(null);
+      setFoundAptId(null);
       return;
     }
     
@@ -279,16 +296,34 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
             fetchPlacesByKeyword(searchQuery, { size: 8 })
           ]);
           
-          const places = placeResponse.documents ? placeResponse.documents.map((p: any) => ({
+          const placesRaw = placeResponse.documents ? placeResponse.documents.map((p: any) => ({
             apt_id: p.id,
             apt_name: p.place_name,
             address: p.road_address_name || p.address_name,
             location: { lat: Number(p.y), lng: Number(p.x) },
             type: 'place',
-            category: p.category_group_name
+            category: p.category_group_name,
+            category_name: p.category_name
           })) : [];
+
+          // 역(SW8) / 학교(SC4)만 남기고 나머지 장소는 제거
+          const places = placesRaw.filter((p: any) => {
+            const name = (p.category_name || '') as string;
+            const cat = (p.category || '') as string;
+            return (
+              cat.includes('지하철') ||
+              cat.includes('학교') ||
+              name.includes('지하철') ||
+              name.includes('전철') ||
+              name.includes('철도') ||
+              name.includes('초등학교') ||
+              name.includes('중학교') ||
+              name.includes('고등학교')
+            );
+          });
           
-          setSearchResults([...places, ...aptResponse.data.results]);
+        setSearchResults([...places, ...aptResponse.data.results]);
+        setFoundAptId(null);
         } catch (error) {
           console.error('Search failed:', error);
           setSearchResults([]);
@@ -875,8 +910,15 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
     
     const minPriceLabel = apt.min_price ? `${apt.min_price.toFixed(1)}억~` : '';
     
+    const isFound = foundAptId === String(apt.apt_id);
+    
     const contentHtml = `
-      <div class="apartment-overlay" data-apt-id="${apt.apt_id}" style="
+      <div 
+        class="apartment-overlay" 
+        data-apt-id="${apt.apt_id}" 
+        data-original-box-shadow="0 4px 12px rgba(0,0,0,0.3)" 
+        data-original-border-color="white"
+        style="
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -893,6 +935,25 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
         transition: all 0.2s ease;
         position: relative;
       ">
+        ${isFound ? `
+        <div style="
+          position: absolute;
+          top: -22px;
+          left: 50%;
+          transform: translateX(-50%);
+          padding: 2px 10px;
+          border-radius: 999px;
+          background: rgba(15,23,42,0.9);
+          color: white;
+          font-size: 10px;
+          font-weight: 700;
+          letter-spacing: -0.02em;
+          box-shadow: 0 2px 6px rgba(15,23,42,0.4);
+          white-space: nowrap;
+        ">
+          이 아파트
+        </div>
+        ` : ''}
         <div style="
           position: absolute;
           bottom: -6px;
@@ -1014,10 +1075,15 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
   ) => {
     const position = new kakaoMaps.LatLng(apt.lat, apt.lng);
     const bgColor = getPriceColor(apt.avg_price, false);
+    const isSelected = selectedMarkerId === String(apt.apt_id);
+    const isFound = foundAptId === String(apt.apt_id);
     
     // 오버레이 컨텐츠 생성
     const content = document.createElement('div');
     content.className = 'apartment-overlay';
+    content.dataset.aptId = String(apt.apt_id);
+    content.dataset.originalBoxShadow = '0 4px 12px rgba(0,0,0,0.3)';
+    content.dataset.originalBorderColor = 'white';
     content.style.cssText = `
       display: flex;
       flex-direction: column;
@@ -1025,14 +1091,18 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
       justify-content: center;
       min-width: 60px;
       padding: 6px 10px;
-      background: ${bgColor};
+      background: ${isSelected 
+        ? `radial-gradient(circle at 30% 0%, rgba(255,255,255,0.9) 0, rgba(255,255,255,0) 40%), ${bgColor}` 
+        : bgColor};
       border-radius: 12px;
       color: white;
       font-weight: 600;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-      border: 2px solid white;
+      box-shadow: ${isSelected 
+        ? '0 0 0 2px rgba(255,255,255,0.9), 0 0 0 4px rgba(129,140,248,0.35), 0 10px 24px rgba(15,23,42,0.4)' 
+        : '0 4px 12px rgba(0,0,0,0.3)'};
+      border: 2px solid ${isSelected ? 'rgba(191,219,254,0.95)' : 'white'};
       cursor: pointer;
-      transition: all 0.2s ease;
+      transition: all 0.25s ease;
       position: relative;
     `;
     
@@ -1055,10 +1125,34 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
     const minPriceLabel = apt.min_price ? `${apt.min_price.toFixed(1)}억~` : '';
     const maxPriceLabel = apt.max_price ? `${apt.max_price.toFixed(1)}억` : formatPriceLabel(apt.avg_price);
 
+    // 기본 가격 정보
     content.innerHTML += `
       <div style="font-size: 11px; opacity: 0.9; margin-bottom: 2px; white-space: nowrap; font-weight: 500;">${minPriceLabel}</div>
       <div style="font-size: 14px; font-weight: 800; letter-spacing: -0.5px; line-height: 1;">${maxPriceLabel}</div>
     `;
+
+    // "이 아파트" pill 배지
+    if (isFound) {
+      const pill = document.createElement('div');
+      pill.textContent = '이 아파트';
+      pill.style.cssText = `
+        position: absolute;
+        top: -22px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 2px 10px;
+        border-radius: 999px;
+        background: rgba(15,23,42,0.9);
+        color: white;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        box-shadow: 0 2px 6px rgba(15,23,42,0.4);
+        white-space: nowrap;
+        pointer-events: none;
+      `;
+      content.appendChild(pill);
+    }
     
     content.onmouseenter = () => {
       content.style.transform = 'scale(1.1) translateY(-2px)';
@@ -1745,6 +1839,48 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
     return priceMap;
   };
 
+  // 아파트 마커를 일시적으로 강조 (검색 결과 클릭용) - 기존 오버레이 자체에 부드러운 크기 펄스 적용
+  const animateApartmentOverlay = (aptId: number | string) => {
+    if (typeof document === 'undefined') return;
+    const selector = `.apartment-overlay[data-apt-id="${aptId}"]`;
+    const el = document.querySelector<HTMLElement>(selector);
+    if (!el) return;
+    
+    const computed = window.getComputedStyle(el);
+    const originalTransform = computed.transform === 'none' ? '' : computed.transform;
+    const originalTransition = el.style.transition;
+    
+    el.style.transition = 'transform 0.24s ease-out';
+
+    // 부드럽게 작아졌다 커지는 펄스를 여러 번 반복 (총 약 5초 정도)
+    const pulseCount = 5;
+    let current = 0;
+
+    const doPulse = () => {
+      if (current >= pulseCount) {
+        // 원래 상태로 복원
+        el.style.transform = originalTransform || 'scale(1)';
+        el.style.transition = originalTransition;
+        return;
+      }
+
+      // 살짝 축소
+      el.style.transform = 'scale(0.94)';
+      setTimeout(() => {
+        // 살짝 확대
+        el.style.transform = 'scale(1.06)';
+        setTimeout(() => {
+          // 기본 크기 근처로 되돌림
+          el.style.transform = originalTransform || 'scale(1)';
+          current += 1;
+          setTimeout(doPulse, 350);
+        }, 250);
+      }, 250);
+    };
+
+    doPulse();
+  };
+
   // 검색 결과 선택 핸들러
   const handleSelectSearchResult = async (apt: ApartmentSearchItem | AISearchApartment) => {
     if (!apt.location) return;
@@ -1755,38 +1891,78 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
       setRecentSearches(getRecentSearchesFromCookie());
     }
     
-    // 장소(지하철, 학교 등)인 경우 지도 이동만 수행
+    // 장소(지하철, 학교 등)인 경우: 지도 이동 + 역/학교 사이드바 열기
     if ('type' in apt && apt.type === 'place') {
-      if (mapRef.current) {
-        const center = new window.kakao.maps.LatLng(apt.location.lat, apt.location.lng);
-        mapRef.current.setCenter(center);
-        mapRef.current.setLevel(4);
+      try {
+        // 1) 지도 중심 이동
+        if (mapRef.current) {
+          const center = new window.kakao.maps.LatLng(apt.location.lat, apt.location.lng);
+          mapRef.current.setCenter(center);
+          mapRef.current.setLevel(4);
+        }
+
+        // 2) 선택한 장소 주변 아파트 조회 (반경 1km, 매매 기준 6개월)
+        const nearby = await fetchNearbyApartments(
+          apt.location.lat,
+          apt.location.lng,
+          1000,
+          transactionType,
+          6,
+          30
+        );
+
+        const apartments = nearby.data.map((item) => ({
+          id: String(item.apt_id),
+          aptId: item.apt_id,
+          name: item.apt_name,
+          priceLabel: formatPriceLabel(item.avg_price ?? null),
+          priceValue: item.avg_price ?? null,
+          location: item.address || '',
+          lat: item.lat,
+          lng: item.lng,
+          isSpeculationArea: false
+        }) as MapApartment);
+
+        // 역/학교 사이드바 상태 업데이트
+        const category = (apt as any).category as string | undefined;
+        const categoryName = (apt as any).category_name as string | undefined;
+        const isSubway = category?.includes('지하철') || category?.includes('전철') || category?.includes('철도');
+        const isSchool = category?.includes('학교') || category?.includes('초등학교') || category?.includes('중학교') || category?.includes('고등학교');
+        let lineName: string | undefined;
+        let lineColor: string | undefined;
+        if (isSubway && categoryName) {
+          const parts = categoryName.split('>');
+          lineName = parts[parts.length - 1].trim();
+          lineColor = getSubwayColor(lineName);
+        }
+
+        setSelectedPlace({
+          id: String(apt.apt_id),
+          name: apt.apt_name,
+          address: apt.address || '',
+          category,
+          lineName,
+          lineColor,
+          type: isSubway ? 'station' : isSchool ? 'school' : 'place',
+          location: { lat: apt.location.lat, lng: apt.location.lng }
+        });
+        setPlaceNearbyApartments(apartments);
+
+        // 검색 드롭다운 닫기
+        setIsSearchExpanded(false);
+        setSearchQuery('');
+        setSearchResults([]);
+        setAiResults([]);
+      } catch (error) {
+        console.error('[Map] Failed to load nearby apartments for place:', error);
+        showToast('주변 아파트 정보를 불러오지 못했습니다.');
       }
-      setIsSearchExpanded(false);
-      setSearchQuery('');
-      setSearchResults([]);
-      setAiResults([]);
       return;
     }
     
-    // 가격 정보 가져오기
+    // 아파트 선택: 지도 이동 + 마커 강조 (사이드바는 열지 않음)
     const aptId = typeof apt.apt_id === 'number' ? apt.apt_id : Number(apt.apt_id);
-    const priceMap = await fetchCompareMap([aptId]);
-    const priceValue = priceMap.get(aptId) ?? null;
-    
-    const newApt: MapApartment = {
-      id: String(apt.apt_id),
-      aptId: aptId,
-      name: apt.apt_name,
-      priceLabel: formatPriceLabel(priceValue),
-      priceValue,
-      location: apt.address || '',
-      lat: apt.location.lat,
-      lng: apt.location.lng,
-      isSpeculationArea: false
-    };
-    
-    setMapApartments([newApt]);
+    setFoundAptId(String(aptId));
     
     // 지도 이동
     if (mapRef.current) {
@@ -1795,13 +1971,17 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
       mapRef.current.setLevel(4);
     }
     
+    // 원래 아파트 오버레이 자체에 펄스 + 그라데이션 강조
+    // 지도 중심/레벨 이동 후 오버레이가 그려질 시간을 약간 준 뒤에 실행
+    setTimeout(() => {
+      animateApartmentOverlay(aptId);
+    }, 350);
+    
+    // 검색창만 정리
     setIsSearchExpanded(false);
     setSearchQuery('');
     setSearchResults([]);
     setAiResults([]);
-    
-    // 선택된 아파트 상세 패널 열기
-    handleMarkerClick(String(apt.apt_id));
   };
   
   // 급상승 아파트 선택 핸들러
@@ -1937,6 +2117,10 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
   const handleSearchSubmit = async () => {
     if (!searchQuery.trim()) return;
     
+    // 엔터로 검색 시에는 항상 검색 드롭다운을 열어둔다
+    // (이전에 ESC나 바깥 클릭 등으로 닫혀 있었던 경우에도 다시 표시)
+    setIsSearchExpanded(true);
+    
     // 검색어 저장
     saveRecentSearchToCookie(searchQuery.trim());
     setRecentSearches(getRecentSearchesFromCookie());
@@ -1986,69 +2170,53 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
           mapRef.current.setLevel(5);
         }
       } else {
-        // 일반 검색 (아파트 + 장소)
+        // 일반 검색 (아파트 + 장소) - 엔터 시에는 드롭다운만 유지하고 지도 이동/사이드바는 하지 않음
         const [aptResponse, placeResponse] = await Promise.all([
             searchApartments(searchQuery.trim(), 10),
             fetchPlacesByKeyword(searchQuery.trim(), { size: 5 })
         ]);
         
-        const places = placeResponse.documents ? placeResponse.documents.map((p: any) => ({
+        const placesRaw = placeResponse.documents ? placeResponse.documents.map((p: any) => ({
             apt_id: p.id,
             apt_name: p.place_name,
             address: p.road_address_name || p.address_name,
             location: { lat: Number(p.y), lng: Number(p.x) },
-            type: 'place'
+            type: 'place',
+            category: p.category_group_name,
+            category_name: p.category_name
         })) : [];
+
+        const places = placesRaw.filter((p: any) => {
+          const name = (p.category_name || '') as string;
+          const cat = (p.category || '') as string;
+          return (
+            cat.includes('지하철') ||
+            cat.includes('학교') ||
+            name.includes('지하철') ||
+            name.includes('전철') ||
+            name.includes('철도') ||
+            name.includes('초등학교') ||
+            name.includes('중학교') ||
+            name.includes('고등학교')
+          );
+        });
         
         const apartmentResults = aptResponse.data.results;
         const allResults = [...places, ...apartmentResults];
         
         if (!allResults.length) {
-          setMapApartments([]);
+          setSearchResults([]);
+          setFoundAptId(null);
           return;
         }
         
-        // 아파트만 가격 조회 및 표시
-        if (apartmentResults.length > 0) {
-            const ids = apartmentResults
-                .map((item) => item.apt_id)
-                .filter((id): id is number => typeof id === 'number');
-                
-            const priceMap = await fetchCompareMap(ids);
-            
-            const mapped = apartmentResults
-              .filter((item) => item.location && typeof item.apt_id === 'number')
-              .map((item) => {
-                const aptId = item.apt_id as number;
-                const priceValue = priceMap.get(aptId) ?? null;
-                return {
-                  id: String(aptId),
-                  aptId: aptId,
-                  name: item.apt_name,
-                  priceLabel: formatPriceLabel(priceValue),
-                  priceValue,
-                  location: item.address || '',
-                  lat: item.location?.lat || 0,
-                  lng: item.location?.lng || 0,
-                  isSpeculationArea: false
-                } as MapApartment;
-              });
-            
-            setMapApartments(mapped);
-        } else {
-            setMapApartments([]);
-        }
-        
-        // 첫 번째 결과로 이동 (장소 포함)
-        const first = allResults[0];
-        if (first && first.location && mapRef.current) {
-          const center = new window.kakao.maps.LatLng(first.location.lat, first.location.lng);
-          mapRef.current.setCenter(center);
-          mapRef.current.setLevel(5);
-        }
+        // 엔터 시에는 드롭다운에만 반영
+        setSearchResults(allResults as any);
+        setFoundAptId(null);
       }
       
-      setIsSearchExpanded(false);
+      // 엔터로 검색해도 검색 드롭다운은 유지하고,
+      // 사용자가 개별 검색 결과를 선택할 때 지도/사이드바를 조작한다.
     } catch (error) {
       const errorMessage = error instanceof Error 
         ? error.message 
@@ -2069,6 +2237,84 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
   const selectedProperty = selectedMarkerId
     ? mapApartments.find((apt) => apt.id === selectedMarkerId) || null
     : null;
+
+  // 선택된 아파트 마커 하이라이트 (DOM 기반, 지도에서 마커를 직접 클릭한 경우)
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    
+    const elements = document.querySelectorAll<HTMLElement>('.apartment-overlay[data-apt-id]');
+    elements.forEach((el) => {
+      const aptId = el.getAttribute('data-apt-id');
+      const originalBoxShadow = el.getAttribute('data-original-box-shadow') || el.dataset.originalBoxShadow || '';
+      const originalBorderColor = el.getAttribute('data-original-border-color') || el.dataset.originalBorderColor || 'white';
+      
+      if (!aptId) return;
+      
+      if (selectedMarkerId && aptId === selectedMarkerId) {
+        const bg = window.getComputedStyle(el).backgroundColor || 'rgba(59,130,246,0.9)';
+        el.style.boxShadow = `0 0 0 2px rgba(255,255,255,0.9), 0 0 0 6px ${bg.replace('rgba', 'rgba').replace(')', ',0.45)')}, 0 12px 28px rgba(15,23,42,0.5)`;
+        el.style.borderColor = 'rgba(191,219,254,0.95)';
+        el.style.transform = 'scale(1.06) translateY(-2px)';
+      } else {
+        el.style.boxShadow = originalBoxShadow;
+        el.style.borderColor = originalBorderColor;
+        el.style.transform = '';
+      }
+    });
+  }, [selectedMarkerId]);
+
+  // "이 아파트" pill 뱃지 DOM 제어 (검색으로 찾은 아파트)
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    
+    // 기존 pill 제거
+    const existingPills = document.querySelectorAll<HTMLElement>('.found-apartment-pill');
+    existingPills.forEach((pill) => pill.remove());
+    
+    if (!foundAptId) return;
+    
+    let attempts = 0;
+    const maxAttempts = 15; // 약 3초 정도 재시도 (200ms * 15)
+    
+    const attachPill = () => {
+      attempts += 1;
+      
+      const overlayEl = document.querySelector<HTMLElement>(
+        `.apartment-overlay[data-apt-id="${foundAptId}"]`
+      );
+      if (!overlayEl) {
+        if (attempts < maxAttempts) {
+          setTimeout(attachPill, 200);
+        }
+        return;
+      }
+      
+      const pill = document.createElement('div');
+      pill.className = 'found-apartment-pill';
+      pill.textContent = '이 아파트';
+      pill.style.cssText = `
+        position: absolute;
+        top: -22px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 2px 10px;
+        border-radius: 999px;
+        background: rgba(15,23,42,0.9);
+        color: white;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        box-shadow: 0 2px 6px rgba(15,23,42,0.4);
+        white-space: nowrap;
+        pointer-events: none;
+        z-index: 2;
+      `;
+      
+      overlayEl.appendChild(pill);
+    };
+    
+    attachPill();
+  }, [foundAptId]);
 
   // 현재 데이터 유형 표시 텍스트
   const getDataTypeText = () => {
@@ -2098,8 +2344,9 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
                         ? 'border-transparent ring-[2.5px] ring-indigo-400/40 shadow-[0_0_20px_rgba(129,140,248,0.3),0_0_40px_rgba(167,139,250,0.2)]'
                         : 'border-slate-200/50'
                 } ${isSearchExpanded ? 'rounded-t-xl rounded-b-none border-b-0' : 'rounded-xl'}`}>
-                    {/* AI Search Gradient Border Effect (Apple Intelligence Style - Slow & Fluid) */}
-                    {(isSearching || isAiSearching) && (
+                    {/* AI Search Gradient Border Effect (Apple Intelligence Style - Slow & Fluid)
+                       - AI 모드일 때만 보라색 그라데이션 효과를 보여주도록 제한 */}
+                    {isAiActive && (isSearching || isAiSearching) && (
                         <div className="absolute inset-0 bg-gradient-to-r from-indigo-400 via-purple-400 via-blue-400 to-indigo-400 opacity-50 -z-10 animate-shimmer-slow" style={{backgroundSize: '200% 100%'}}></div>
                     )}
                     <div className="w-10 h-full flex items-center justify-center flex-shrink-0">
@@ -2257,14 +2504,50 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
                         searchResults.length > 0 ? (
                           <div className="space-y-1">
                             <p className="text-xs font-medium text-slate-500 mb-2 px-1">검색 결과 ({searchResults.length}건)</p>
-                            {searchResults.map((apt) => (
+                            {searchResults.map((apt) => {
+                              const isPlace = apt.type === 'place';
+                              const category = (apt as any).category as string | undefined;
+                              
+                              // 카카오 카테고리 그룹 코드/이름 기반 아이콘 및 색상 결정
+                              const isSubway = category?.includes('지하철') || category?.includes('전철') || category?.includes('철도');
+                              const isSchool = category?.includes('학교') || category?.includes('초등학교') || category?.includes('중학교') || category?.includes('고등학교');
+                              
+                              const iconColorClass = isPlace
+                                ? isSubway
+                                  ? 'text-emerald-500'
+                                  : isSchool
+                                  ? 'text-amber-500'
+                                  : 'text-slate-500'
+                                : 'text-blue-500';
+                              
+                              const iconBgClass = isPlace
+                                ? isSubway
+                                  ? 'bg-emerald-50'
+                                  : isSchool
+                                  ? 'bg-amber-50'
+                                  : 'bg-slate-50'
+                                : 'bg-blue-50';
+                              
+                              return (
                               <button
                                 key={apt.apt_id}
                                 onClick={() => handleSelectSearchResult(apt)}
                                 className="w-full text-left p-3 rounded-lg hover:bg-slate-50 transition-colors group"
                               >
                                 <div className="flex items-center gap-3">
-                                  <Building2 className="w-5 h-5 text-blue-500 shrink-0" />
+                                  <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${iconBgClass}`}>
+                                    {isPlace ? (
+                                      isSubway ? (
+                                        <TrainFront className={`w-4 h-4 ${iconColorClass}`} />
+                                      ) : isSchool ? (
+                                        <GraduationCap className={`w-4 h-4 ${iconColorClass}`} />
+                                      ) : (
+                                        <MapPin className={`w-4 h-4 ${iconColorClass}`} />
+                                      )
+                                    ) : (
+                                      <Building2 className={`w-4 h-4 ${iconColorClass}`} />
+                                    )}
+                                  </div>
                                   <div className="flex-1 min-w-0">
                                     <p className="font-medium text-slate-900 truncate group-hover:text-blue-600">{apt.apt_name}</p>
                                     {apt.address && (
@@ -2276,7 +2559,8 @@ export const MapExplorer: React.FC<ViewProps> = ({ onPropertyClick, onToggleDock
                                   </div>
                                 </div>
                               </button>
-                            ))}
+                              );
+                            })}
                           </div>
                         ) : (
                           <div className="text-center py-8 text-slate-500 text-sm">
