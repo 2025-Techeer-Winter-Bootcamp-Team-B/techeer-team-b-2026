@@ -134,46 +134,7 @@ services:
     networks:
       - realestate-network
     depends_on:
-      backend:
-        condition: service_started
-      # Note: prometheus itself is this service, removing self-dependency logic if mistakenly added
-
-
-      # --------------------------------------------------------
-      # 📊 Redis Exporter (Redis 메트릭 수집)
-      # --------------------------------------------------------
-  redis-exporter:
-    image: oliver006/redis_exporter:latest
-    container_name: realestate-redis-exporter
-    restart: always
-    env_file:
-      - .env
-    command:
-      - '--redis.addr=redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}'
-    ports:
-      - "9121:9121"
-    networks:
-      - realestate-network
-    depends_on:
-      redis:
-        condition: service_healthy
-
-  # --------------------------------------------------------
-  # 📊 PostgreSQL Exporter (PostgreSQL 메트릭 수집)
-  # --------------------------------------------------------
-  postgres-exporter:
-    image: quay.io/prometheuscommunity/postgres-exporter:latest
-    container_name: realestate-postgres-exporter
-    restart: always
-    env_file:
-      - .env
-    environment:
-      PGPASSWORD: ${POSTGRES_PASSWORD}
-      DATA_SOURCE_NAME: "user=${POSTGRES_USER} host=${POSTGRES_HOST:-db} port=${POSTGRES_PORT:-5432} dbname=${POSTGRES_DB} sslmode=disable"
-    ports:
-      - "9187:9187"
-    networks:
-      - realestate-network
+      - backend
 
   # --------------------------------------------------------
   # 📊 Redis Exporter (Redis 메트릭 수집)
