@@ -168,7 +168,8 @@ services:
     env_file:
       - .env
     environment:
-      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-db}:${POSTGRES_PORT:-5432}/${POSTGRES_DB}?sslmode=disable"
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      DATA_SOURCE_NAME: "user=${POSTGRES_USER} host=${POSTGRES_HOST:-db} port=${POSTGRES_PORT:-5432} dbname=${POSTGRES_DB} sslmode=disable"
     ports:
       - "9187:9187"
     networks:
