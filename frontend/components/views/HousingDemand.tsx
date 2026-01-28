@@ -33,11 +33,13 @@ interface TransactionVolumeDataPoint {
 const getYearColor = (year: number, totalYears: number) => {
   // 연도별 색상 팔레트
   const colorPalette = [
-    '#2563EB',  // 1. 메인 블루 (최신 연도)
-    '#38BDF8',  // 2. 라이트 블루
-    '#22C55E',  // 3. 그린
-    '#A855F7',  // 4. 퍼플 (보조)
-    '#94A3B8',  // 5. 그레이 (평균/기준선)
+    '#2563EB',  // 최신 연도: 메인 블루
+    '#38BDF8',  // -1년: 라이트 블루
+    '#22C55E',  // -2년: 그린
+    '#A855F7',  // -3년: 퍼플
+    '#F59E0B',  // -4년: 앰버 (예: 2022)
+    '#EF4444',  // -5년: 레드 (예: 2021)
+    '#64748B',  // -6년: 슬레이트 (예: 2020)
   ];
   
   const currentYear = new Date().getFullYear();
@@ -1485,25 +1487,25 @@ export const HousingDemand: React.FC = () => {
                       <select
                         value={`${yearRange}년`}
                         onChange={(e) => setYearRange(parseInt(e.target.value.replace('년', '')) as 1 | 3 | 5)}
-                        className="px-3 py-1.5 text-[13px] font-bold bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900 appearance-none cursor-pointer"
+                        className="pl-3 pr-8 py-1.5 text-[13px] font-bold bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900 appearance-none cursor-pointer"
                       >
                         <option value="1년">1년</option>
                         <option value="3년">3년</option>
                         <option value="5년">5년</option>
                       </select>
-                      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                      <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
                     </div>
                   )}
                   <div className="relative">
                     <select
                       value={viewMode === 'yearly' ? '연도별' : '월별'}
                       onChange={(e) => setViewMode(e.target.value === '연도별' ? 'yearly' : 'monthly')}
-                      className="px-3 py-1.5 text-[13px] font-bold bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900 appearance-none cursor-pointer"
+                      className="pl-3 pr-8 py-1.5 text-[13px] font-bold bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900 appearance-none cursor-pointer"
                     >
                       <option value="연도별">연도별</option>
                       <option value="월별">월별</option>
                     </select>
-                    <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                    <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
                   </div>
                 </div>
               </div>
@@ -1808,7 +1810,7 @@ export const HousingDemand: React.FC = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* 2. 주택 가격 지수 카드 */}
-          <Card>
+          <Card className="!overflow-visible">
                {/* HPI Header (생략 - 기존 코드와 동일) */}
                <div className="p-3 md:p-6 md:border-b border-b border-slate-200 flex flex-col md:flex-row md:justify-between md:items-center gap-2 md:gap-4">
                   <div className="flex items-center gap-2 md:gap-3 min-w-0">
@@ -1841,7 +1843,7 @@ export const HousingDemand: React.FC = () => {
                             <ChevronDown className={`w-3 h-3 md:w-3.5 md:h-3.5 text-slate-400 transition-transform flex-shrink-0 ${isHpiRegionOpen ? 'rotate-180' : ''}`} />
                         </button>
                         {isHpiRegionOpen && (
-                            <div className="absolute left-0 top-full mt-2 w-[140px] bg-white rounded-xl shadow-deep border border-slate-200 overflow-hidden z-50 animate-enter">
+                            <div className="absolute right-0 top-full mt-2 w-[140px] bg-white rounded-xl shadow-deep border border-slate-200 overflow-hidden z-[100] animate-enter origin-top-right">
                                 {regionOptions.map((region) => (
                                     <button
                                         key={region}

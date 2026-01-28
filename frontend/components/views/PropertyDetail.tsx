@@ -1473,16 +1473,16 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
                   </div>
                 </div>
                 
-                <div className="flex items-center gap-2 mb-2">
+                <div className="flex items-center gap-2 mb-2 pl-6">
                   <h1 className="text-[22px] font-black text-slate-900 leading-tight">{detailData.name}</h1>
                   <PercentileBadge aptId={aptId} className="flex-shrink-0" />
                 </div>
                 
-                <div className="flex items-baseline gap-2 mb-1">
+                <div className="flex items-baseline gap-2 mb-1 pl-6">
                   <FormatPrice val={detailData.currentPrice} sizeClass="text-[36px]" />
                 </div>
                 
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 pl-6">
                   <span className={`text-[14px] font-bold ${areaBasedDiffRate >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
                     {areaBasedDiffRate >= 0 ? '▲' : '▼'}
                   </span>
@@ -1491,6 +1491,18 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
                     ({Math.abs(areaBasedDiffRate)}%)
                   </span>
                   <span className="text-[12px] font-medium text-slate-400 ml-1">지난 실거래가 대비</span>
+                </div>
+              </div>
+
+              {/* 모바일: 상승률(헤더)와 pill 탭 사이 "아파트 상세정보" 카드 */}
+              <div className="px-4 pt-3 pb-1">
+                <div className="bg-white rounded-[20px] border border-slate-200 shadow-sm px-4 py-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <MapPin className="w-4 h-4 text-slate-500 flex-shrink-0" />
+                    <span className="text-[14px] font-black text-slate-900 truncate">
+                      {detailData.location || '-'}
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -1606,7 +1618,10 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
                         <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isChartStyleDropdownOpen ? 'rotate-180' : ''}`} />
                       </button>
                       {isChartStyleDropdownOpen && (
-                        <div className="absolute left-0 top-full mt-2 w-[120px] bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden z-50">
+                        <div
+                          className="absolute left-0 top-full mt-2 w-[120px] bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden z-[9999]"
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           {[
                             { value: 'line', label: '꺾은선' },
                             { value: 'candlestick', label: '캔들스틱' },
@@ -1614,12 +1629,20 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
                           ].map((style) => (
                             <button
                               key={style.value}
-                              onClick={() => {
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setChartStyle(style.value as 'line' | 'area' | 'candlestick');
+                                setIsChartStyleDropdownOpen(false);
+                              }}
+                              onTouchEnd={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
                                 setChartStyle(style.value as 'line' | 'area' | 'candlestick');
                                 setIsChartStyleDropdownOpen(false);
                               }}
                               className={`w-full text-left px-4 py-3 text-[13px] font-bold transition-colors ${
-                                chartStyle === style.value ? 'bg-slate-100 text-slate-900' : 'text-slate-700 hover:bg-slate-50'
+                                chartStyle === style.value ? 'bg-slate-100 text-slate-900' : 'text-slate-700 hover:bg-slate-50 active:bg-slate-100'
                               }`}
                             >
                               {style.label}
@@ -1669,6 +1692,7 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
                       </div>
                     ) : (
                       <ProfessionalChart 
+                        key={chartStyle}
                         data={chartData} 
                         height={280} 
                         lineColor={chartType === '매매' ? '#3182F6' : (chartType === '전세' ? '#10b981' : '#f59e0b')}
@@ -2579,7 +2603,7 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
                
                {activeTab === 'chart' && (
                    <div className="mt-4">
-                       <ProfessionalChart data={chartData} height={200} chartStyle={chartStyle} showHighLow={true} />
+                       <ProfessionalChart key={chartStyle} data={chartData} height={200} chartStyle={chartStyle} showHighLow={true} />
                    </div>
                )}
                {activeTab === 'info' && (
@@ -2715,7 +2739,10 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
                       <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isChartStyleDropdownOpen ? 'rotate-180' : ''}`} />
                     </button>
                     {isChartStyleDropdownOpen && (
-                      <div className="absolute left-0 top-full mt-2 w-[120px] bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden z-50">
+                      <div
+                        className="absolute left-0 top-full mt-2 w-[120px] bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden z-[9999]"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         {[
                           { value: 'line', label: '꺾은선' },
                           { value: 'candlestick', label: '캔들스틱' },
@@ -2723,12 +2750,20 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
                         ].map((style) => (
                           <button
                             key={style.value}
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setChartStyle(style.value as 'line' | 'area' | 'candlestick');
+                              setIsChartStyleDropdownOpen(false);
+                            }}
+                            onTouchEnd={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
                               setChartStyle(style.value as 'line' | 'area' | 'candlestick');
                               setIsChartStyleDropdownOpen(false);
                             }}
                             className={`w-full text-left px-4 py-3 text-[13px] font-bold transition-colors ${
-                              chartStyle === style.value ? 'bg-slate-100 text-slate-900' : 'text-slate-700 hover:bg-slate-50'
+                              chartStyle === style.value ? 'bg-slate-100 text-slate-900' : 'text-slate-700 hover:bg-slate-50 active:bg-slate-100'
                             }`}
                           >
                             {style.label}
@@ -2778,6 +2813,7 @@ export const PropertyDetail: React.FC<PropertyDetailProps> = ({ propertyId, onBa
                     </div>
                   ) : (
                     <ProfessionalChart 
+                      key={chartStyle}
                       data={chartData} 
                       height={400} 
                       lineColor={chartType === '매매' ? '#3182F6' : (chartType === '전세' ? '#10b981' : '#f59e0b')}
