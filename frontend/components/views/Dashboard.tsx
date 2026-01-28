@@ -293,7 +293,8 @@ const AssetRow: React.FC<{
     onEdit?: (e: React.MouseEvent) => void;
     isDeleting?: boolean;
     isMyAsset?: boolean;
-}> = ({ item, onClick, onToggleVisibility, isEditMode, onDelete, onEdit, isDeleting, isMyAsset }) => {
+    showColorBar?: boolean;
+}> = ({ item, onClick, onToggleVisibility, isEditMode, onDelete, onEdit, isDeleting, isMyAsset, showColorBar }) => {
     const imageUrl = getApartmentImageUrl(item.id);
 
     // 실거래가 데이터에서 가격 변동 계산 (최근 거래 vs 이전 거래)
@@ -327,6 +328,7 @@ const AssetRow: React.FC<{
                 imageUrl={imageUrl}
                 color={item.color}
                 showImage={false}
+                showColorBar={showColorBar}
                 isVisible={item.isVisible}
                 onClick={onClick}
                 onToggleVisibility={onToggleVisibility}
@@ -343,8 +345,8 @@ const AssetRow: React.FC<{
                             {priceChange.hasData && (
                                 <p className={`text-[12px] md:text-[13px] mt-0.5 font-bold tabular-nums whitespace-nowrap flex items-baseline justify-end gap-1 ${isProfit ? 'text-red-500' : 'text-blue-500'
                                     }`}>
-                                    <span className="whitespace-nowrap">
-                                        {isProfit ? '+' : '-'}
+                                    <span className="whitespace-nowrap flex items-center">
+                                        <span>{isProfit ? '+' : '-'}</span>
                                         <FormatPriceWithUnit value={priceChange.diff} isDiff />
                                     </span>
                                     <span className="whitespace-nowrap text-[15px]">({priceChange.rate.toFixed(1)}%)</span>
@@ -400,8 +402,8 @@ const AssetRow: React.FC<{
                                     {priceChange.hasData && (
                                         <p className={`text-[12px] mt-0.5 font-bold tabular-nums whitespace-nowrap flex items-baseline justify-end gap-1 ${isProfit ? 'text-red-500' : 'text-blue-500'
                                             }`}>
-                                            <span className="whitespace-nowrap">
-                                                {isProfit ? '+' : '-'}
+                                            <span className="whitespace-nowrap flex items-center">
+                                                <span>{isProfit ? '+' : '-'}</span>
                                                 <FormatPriceWithUnit value={priceChange.diff} isDiff />
                                             </span>
                                             <span className="whitespace-nowrap text-[15px]">({priceChange.rate.toFixed(1)}%)</span>
@@ -1533,6 +1535,7 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                     myProperty: Math.round(myPropertyRate * 100) / 100,
                     regionAverage: Math.round(regionAverageRate * 100) / 100,
                     aptName: aptDisplayName === '이름 없음' ? regionName : aptDisplayName,
+                    color: asset.color,
                 } as ComparisonData;
             }));
 
@@ -3300,7 +3303,7 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                                                         </span>
                                                         <div className="mt-1 flex items-center w-full">
                                                             <span className={`text-[16px] font-bold ${periodComparison.rate >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
-                                                                {periodComparison.amount >= 0 ? '+' : ''}{formatPriceWithoutWon(Math.abs(periodComparison.amount))} ({Math.abs(periodComparison.rate).toFixed(1)}%)
+                                                                {periodComparison.amount >= 0 ? '+' : '-'}{formatPriceWithoutWon(Math.abs(periodComparison.amount))} ({Math.abs(periodComparison.rate).toFixed(1)}%)
                                                             </span>
                                                         </div>
                                                     </div>
@@ -3518,7 +3521,7 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                                         </span>
                                         <div className="flex items-center gap-2 mt-1">
                                             <span className={`text-[14px] font-bold ${periodComparison.rate >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
-                                                {periodComparison.amount >= 0 ? '+' : ''}{formatPriceWithoutWon(Math.abs(periodComparison.amount))} ({Math.abs(periodComparison.rate).toFixed(1)}%)
+                                                {periodComparison.amount >= 0 ? '+' : '-'}{formatPriceWithoutWon(Math.abs(periodComparison.amount))} ({Math.abs(periodComparison.rate).toFixed(1)}%)
                                             </span>
                                         </div>
                                     </>
@@ -3604,6 +3607,7 @@ export const Dashboard: React.FC<ViewProps> = ({ onPropertyClick, onViewAllPortf
                                         >
                                             <AssetRow
                                                 item={prop}
+                                                showColorBar={true}
                                                 onClick={() => !isEditMode && onPropertyClick(prop.aptId?.toString() || prop.id)}
                                                 onToggleVisibility={(e) => toggleAssetVisibility(activeGroup.id, prop.id, e)}
                                                 isEditMode={isEditMode}
